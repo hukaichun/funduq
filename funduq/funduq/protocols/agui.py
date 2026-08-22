@@ -5,19 +5,22 @@ from collections.abc import AsyncIterator
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
-from ag_ui.core import RunAgentInput, RunErrorEvent, RunStartedEvent
+from ag_ui.core import RunAgentInput
 
 from funduq import repo
 from funduq.models import AgentRef, LlmRef
-from funduq.agui import build_run_agent_input, rewrite_message_ids
-from funduq.errors import AgentNotFound, InvalidRunInput, LlmProviderNotFound
-from funduq.identity import verify_actor_chain, verify_delegation, verify_resolution
-from funduq.kyok import (
-    KyokBinding,
-    parse_kyok_opt_in,
-    strip_kyok_context,
+from funduq.agui import rewrite_message_ids
+from funduq.doors import (
+    InboundRun,
+    PendingAsk,
+    dispatch,
+    offline_events,
+    open_run,
+    resolve_kyok,
+    verify_caller,
 )
-from funduq.props import RESERVED_METADATA_KEYS, build_forwarded_props
+from funduq.errors import AgentNotFound
+from funduq.kyok import strip_kyok_context
 
 if TYPE_CHECKING:
     from funduq.core import Funduq
@@ -76,13 +79,7 @@ class AGUIAdapter:
             resume = [r.model_dump(mode="json", by_alias=True) for r in body.resume] if body.resume else None
 
             metadata, head_key, actor_chain = await verify_caller(session, metadata)
-
-            kyok = parse_kyok_opt_in(metadata)
-            kyok_ref = kyok.llm_provider if kyok is not None else None
-            metadata = strip_kyok_context(metadata)
-            if kyok_ref is not None:
-                if await repo.get_llm_provider(session, kyok_ref) is None:
-                    raise LlmProviderNotFound(f"unknown KYOK LLM provider '{kyok_ref}'")
+            metadata, kyok = await resolve_kyok(session, metadata)
 
             thread_id = await repo.ensure_thread(
                 session,
@@ -93,98 +90,66 @@ class AGUIAdapter:
                 head_key=head_key,
             )
 
-            # A resume targets the thread's paused (input-required) run
-            # specifically — not "the latest active run", which with queued
-            # siblings on the thread may be a different, merely queued run.
+            # AG-UI declares its entrance in the body: a `resume` payload is a
+            # deferred call's RESULT, anything else is an utterance. A result
+            # targets the thread's paused (input-required) run specifically —
+            # not "the latest active run", which with queued siblings on the
+            # thread may be a different, merely queued run.
             paused = (
                 await repo.get_paused_run_for_thread(session, thread_id) if resume else None
             )
-            if resume and paused is None:
-                # A resume is a deferred call's RESULT, and a result must land
-                # on its pending ask — with nothing paused there is no ask, and
-                # a result must not enter dressed as an utterance (the door's
-                # two entrances are an utterance or a result, nothing else).
-                return ThreadSnapshot(await repo.get_thread_snapshot(session, thread_id))
 
             input_dump = body.model_dump(mode="json", by_alias=True)
             if isinstance(input_dump.get("metadata"), dict):
                 input_dump["metadata"] = strip_kyok_context(input_dump["metadata"])
-            if paused is not None:
-                run_id = paused["run_id"]
-                if paused.get("head_key") is not None:
-                    # A chained ask names its authorities; the resolution must
-                    # be signed by one of them (the 60s-window timestamp
-                    # family — the reopen below consumes the signature with
-                    # the win). Raises InvalidResolution otherwise.
-                    verify_resolution(
-                        metadata.get("resolution") or {},
-                        run_id,
-                        {paused["head_key"], agent.provider_key},
-                        metadata.get("delegation"),
-                    )
-                # Status-guarded so two concurrent resumes resolve to one; the
-                # loser sees the thread as busy, same as any other caller.
-                if not await repo.reopen_run(
-                    session, run_id, input_dump, metadata=metadata,
-                    expected_status="input-required",
-                ):
-                    return ThreadSnapshot(await repo.get_thread_snapshot(session, thread_id))
-                starting_seq = await repo.get_last_event_seq(session, run_id)
-            else:
-                await repo.ensure_queue_room(
-                    session, thread_id, funduq.settings.thread_queue_limit
-                )
-                created = await repo.create_run(
-                    session, thread_id, agent, "ag-ui", input_dump,
-                    metadata=metadata, head_key=head_key,
-                )
-                run_id = created["run_id"]
-                starting_seq = 0
 
-            raw_messages = [m.model_dump(mode="json", by_alias=True) for m in body.messages]
-            messages = await repo.append_thread_messages(session, thread_id, run_id, raw_messages)
-
-            if not funduq.is_serving(agent):
-                await funduq.mark_run_status(
-                    session, run_id, "failed", metadata={"failureReason": "agent_offline"}
-                )
-                await session.commit()
-                return EventStream(thread_id, run_id, _offline_events(thread_id, run_id))
-
-            try:
-                input_json = build_run_agent_input(
-                    thread_id,
-                    run_id,
-                    messages,
-                    state=body.state,
-                    tools=[t.model_dump(mode="json", by_alias=True) for t in body.tools],
-                    context=[c.model_dump(mode="json", by_alias=True) for c in body.context],
-                    forwarded_props=build_forwarded_props(
-                        funduq.settings.token_signing_secret,
-                        run_id,
-                        agent,
-                        kyok_ref is not None,
-                        body.forwarded_props,
-                        actor_chain,
-                        delegation=metadata.get("delegation"),
-                    ),
-                    resume=resume,
-                    # The caller's own parentRunId, relayed verbatim — AG-UI's
-                    # field for placing another run's id on this input; the
-                    # agent judges what the repetition means from its own loop.
-                    parent_run_id=body.parent_run_id,
-                )
-            except ValueError as e:
-                raise InvalidRunInput(str(e)) from e
-
-            await session.commit()
-
-        if kyok_ref is not None:
-            funduq.kyok_relay.bind_run(
-                run_id,
-                KyokBinding(llm_provider=kyok_ref, context=kyok.context, actor_chain=actor_chain),
+            opened = await open_run(
+                funduq, session,
+                agent=agent,
+                thread_id=thread_id,
+                entrance="result" if resume else "utterance",
+                ask=(
+                    PendingAsk(run_id=paused["run_id"], head_key=paused.get("head_key"))
+                    if paused is not None
+                    else None
+                ),
+                run_input=input_dump,
+                metadata=metadata,
+                head_key=head_key,
+                protocol="ag-ui",
             )
-        funduq.enqueue_run(run_id, agent, thread_id, input_json, "ag-ui", seq=starting_seq)
+            if opened is None:
+                # A result with no ask to land on: there was none, or another
+                # caller answered first. It must not enter dressed as an
+                # utterance, so the caller gets the thread as it now stands.
+                return ThreadSnapshot(await repo.get_thread_snapshot(session, thread_id))
+            run_id, starting_seq = opened.run_id, opened.starting_seq
+
+            inbound = InboundRun(
+                agent=agent,
+                messages=[m.model_dump(mode="json", by_alias=True) for m in body.messages],
+                metadata=metadata,
+                head_key=head_key,
+                actor_chain=actor_chain,
+                kyok=kyok,
+                state=body.state,
+                tools=[t.model_dump(mode="json", by_alias=True) for t in body.tools],
+                context=[c.model_dump(mode="json", by_alias=True) for c in body.context],
+                resume=resume,
+                # The caller's own parentRunId, relayed verbatim — AG-UI's
+                # field for placing another run's id on this input; the
+                # agent judges what the repetition means from its own loop.
+                parent_run_id=body.parent_run_id,
+                forwarded_props=body.forwarded_props,
+                protocol="ag-ui",
+            )
+            live = await dispatch(
+                funduq, session, inbound,
+                thread_id=thread_id, run_id=run_id, starting_seq=starting_seq,
+            )
+
+        if not live:
+            return EventStream(thread_id, run_id, offline_events(thread_id, run_id))
         return EventStream(thread_id, run_id, _relay(funduq.broker.subscribe(run_id)))
 
 
@@ -192,46 +157,3 @@ async def _relay(events: AsyncIterator[Any]) -> AsyncIterator[dict[str, Any]]:
     message_id_map: dict[str, str] = {}
     async for item in events:
         yield rewrite_message_ids(item, message_id_map)
-
-
-async def _offline_events(thread_id: str, run_id: str) -> AsyncIterator[dict[str, Any]]:
-    yield RunStartedEvent(thread_id=thread_id, run_id=run_id).model_dump(
-        mode="json", by_alias=True, exclude_none=True
-    )
-    yield RunErrorEvent(message="agent is currently offline").model_dump(
-        mode="json", by_alias=True, exclude_none=True
-    )
-
-
-async def verify_caller(session, metadata: dict) -> tuple[dict, str | None, Any]:
-    """Verifies `metadata["actorChain"]` if present and returns
-    `(metadata stripped of funduq's reserved keys, the chain's head key, the raw chain)` —
-    `(metadata, None, None)` when no chain is attached. Raises `InvalidActorChain` if the
-    chain is tampered: a bad chain is refused at the door, never carried.
-
-    funduq's whole part in caller identity is four verbs — verify, copy the
-    head, relay, refuse — and this is the verify. No summary is produced:
-    the chain reaches the agent verbatim (`forwardedProps.actorChain`) and
-    the agent verifies for itself; the head key is what funduq copies onto
-    the records that need an authority (a thread's binding, a paused ask).
-
-    A session delegation certificate under `metadata["delegation"]` resolves
-    the head: when the certificate's named delegate signed the chain's first
-    hop, the certificate's authority is the effective head — rights attach to
-    the durable key; the session key is a glove.
-
-    Both doors funnel caller metadata through here, which also makes it the
-    one place to strip funduq's reserved keys from the caller's input."""
-    metadata = {k: v for k, v in metadata.items() if k not in RESERVED_METADATA_KEYS}
-    actor_chain = metadata.get("actorChain")
-    if not actor_chain:
-        return metadata, None, None
-    head = verify_actor_chain(actor_chain).head
-    delegation = metadata.get("delegation")
-    if delegation is not None:
-        authority = verify_delegation(delegation)
-        if delegation.get("delegatePublicKey") == head:
-            head = authority
-    return metadata, head, actor_chain
-
-

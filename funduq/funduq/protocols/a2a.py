@@ -11,11 +11,10 @@ from a2a.utils.constants import PROTOCOL_VERSION_CURRENT, TransportProtocol
 from google.protobuf.json_format import ParseDict, ParseError
 
 from funduq import repo
-from funduq.agui import build_run_agent_input
-from funduq.errors import AgentNotFound, InvalidRunInput, LlmProviderNotFound, RunNotFound
-from funduq.kyok import KyokBinding, parse_kyok_opt_in, strip_kyok_context
+from funduq.doors import InboundRun, dispatch, resolve_kyok, verify_caller
+from funduq.errors import AgentNotFound, RunNotFound
 from funduq.identity import verify_resolution
-from funduq.props import ADDRESSED_RUN_METADATA_KEY, build_forwarded_props
+from funduq.props import ADDRESSED_RUN_METADATA_KEY
 from funduq.models import AgentRef
 from funduq.protocols.a2a_translate import (
     a2a_message_to_agui_messages,
@@ -24,7 +23,6 @@ from funduq.protocols.a2a_translate import (
     status_update_for_run_status,
     to_wire,
 )
-from funduq.protocols.agui import verify_caller
 
 if TYPE_CHECKING:
     from funduq.core import Funduq
@@ -312,12 +310,7 @@ class A2AAdapter:
             if record is None:
                 raise AgentNotFound(f"agent '{agent}' is not registered")
 
-            metadata = params.get("metadata", {})
-            kyok = parse_kyok_opt_in(metadata)
-            kyok_ref = kyok.llm_provider if kyok is not None else None
-            if kyok_ref is not None and await repo.get_llm_provider(session, kyok_ref) is None:
-                raise LlmProviderNotFound(f"unknown KYOK LLM provider '{kyok_ref}'")
-            metadata = strip_kyok_context(metadata)
+            metadata, kyok = await resolve_kyok(session, params.get("metadata", {}))
             parent_thread_id = await _lineage_parent(session, params)
             context_id = params.get("contextId") or await _context_of_task(session, params.get("taskId"))
 
@@ -387,28 +380,17 @@ class A2AAdapter:
                 run_id = created["run_id"]
                 starting_seq = 0
 
-            messages = await repo.append_thread_messages(session, thread_id, run_id, messages)
-
-            if not funduq.is_serving(AgentRef(provider_key=record.provider_key, name=record.name)):
-                await funduq.mark_run_status(
-                    session, run_id, "failed", metadata={"failureReason": "agent_offline"}
-                )
-                await session.commit()
-                return run_id, thread_id, False
-
             reference_task_ids = params.get("message", {}).get("referenceTaskIds") or []
-            inherited = (
-                kyok_ref is None
-                and bool(reference_task_ids)
-                and funduq.kyok_relay.inherit(reference_task_ids[0], run_id, actor_chain)
-            )
-            forwarded_props = build_forwarded_props(
-                funduq.settings.token_signing_secret,
-                run_id,
-                agent,
-                kyok_ref is not None or inherited,
-                None,
-                actor_chain,
+            inbound = InboundRun(
+                agent=agent,
+                messages=messages,
+                metadata=metadata,
+                head_key=head_key,
+                actor_chain=actor_chain,
+                kyok=kyok,
+                # A2A's own lineage field doubles as the road a KYOK binding
+                # is inherited along; an explicit opt-in wins over it.
+                inherit_kyok_from=reference_task_ids[0] if reference_task_ids else None,
                 # The extension convention puts the key in the Message's own
                 # metadata map; the request-level map is accepted too.
                 addressed_run_id=(
@@ -417,25 +399,14 @@ class A2AAdapter:
                     )
                     or metadata.get(ADDRESSED_RUN_METADATA_KEY)
                 ),
-                delegation=metadata.get("delegation"),
+                protocol="a2a",
+            )
+            live = await dispatch(
+                funduq, session, inbound,
+                thread_id=thread_id, run_id=run_id, starting_seq=starting_seq,
             )
 
-            try:
-                agui_input = build_run_agent_input(
-                    thread_id, run_id, messages, forwarded_props=forwarded_props
-                )
-            except ValueError as e:
-                raise InvalidRunInput(str(e)) from e
-
-            await session.commit()
-
-        if kyok_ref is not None:
-            funduq.kyok_relay.bind_run(
-                run_id,
-                KyokBinding(llm_provider=kyok_ref, context=kyok.context, actor_chain=actor_chain),
-            )
-        funduq.enqueue_run(run_id, agent, thread_id, agui_input, "a2a", seq=starting_seq)
-        return run_id, thread_id, True
+        return run_id, thread_id, live
 
 
 def _skills(raw_skills: list[dict[str, Any]]) -> list[pb.AgentSkill]:

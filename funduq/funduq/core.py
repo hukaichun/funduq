@@ -15,7 +15,6 @@ from sqlalchemy.engine import make_url
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from funduq import repo
-from funduq.agui import build_run_agent_input
 from funduq.broker import (
     ConnectedProvider,
     FinishStream,
@@ -25,11 +24,21 @@ from funduq.broker import (
 )
 from funduq.changes import ChangeEvent, LlmRosterChanged, RosterChanged, RunStatusChanged
 from funduq.config import CoreSettings
+from funduq.doors import (
+    InboundRun,
+    PendingAsk,
+    dispatch,
+    offline_events,
+    open_run,
+    resolve_kyok,
+    verify_caller,
+)
 from funduq.db_schema import DEFAULT_DB_SCHEMA, EXPECTED_SCHEMA_REVISION, quoted_schema
 from funduq.errors import (
     AgentInUse,
     AgentNotFound,
     InvalidRegistration,
+    NoPendingAsk,
     LlmOfferingInUse,
     LlmProviderNotFound,
 )
@@ -47,7 +56,6 @@ from funduq.identity import (
     funduq_connect_signing_payload,
     verify_signature,
 )
-from funduq.ids import new_id
 from funduq.kyok import ConnectedLLMProvider, KyokRelay
 from funduq.models import AgentRecord, AgentRef, AgentSummary, LlmRef, LlmSummary, RunRecord
 
@@ -99,23 +107,6 @@ class RunHandle:
     def cancel(self) -> None:
         if self._broker is not None:
             self._broker.request_cancel(self.run_id)
-
-
-def _complete_run_agent_input(thread_id: str, run_id: str, run_input: dict[str, Any]) -> dict[str, Any]:
-    """Fill in a message id for any message that lacks one, then build an AG-UI run input."""
-    messages = [
-        m if m.get("id") else {**m, "id": new_id("msg")} for m in run_input.get("messages", [])
-    ]
-    return build_run_agent_input(
-        thread_id,
-        run_id,
-        messages,
-        state=run_input.get("state"),
-        tools=run_input.get("tools"),
-        context=run_input.get("context"),
-        forwarded_props=run_input.get("forwardedProps"),
-        resume=run_input.get("resume"),
-    )
 
 
 class _Roster(abc.ABC):
@@ -912,62 +903,153 @@ class Funduq:
         thread_id: str | None = None,
         metadata: dict[str, Any] | None = None,
     ) -> RunHandle:
-        """Create (or reuse) a thread, create a queued run on it, and enqueue it for dispatch.
+        """Create (or reuse) a thread, open a queued run on it, and enqueue it for dispatch.
 
-        Returns a live `RunHandle` subscribed to the run's event stream.
+        Returns a live `RunHandle` subscribed to the run's event stream — or, if the agent is
+        registered but nobody is currently serving it, one carrying the same terminal
+        `RUN_ERROR` a caller at either door would get, because the run is recorded `failed` and
+        a silent stream would hide that.
+
+        `run_input` is AG-UI-shaped, and this goes through the very
+        machinery both doors go through (`doors.open_run` then
+        `doors.dispatch`): the caller's metadata is verified and stripped of
+        funduq's reserved keys, a KYOK opt-in is honoured, the messages
+        enter the thread's history, and funduq's forwarded-props are built.
+        Embedding funduq is not a reason to get a weaker entrance than a
+        socket would — the same rule in-process providers live under.
         """
         async with self.session() as session:
+            caller_metadata, head_key, actor_chain = await verify_caller(session, metadata or {})
+            caller_metadata, kyok = await resolve_kyok(session, caller_metadata)
             resolved_thread_id = await repo.ensure_thread(
-                session, agent, thread_id, metadata=metadata, create_if_missing=True
+                session, agent, thread_id, metadata=caller_metadata,
+                create_if_missing=True, head_key=head_key,
             )
-            await repo.ensure_queue_room(
-                session, resolved_thread_id, self.settings.thread_queue_limit
+            opened = await open_run(
+                self, session,
+                agent=agent,
+                thread_id=resolved_thread_id,
+                # An embedder speaks; it does not answer a pending ask. A
+                # result has its own verb, `resume_run`.
+                entrance="utterance",
+                ask=None,
+                run_input=run_input,
+                metadata=caller_metadata,
+                head_key=head_key,
+                protocol="ag-ui",
             )
-            created = await repo.create_run(
-                session, resolved_thread_id, agent, "ag-ui", run_input, metadata
+            live = await dispatch(
+                self, session,
+                InboundRun(
+                    agent=agent,
+                    messages=run_input.get("messages", []),
+                    metadata=caller_metadata,
+                    head_key=head_key,
+                    actor_chain=actor_chain,
+                    kyok=kyok,
+                    state=run_input.get("state"),
+                    tools=run_input.get("tools"),
+                    context=run_input.get("context"),
+                    resume=run_input.get("resume"),
+                    parent_run_id=run_input.get("parentRunId"),
+                    forwarded_props=run_input.get("forwardedProps"),
+                    protocol="ag-ui",
+                ),
+                thread_id=resolved_thread_id,
+                run_id=opened.run_id,
+                starting_seq=opened.starting_seq,
             )
-            run_id = created["run_id"]
 
-        self.enqueue_run(
-            run_id,
-            agent,
-            resolved_thread_id,
-            _complete_run_agent_input(resolved_thread_id, run_id, run_input),
-            "ag-ui",
-        )
         return RunHandle(
-            run_id=run_id,
+            run_id=opened.run_id,
             thread_id=resolved_thread_id,
             _broker=self.broker,
-            _events=self.broker.subscribe(run_id),
+            _events=(
+                self.broker.subscribe(opened.run_id)
+                if live
+                else offline_events(resolved_thread_id, opened.run_id)
+            ),
         )
 
-    async def resume_run(self, run_id: str, run_input: dict[str, Any], metadata: dict | None = None) -> RunHandle:
-        """Reopen an existing run under its same `run_id` and re-enqueue it with new input.
+    async def resume_run(
+        self, run_id: str, run_input: dict[str, Any], metadata: dict | None = None
+    ) -> RunHandle:
+        """Deliver a deferred call's result back into the run it suspended.
 
-        Raises `LookupError` if `run_id` doesn't exist. The returned handle's event stream
-        continues appending from the run's last stored event sequence.
+        The run **keeps its id**, because it is the same run: a deferred call is a pause inside
+        the agent's loop, not the end of it. The provider sees that pause as an ending — its
+        stream really did return — and funduq holds the run's identity across the gap the
+        provider cannot hold, invoking the agent again with the result attached and continuing
+        the event log from where it stopped.
+
+        Raises `LookupError` if `run_id` doesn't exist, and `NoPendingAsk` if it exists but is
+        not waiting for a result — a run that already reached its natural exit has no
+        suspension to return to, and running it again would put a second loop under one run's
+        id. That is a new run; open one with `start_run`.
+
+        This is the result entrance, and `start_run` is the utterance one. There is no third.
         """
         async with self.session() as session:
             stored = await repo.get_run(session, run_id)
             if stored is None:
                 raise LookupError(f"no such run: {run_id}")
-            await repo.reopen_run(session, run_id, run_input, metadata)
-            starting_seq = await repo.get_last_event_seq(session, run_id)
+            if stored.status != "input-required":
+                raise NoPendingAsk(
+                    f"run '{run_id}' is {stored.status}, not waiting for a result"
+                )
+            agent = AgentRef(provider_key=stored.provider_key, name=stored.agent_name)
 
-        self.enqueue_run(
-            run_id,
-            AgentRef(provider_key=stored.provider_key, name=stored.agent_name),
-            stored.thread_id,
-            _complete_run_agent_input(stored.thread_id, run_id, run_input),
-            stored.protocol or "ag-ui",
-            seq=starting_seq,
-        )
+            caller_metadata, head_key, actor_chain = await verify_caller(session, metadata or {})
+            caller_metadata, kyok = await resolve_kyok(session, caller_metadata)
+
+            opened = await open_run(
+                self, session,
+                agent=agent,
+                thread_id=stored.thread_id,
+                entrance="result",
+                ask=PendingAsk(run_id=run_id, head_key=stored.head_key),
+                run_input=run_input,
+                metadata=caller_metadata,
+                head_key=head_key,
+                protocol=stored.protocol or "ag-ui",
+            )
+            if opened is None:
+                # Another result reached the same ask first. The reopen is
+                # status-guarded, so exactly one wins and this one has
+                # nothing left to land on.
+                raise NoPendingAsk(f"run '{run_id}' is no longer waiting for a result")
+
+            live = await dispatch(
+                self, session,
+                InboundRun(
+                    agent=agent,
+                    messages=run_input.get("messages", []),
+                    metadata=caller_metadata,
+                    head_key=head_key,
+                    actor_chain=actor_chain,
+                    kyok=kyok,
+                    state=run_input.get("state"),
+                    tools=run_input.get("tools"),
+                    context=run_input.get("context"),
+                    resume=run_input.get("resume"),
+                    parent_run_id=run_input.get("parentRunId"),
+                    forwarded_props=run_input.get("forwardedProps"),
+                    protocol=stored.protocol or "ag-ui",
+                ),
+                thread_id=stored.thread_id,
+                run_id=run_id,
+                starting_seq=opened.starting_seq,
+            )
+
         return RunHandle(
             run_id=run_id,
             thread_id=stored.thread_id,
             _broker=self.broker,
-            _events=self.broker.subscribe(run_id),
+            _events=(
+                self.broker.subscribe(run_id)
+                if live
+                else offline_events(stored.thread_id, run_id)
+            ),
         )
 
     def cancel_run(self, run_id: str) -> bool:
