@@ -35,7 +35,7 @@ funduq is that house, built as software. The invariants below are load-bearing i
 - **The same face, season after season.** Identity is an Ed25519 keypair, not an account — a caller can verify it is talking to the same key as last time, and nobody's seal claims more than that. Sharing a process earns no shortcuts: an in-process provider passes the same registration, identity, and liveness checks a remote one does.
 - **The house provides mechanism; the host decides policy.** Open-by-default is funduq's own stance, not a constraint it imposes on deployments: an operator who wants an invite-only or allowlisted deployment puts their own gate in front of `/agents/register` (the reasoning is in [`federation-and-anti-abuse.md`](https://github.com/hukaichun/funduq/blob/d78d0638c0ec2126167240c62471651b5468d35b/design/federation-and-anti-abuse.md), a working note kept in history rather than the tree). The same gateway serves an enterprise-internal deployment and a public one — funduq never takes a side between "open" and "curated".
 - **Anyone may walk in.** A stock AG-UI or A2A client works unmodified; every funduq-invented mechanism is opt-in.
-- **The core is network-free — vocabulary included.** No market image for this one; it is a codebase discipline. Which protocol something arrives over is a serving-layer choice, so the core doesn't just avoid importing transports; it avoids *naming* them.
+- **The core implements no transport, and does not name one.** No market image for this one; it is a codebase discipline, and it is two rules rather than one. The first is about *verbs*: funduq's own code never listens or dials — checked behaviourally (importing the package performs no socket operation at all) and statically (no import of a transport, or of a protocol SDK's I/O half). It deliberately does not police dependency *names*: a wheel may carry network code in its belly — `a2a-sdk` ships `httpx` — and quoting a protocol's own package is exactly how funduq stays current with it. The second rule is about *vocabulary*: which protocol something arrives over is a serving-layer choice, so `broker.py`, `identity.py` and `repo.py` must not name one.
 
 The same principles extend into a conversation-semantics direction that is **designed but not yet implemented** — who may speak on a thread ([responsibility chains](docs/mechanisms/responsibility-chains.md)), when speech gets handled and how to speak to work already in flight ([the two lanes, queueing and interjection](docs/design-records.md#designed-not-built)). Parts of it are under open discussion with the protocol communities: [who answers a delegated `input-required`](https://github.com/a2aproject/A2A/discussions/2148), [the multi-turn gap list](https://github.com/a2aproject/A2A/issues/1992), and [in-flight steering for AG-UI](https://github.com/ag-ui-protocol/ag-ui/issues/2148).
 
@@ -43,19 +43,31 @@ The same principles extend into a conversation-semantics direction that is **des
 
 ## Two repositories, one boundary
 
-The mechanism/policy split runs through the codebase itself, as a hard line between two repos:
+> **What a protocol *says* is core's. How it is *sent*, and *who may say it*, are the gateway's.**
+
+Core holds the vocabulary and the decisions the domain forces — what a task
+is, when a run has settled, which turn an answer belongs to — and hands back
+objects: an AG-UI event, an A2A `Task`, an OpenAI chunk. It does not produce
+bytes for a wire, and it knows no more about a caller than that caller's own
+signature proves.
+
+That one line decides most arguments about where something belongs. A JSON-RPC
+envelope, an SSE frame, an HTTP status code, a protocol-version header, a rate
+limit, an allowlist: all *sent* or *who*, none of them *what*. The mechanism/policy
+split runs through the codebase itself, as a hard line between two repos:
 
 | | **funduq** (this repo) | **[funduq-server](https://github.com/hukaichun/funduq-server)** |
 |---|---|---|
 | **Owns** | The domain: agents, threads, runs, identity, persistence, protocol *translation* | The network: ports, transports, TLS, CORS, endpoints, wire framing, admin surface |
 | **Ships** | `funduq` (the network-free core library) + [`funduq-provider-sdk`](funduq-provider-sdk/) and [`funduq-llm-provider-sdk`](funduq-llm-provider-sdk/) (the two provider-side contracts, also transport-free) | The reference gateway, the transport SDKs (`funduq-agent-sdk`, `funduq-client-sdk`) and the reference providers |
-| **May it bind a socket?** | Never. `funduq` cannot even *import* a transport — enforced by packaging and by `funduq/tests/test_core_is_network_free.py` | Yes — that is its entire job |
+| **May it bind a socket?** | Never. funduq's own code neither listens nor dials — enforced behaviourally and statically by `funduq/tests/test_core_is_network_free.py` | Yes — that is its entire job |
+| **Decides who may speak?** | Only what a caller's own signatures prove: a thread bound to a [responsibility chain](docs/mechanisms/responsibility-chains.md) admits its head and the serving provider and refuses the rest. Beyond that, nothing tells core who is on the other end | Yes. Authentication, authorization, rate limits, and whatever gate a deployment wants in front of the door |
 
 Three consequences, recorded in [funduq#27](https://github.com/hukaichun/funduq/issues/27) and load-bearing:
 
 - **No network design originates here.** When a need looks network-shaped, it becomes a core mechanism *plus* a serving decision made downstream — never a new endpoint, transport, or subproject in this repo.
 - **The wire contract is authored downstream.** funduq-server's [`docs/server-mode.md`](https://github.com/hukaichun/funduq-server/blob/main/docs/server-mode.md) is the spec of record (single HTTP port; WebSocket relays for providers and KYOK bridges). The SDKs here *implement* that contract; they do not define it.
-- **Core's own vocabulary is transport-neutral.** A worker "claims work and reports events" — whether a gRPC stream, a WebSocket, or an in-process call carries that is not core's business, and `websockets` sits in the forbidden-imports list ahead of anything importing it.
+- **Core's own vocabulary is transport-neutral.** A worker "claims work and reports events" — whether a gRPC stream, a WebSocket, or an in-process call carries that is not core's business, and no core module may program against one.
 
 That is precisely the runtime architecture:
 

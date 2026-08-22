@@ -10,6 +10,7 @@ import pytest
 from ag_ui.core import RunAgentInput, UserMessage
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 from openai.types.chat import ChatCompletionChunk
+from openai.types.shared import ErrorObject
 
 from funduq import repo
 from funduq.errors import KyokRejected, LlmProviderNotFound
@@ -18,7 +19,7 @@ from funduq.kyok import read_kyok_forwarded_props
 from funduq.models import LlmRef
 from funduq.protocols.a2a import A2AAdapter
 from funduq.protocols.agui import AGUIAdapter
-from funduq.protocols.kyok import KyokAdapter
+from funduq.protocols.kyok import CompletionFailure, KyokAdapter
 from funduq_provider_sdk.identity import kyok_call_payload
 from funduq_llm_provider_sdk import (
     DeliveredCompletion,
@@ -324,12 +325,13 @@ async def test_a_streaming_call_streams(funduq, serve, llm):
         agent.token, body, **_signed_call(served.identity, agent.token, body)
     )
     assert relay.stream_requested is True
-    payloads = [p async for p in relay.encode()]
+    chunks = [c async for c in relay.stream()]
 
-    assert payloads[-1] == "[DONE]"
-    deltas = [
-        json.loads(p)["choices"][0]["delta"].get("content") for p in payloads[:-1]
-    ]
+    # OpenAI's own chunk models, and no framing: no JSON, no `[DONE]`. The
+    # sentinel is a convention of whichever wire the caller is on, and this
+    # relay does not know which one that is.
+    assert all(isinstance(c, ChatCompletionChunk) for c in chunks)
+    deltas = [c.choices[0].delta.content for c in chunks]
     assert "".join(d for d in deltas if d) == "hello world"
     await _finish(agent, stream)
 
@@ -372,8 +374,44 @@ async def test_a_structured_refusal_travels_intact_not_as_prose(funduq, serve, l
     relay = await KyokAdapter(funduq).complete(
         agent.token, body, **_signed_call(served.identity, agent.token, body)
     )
-    frames = [json.loads(f) async for f in relay.encode() if f != "[DONE]"]
-    assert frames[-1] == {"error": payload}
+    items = [item async for item in relay.stream()]
+    failure = items[-1]
+    assert isinstance(failure, CompletionFailure)
+    assert failure.payload == payload, "the provider's own refusal, relayed intact"
+    assert failure.refused is True
+    await _finish(agent, stream)
+
+
+async def test_an_unstructured_failure_is_funduq_speaking_in_openais_own_shape(
+    funduq, serve, llm
+):
+    """A provider that breaks without raising a structured refusal leaves funduq with nothing to
+    relay, so funduq says what it observed — in its own words, but in OpenAI's `ErrorObject`
+    shape rather than a dict typed out by hand. The same rule as funduq's AG-UI events, which
+    are built from `RunErrorEvent`: what funduq authors comes from the package that defines the
+    vocabulary; what another party authored is relayed untouched.
+
+    `refused` is what tells the two apart, and it is the same distinction
+    the quality counters record — the provider's policy working, or a
+    failure funduq watched happen.
+    """
+    stub, _, ref = llm
+    stub.refuse = RuntimeError("the upstream model hung up")
+    agent = KyokTokenAgent()
+    served, stream = await _run_with_token(funduq, serve, agent, ref)
+
+    body = _completion_body()
+    relay = await KyokAdapter(funduq).complete(
+        agent.token, body, **_signed_call(served.identity, agent.token, body)
+    )
+    failure = [item async for item in relay.stream()][-1]
+
+    assert isinstance(failure, CompletionFailure)
+    assert failure.refused is False
+    assert set(failure.payload) <= set(ErrorObject.model_fields), (
+        "funduq's own error payload is an ErrorObject, not a hand-shaped dict"
+    )
+    assert "the upstream model hung up" in failure.payload["message"]
     await _finish(agent, stream)
 
 
