@@ -111,9 +111,9 @@ refused for the same reason.
 **`referenceTaskIds` is lineage, not continuity.** The first reference
 resolves to its thread and becomes the new thread's parent, which is how
 a delegated call hangs off the thread that spawned it. It does *not*
-continue that conversation — for that, pass the `contextId`. One further
-consequence worth knowing: the same reference is what a KYOK binding is
-inherited through.
+continue that conversation — for that, pass the `contextId`. It grants
+nothing, either: a run spends against the KYOK opt-in its **own** caller
+submitted, and citing a funded task confers no funding.
 
 **`Message.taskId` references an existing task.** It resolves to that
 task's thread, and an unknown one is a JSON-RPC `-32001`. Note it is read

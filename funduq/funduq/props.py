@@ -54,9 +54,9 @@ def build_forwarded_props(
     returning the caller's value unchanged if there is nothing to add.
 
     Both adapters build through here, and both doors take the same
-    `metadata.kyok` opt-in. A2A additionally inherits a parent's binding
-    through `referenceTaskIds` when no fresh opt-in is given; an explicit
-    opt-in wins over inheritance. The chain is the caller's own utterance,
+    `metadata.kyok` opt-in — a run is granted one only when its **own**
+    caller submitted it, and nothing propagates from a parent run. The
+    chain is the caller's own utterance,
     not a funduq digest: the agent verifies it for itself
     (`funduq_provider_sdk.verify_chain`), trusting no summary of the
     relay's — funduq authors nothing here beyond the KYOK grant.

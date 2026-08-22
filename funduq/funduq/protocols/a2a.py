@@ -232,8 +232,9 @@ class A2AAdapter:
         only if the agent isn't currently served (in which case the run is
         recorded as failed). A `metadata.kyok` opt-in binds the run to the named LLM offering
         (raising `LlmProviderNotFound` for an unknown one), the same road AG-UI callers use.
-        Absent that, a `referenceTaskIds` entry both anchors thread lineage to the referenced
-        task's thread and, if that task carries a KYOK binding, inherits it for this run."""
+        A `referenceTaskIds` entry anchors thread lineage to the referenced task's thread, and
+        that is **all** it does: it is A2A's word for "this came from that", not a grant. A run
+        spends against the opt-in its own caller submitted, and nothing propagates."""
         funduq = self._funduq
         async with funduq.session() as session:
             record = await repo.get_agent(session, agent)
@@ -310,7 +311,6 @@ class A2AAdapter:
                 run_id = created["run_id"]
                 starting_seq = 0
 
-            reference_task_ids = params.get("message", {}).get("referenceTaskIds") or []
             inbound = InboundRun(
                 agent=agent,
                 messages=messages,
@@ -318,9 +318,6 @@ class A2AAdapter:
                 head_key=head_key,
                 actor_chain=actor_chain,
                 kyok=kyok,
-                # A2A's own lineage field doubles as the road a KYOK binding
-                # is inherited along; an explicit opt-in wins over it.
-                inherit_kyok_from=reference_task_ids[0] if reference_task_ids else None,
                 # The extension convention puts the key in the Message's own
                 # metadata map; the request-level map is accepted too.
                 addressed_run_id=(
