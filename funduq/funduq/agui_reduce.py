@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from typing import Any
 
+from ag_ui.core import EventType
+
 
 def reduce_events_to_messages(events: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """Folds a stream of AG-UI events into the thread-history messages they represent, in the
@@ -23,13 +25,13 @@ def reduce_events_to_messages(events: list[dict[str, Any]]) -> list[dict[str, An
     for event in events:
         etype = event.get("type")
 
-        if etype == "TEXT_MESSAGE_START":
+        if etype == EventType.TEXT_MESSAGE_START:
             assistant_message(event["messageId"], event.get("role", "assistant"))
 
-        elif etype == "TEXT_MESSAGE_CONTENT":
+        elif etype == EventType.TEXT_MESSAGE_CONTENT:
             assistant_message(event["messageId"])["content"] += event.get("delta", "")
 
-        elif etype == "TOOL_CALL_START":
+        elif etype == EventType.TOOL_CALL_START:
             tool_call_id = event["toolCallId"]
             parent_id = event.get("parentMessageId") or tool_call_id
             tool_call_parent[tool_call_id] = parent_id
@@ -42,7 +44,7 @@ def reduce_events_to_messages(events: list[dict[str, Any]]) -> list[dict[str, An
                 }
             )
 
-        elif etype == "TOOL_CALL_ARGS":
+        elif etype == EventType.TOOL_CALL_ARGS:
             tool_call_id = event["toolCallId"]
             parent_id = tool_call_parent.get(tool_call_id)
             if parent_id is None:
@@ -52,7 +54,7 @@ def reduce_events_to_messages(events: list[dict[str, Any]]) -> list[dict[str, An
                     tool_call["function"]["arguments"] += event.get("delta", "")
                     break
 
-        elif etype == "TOOL_CALL_RESULT":
+        elif etype == EventType.TOOL_CALL_RESULT:
             message_id = event["messageId"]
             messages[message_id] = {
                 "id": message_id,

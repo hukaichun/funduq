@@ -5,7 +5,6 @@ import time
 import pytest
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
-from funduq.errors import RunNotFound
 from funduq.identity import (
     InvalidActorChain,
     extend_actor_chain,
@@ -15,11 +14,32 @@ from funduq.protocols.a2a import A2AAdapter
 
 from tests.conftest import EchoAgent
 
+from a2a.types import a2a_pb2 as pb
+
+COMPLETED = pb.TaskState.TASK_STATE_COMPLETED
+INPUT_REQUIRED = pb.TaskState.TASK_STATE_INPUT_REQUIRED
+
 USER = {"type": "user", "id": "employee_x"}
 
 
-def _message(text: str) -> dict:
-    return {"role": "user", "parts": [{"type": "text", "text": text}]}
+def _message(
+    text: str,
+    *,
+    context_id: str | None = None,
+    task_id: str | None = None,
+    reference_task_ids: list[str] | None = None,
+) -> dict:
+    """An A2A message. Its addressing rides on the message itself, because in A2A v1.0 that is
+    the only place it exists — `SendMessageRequest` carries `message` and `metadata`, nothing
+    else."""
+    message: dict = {"role": "user", "parts": [{"type": "text", "text": text}]}
+    if context_id is not None:
+        message["contextId"] = context_id
+    if task_id is not None:
+        message["taskId"] = task_id
+    if reference_task_ids is not None:
+        message["referenceTaskIds"] = reference_task_ids
+    return message
 
 
 async def test_delegate_without_building_a_json_rpc_envelope(funduq, serve):
@@ -27,8 +47,8 @@ async def test_delegate_without_building_a_json_rpc_envelope(funduq, serve):
 
     task = await A2AAdapter(funduq).send_task(callee, _message("do the thing"))
 
-    assert task["status"]["state"] == "TASK_STATE_COMPLETED"
-    assert task["id"].startswith("run_")
+    assert task.status.state == COMPLETED
+    assert task.id.startswith("run_")
 
 
 async def test_the_callers_chain_reaches_the_agent_verbatim_on_both_roads(funduq, serve):
@@ -101,7 +121,7 @@ async def test_lineage_links_the_callee_thread_back_to_the_caller(funduq, serve,
     caller_run = await funduq.start_run(caller, {"messages": []}, thread_id=caller_thread)
 
     await A2AAdapter(funduq).send_task(
-        callee, _message("hi"), reference_task_ids=[caller_run.run_id]
+        callee, _message("hi", reference_task_ids=[caller_run.run_id]),
     )
 
     tree = await funduq.get_thread_tree(caller_thread)
@@ -114,46 +134,44 @@ async def test_context_id_continues_the_same_conversation(funduq, serve):
 
     first = await adapter.send_task(callee, _message("one"))
     second = await adapter.send_task(
-        callee, _message("two"), context_id=first["contextId"]
+        callee, _message("two", context_id=first.context_id),
     )
 
-    assert second["contextId"] == first["contextId"]
-    assert second["id"] != first["id"]
+    assert second.context_id == first.context_id
+    assert second.id != first.id
 
 
-async def test_the_wire_rung_and_the_semantic_rung_agree(funduq, serve):
+async def test_there_is_only_one_rung_now(funduq, serve):
+    """There used to be two ways in here — a JSON-RPC envelope and the operation behind it —
+    and a test that they agreed. Core no longer writes the envelope, so the agreement is
+    structural rather than checked: an in-process delegation and a networked caller reach the
+    same method, and what differs is only what the transport wraps it in."""
     callee = (await serve(EchoAgent(), "callee")).agents["callee"]
-    adapter = A2AAdapter(funduq)
 
-    direct = await adapter.send_task(callee, _message("hi"))
-    envelope = await adapter.handle_rpc(
-        callee,
-        {"jsonrpc": "2.0", "id": "1", "method": "SendMessage", "params": {"message": _message("hi")}},
-    )
+    task = await A2AAdapter(funduq).send_task(callee, _message("hi"))
 
-    assert envelope["jsonrpc"] == "2.0" and envelope["id"] == "1"
-    via_wire = envelope["result"]
-    assert via_wire.keys() == direct.keys()
-    assert via_wire["status"]["state"] == direct["status"]["state"] == "TASK_STATE_COMPLETED"
+    assert isinstance(task, pb.Task)
+    assert task.status.state == COMPLETED
 
 
-async def test_get_and_cancel_are_callable_without_an_envelope(funduq, serve):
+async def test_get_and_cancel_are_callable_directly(funduq, serve):
     callee = (await serve(EchoAgent(), "callee")).agents["callee"]
     adapter = A2AAdapter(funduq)
 
     task = await adapter.send_task(callee, _message("hi"))
-    assert (await adapter.get_task(callee, task["id"]))["id"] == task["id"]
+    assert (await adapter.get_task(callee, task.id)).id == task.id
 
-    cancelled = await adapter.cancel_task(callee, task["id"])
-    assert cancelled["status"]["state"] == "TASK_STATE_COMPLETED"
-
-    with pytest.raises(RunNotFound):
-        await adapter.get_task(callee, "run_does_not_exist")
+    cancelled = await adapter.cancel_task(callee, task.id)
+    assert cancelled.status.state == COMPLETED
 
 
-async def test_an_unknown_task_is_an_error_not_an_exception_over_the_wire(funduq, register):
+async def test_an_unknown_task_is_not_found_rather_than_an_exception(funduq, register):
+    """`None`, which is what A2A's own request-handler interface means by not-found: the
+    transport turns it into whatever its binding calls that. funduq used to mint the JSON-RPC
+    code itself, which it could never do correctly — the code a caller should see depends on
+    the protocol version they declared in a header core does not see."""
     callee = (await register("callee")).agents["callee"]
-    response = await A2AAdapter(funduq).handle_rpc(
-        callee, {"jsonrpc": "2.0", "id": "9", "method": "tasks/get", "params": {"id": "run_nope"}}
-    )
-    assert response["error"]["message"] == "task not found"
+    adapter = A2AAdapter(funduq)
+
+    assert await adapter.get_task(callee, "run_nope") is None
+    assert await adapter.cancel_task(callee, "run_nope") is None

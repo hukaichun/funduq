@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from a2a.types import a2a_pb2 as pb
+from google.protobuf.json_format import MessageToDict
 
 from funduq.protocols.a2a_translate import (
     a2a_message_to_agui_messages,
@@ -11,36 +12,39 @@ from funduq.protocols.a2a_translate import (
 )
 
 
+def _wire(message) -> dict:
+    """The translator returns A2A's own messages now; wrapping one into a `StreamResponse` and
+    serialising it is the transport's job. These tests read the same content through the
+    package's own serialiser rather than asserting on protobuf repr."""
+    return MessageToDict(message)
+
+
 def test_run_error_event_maps_to_failed_status_with_message():
     update = agui_event_to_a2a_update(
         {"type": "RUN_ERROR", "message": "no_provider_online"}, "task_1", "session_1"
     )
 
-    assert update == {
-        "statusUpdate": {
-            "taskId": "task_1",
-            "contextId": "session_1",
-            "status": {
-                "state": "TASK_STATE_FAILED",
-                "message": {
-                    "messageId": "task_1-error",
-                    "role": "ROLE_AGENT",
-                    "parts": [{"text": "no_provider_online"}],
-                },
+    assert _wire(update) == {
+        "taskId": "task_1",
+        "contextId": "session_1",
+        "status": {
+            "state": "TASK_STATE_FAILED",
+            "message": {
+                "messageId": "task_1-error",
+                "role": "ROLE_AGENT",
+                "parts": [{"text": "no_provider_online"}],
             },
-        }
+        },
     }
 
 
 def test_run_finished_is_completed():
     update = agui_event_to_a2a_update({"type": "RUN_FINISHED"}, "task_1", "session_1")
 
-    assert update == {
-        "statusUpdate": {
-            "taskId": "task_1",
-            "contextId": "session_1",
-            "status": {"state": "TASK_STATE_COMPLETED"},
-        }
+    assert _wire(update) == {
+        "taskId": "task_1",
+        "contextId": "session_1",
+        "status": {"state": "TASK_STATE_COMPLETED"},
     }
 
 
@@ -49,20 +53,18 @@ def test_text_content_becomes_an_appending_artifact_update():
         {"type": "TEXT_MESSAGE_CONTENT", "messageId": "m1", "delta": "hel"}, "task_1", "session_1"
     )
 
-    assert update == {
-        "artifactUpdate": {
-            "taskId": "task_1",
-            "contextId": "session_1",
-            "artifact": {"artifactId": "m1", "parts": [{"text": "hel"}]},
-            "append": True,
-        }
+    assert _wire(update) == {
+        "taskId": "task_1",
+        "contextId": "session_1",
+        "artifact": {"artifactId": "m1", "parts": [{"text": "hel"}]},
+        "append": True,
     }
 
 
 def test_unmodeled_event_falls_back_to_a_working_update():
     event = {"type": "CUSTOM", "name": "sub_agent_progress", "value": {"sub_agent": "translator"}}
 
-    update = agui_event_to_a2a_update(event, "task_1", "session_1")["statusUpdate"]
+    update = _wire(agui_event_to_a2a_update(event, "task_1", "session_1"))
 
     assert update["status"]["state"] == "TASK_STATE_WORKING"
     assert update["metadata"]["agui_event"] == event
@@ -81,12 +83,10 @@ def test_run_statuses_map_to_a2a_states():
 def test_status_update_from_a_persisted_status_has_no_final_flag():
     update = status_update_for_run_status("t1", "s1", "completed")
 
-    assert update == {
-        "statusUpdate": {
-            "taskId": "t1",
-            "contextId": "s1",
-            "status": {"state": "TASK_STATE_COMPLETED"},
-        }
+    assert _wire(update) == {
+        "taskId": "t1",
+        "contextId": "s1",
+        "status": {"state": "TASK_STATE_COMPLETED"},
     }
 
 
@@ -116,7 +116,7 @@ def test_build_task_merges_a_message_into_one_artifact():
 
     task = build_task("task_1", "session_1", "translator", "completed", events)
 
-    assert task == {
+    assert _wire(task) == {
         "id": "task_1",
         "contextId": "session_1",
         "status": {"state": "TASK_STATE_COMPLETED"},
@@ -139,8 +139,8 @@ def test_run_finished_on_an_interrupt_is_input_required_not_completed():
         "session_1",
     )
 
-    assert update["statusUpdate"]["status"]["state"] == "TASK_STATE_INPUT_REQUIRED"
-    assert update["statusUpdate"]["metadata"] == {"interrupts": [{"id": "i1", "reason": "approve"}]}
+    assert _wire(update)["status"]["state"] == "TASK_STATE_INPUT_REQUIRED"
+    assert _wire(update)["metadata"] == {"interrupts": [{"id": "i1", "reason": "approve"}]}
 
 
 def test_every_ag_ui_event_type_is_mapped_or_reaches_the_overflow_seam():
@@ -164,7 +164,7 @@ def test_every_ag_ui_event_type_is_mapped_or_reaches_the_overflow_seam():
             continue
 
         assert not is_mapped(event)
-        metadata = update["statusUpdate"]["metadata"]
+        metadata = _wire(update)["metadata"]
         assert metadata[OVERFLOW_METADATA_KEY] == event, event_type.value
 
 
@@ -185,8 +185,8 @@ def test_get_task_carries_the_same_overflow_the_stream_does():
 
     task = build_task("task_1", "session_1", "agent", "completed", events)
 
-    assert task["metadata"][OVERFLOW_METADATA_LIST_KEY] == unmapped
-    assert task["artifacts"] == [{"artifactId": "m1", "parts": [{"text": "hi"}]}]
+    assert _wire(task)["metadata"][OVERFLOW_METADATA_LIST_KEY] == unmapped
+    assert _wire(task)["artifacts"] == [{"artifactId": "m1", "parts": [{"text": "hi"}]}]
 
 
 def test_a_task_with_nothing_unmapped_carries_no_overflow_metadata():
@@ -198,4 +198,4 @@ def test_a_task_with_nothing_unmapped_carries_no_overflow_metadata():
         [{"type": "RUN_STARTED"}, {"type": "TEXT_MESSAGE_CONTENT", "messageId": "m1", "delta": "hi"}],
     )
 
-    assert "metadata" not in task
+    assert "metadata" not in _wire(task)

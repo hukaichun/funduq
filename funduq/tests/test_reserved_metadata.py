@@ -16,8 +16,24 @@ from funduq.protocols.a2a import A2AAdapter
 from tests.conftest import EchoAgent
 
 
-def _message(text: str) -> dict:
-    return {"role": "user", "parts": [{"type": "text", "text": text}]}
+def _message(
+    text: str,
+    *,
+    context_id: str | None = None,
+    task_id: str | None = None,
+    reference_task_ids: list[str] | None = None,
+) -> dict:
+    """An A2A message. Its addressing rides on the message itself, because in A2A v1.0 that is
+    the only place it exists — `SendMessageRequest` carries `message` and `metadata`, nothing
+    else."""
+    message: dict = {"role": "user", "parts": [{"type": "text", "text": text}]}
+    if context_id is not None:
+        message["contextId"] = context_id
+    if task_id is not None:
+        message["taskId"] = task_id
+    if reference_task_ids is not None:
+        message["referenceTaskIds"] = reference_task_ids
+    return message
 
 
 async def test_funduq_authors_no_verification_summary(funduq, serve, new_identity):
@@ -37,7 +53,7 @@ async def test_funduq_authors_no_verification_summary(funduq, serve, new_identit
     )
 
     async with funduq.session() as session:
-        stored = await repo.get_run(session, sent["id"])
+        stored = await repo.get_run(session, sent.id)
     assert stored.metadata.get("verifiedActorChain") == "not-funduqs-word", (
         "funduq writes no such key, so the caller's value passes through as caller data"
     )
@@ -56,7 +72,7 @@ async def test_only_funduq_written_keys_are_stripped(funduq, serve):
     )
 
     async with funduq.session() as session:
-        stored = await repo.get_run(session, sent["id"])
+        stored = await repo.get_run(session, sent.id)
     assert "failureReason" not in stored.metadata, "funduq writes this key; forgery is stripped"
     assert stored.metadata.get("addressedRunId") == "run_i_made_up", (
         "funduq does not write this key into run records, so it is plain caller data"

@@ -2,16 +2,16 @@ from __future__ import annotations
 
 from typing import Any
 
-from ag_ui.core import RunAgentInput
+from ag_ui.core import EventType, RunAgentInput
 from pydantic import ValidationError
 
 from funduq.ids import new_id
 
 _MESSAGE_ID_EVENT_TYPES = {
-    "TEXT_MESSAGE_START",
-    "TEXT_MESSAGE_CONTENT",
-    "TEXT_MESSAGE_CHUNK",
-    "TEXT_MESSAGE_END",
+    EventType.TEXT_MESSAGE_START,
+    EventType.TEXT_MESSAGE_CONTENT,
+    EventType.TEXT_MESSAGE_CHUNK,
+    EventType.TEXT_MESSAGE_END,
 }
 
 

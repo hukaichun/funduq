@@ -5,8 +5,11 @@ import logging
 
 from typing import TYPE_CHECKING
 
+from ag_ui.core import EventType
+
 from funduq import repo
 from funduq.broker import Fail
+from funduq.handlers import run_error
 
 if TYPE_CHECKING:
     from funduq.core import Funduq
@@ -29,11 +32,11 @@ async def close_with_terminal_event(funduq: "Funduq", run_id: str, failure_reaso
         return
     async with funduq.session() as session:
         events = await repo.get_run_events(session, run_id)
-        if any(e.get("type") == "RUN_ERROR" for e in events):
+        if any(e.get("type") == EventType.RUN_ERROR for e in events):
             return
         seq = await repo.get_last_event_seq(session, run_id) + 1
         await repo.append_run_event(
-            session, run_id, seq, {"type": "RUN_ERROR", "message": failure_reason}
+            session, run_id, seq, run_error(failure_reason)
         )
         await session.commit()
 
