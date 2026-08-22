@@ -15,7 +15,6 @@ class CoreSettings(BaseSettings):
     stale_hidden_window_seconds: int = 60 * 60 * 24 * 7
 
 
-    run_stall_timeout_seconds: int = 120
     health_sweep_interval_seconds: int = 15
 
     paused_timeout_seconds: int | None = None

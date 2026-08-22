@@ -39,6 +39,6 @@ page about location.
 ## Support
 
 The pieces that keep the trunk honest: push-style change notifications so
-a serving layer never polls, health sweeps that fail what stalled, and
+a serving layer never polls, health sweeps that fail what nobody will answer, and
 the settings object where every deliberate switch lives.
 → [Details](core-components/support.md)

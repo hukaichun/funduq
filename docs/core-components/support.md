@@ -13,8 +13,8 @@ staleness. Events say *that* something changed; reading the new state is
 the subscriber's own query.
 
 **Health sweeps** (`health.py`) — one background loop, started with the
-`Funduq` object, ticks on an interval and fails what stalled: a claimed
-run with no activity past the stall timeout is marked failed by a direct
+`Funduq` object, ticks on an interval and fails what nobody will answer:
+a paused run past its deadline is marked failed by a direct
 database update (it works even if the run's provider vanished), and a
 paused run past its resume deadline the same way, when that timeout is
 configured. A queued run whose agent has been without a serving provider
@@ -49,7 +49,6 @@ omission.
 | `database_url` | `sqlite+aiosqlite:///./funduq.db` | which database, and whether the engine is built the SQLite way |
 | `db_schema` | `public` | the Postgres `search_path`; applied only when the backend is not SQLite and the value is not the default |
 | `stale_hidden_window_seconds` | 7 days | how long since last check-in before an agent drops out of the roster listings |
-| `run_stall_timeout_seconds` | 120 | a claimed run silent past this is failed `stalled_no_activity` |
 | `health_sweep_interval_seconds` | 15 | how often the sweep loop ticks |
 | `paused_timeout_seconds` | *none* | how long an `input-required` run may wait; unset skips that sweep entirely |
 | `token_signing_secret` | **required** | signs KYOK tokens |

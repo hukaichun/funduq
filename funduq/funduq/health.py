@@ -42,25 +42,29 @@ async def close_with_terminal_event(funduq: "Funduq", run_id: str, failure_reaso
 
 
 async def sweep_once(funduq: "Funduq") -> None:
-    """Fails runs that have gone silent (claimed but no activity) past
-    `run_stall_timeout_seconds`. Also fails runs stuck paused
-    (input-required) past `paused_timeout_seconds`, but only if that setting
-    is configured — it's skipped entirely when it's None."""
+    """Fails runs stuck paused (input-required) past `paused_timeout_seconds`, and only if
+    that setting is configured — it is skipped entirely when it is None.
+
+    It used to fail *claimed* runs too, for going silent past a stall
+    timeout. That read silence as death, and a healthy agent's loop is
+    silent for most of its life by construction: the model call it is
+    waiting on is the un-injectable segment, and funduq cannot see inside
+    it. So the verdict fell on slow providers, blaming the party that had
+    done nothing wrong — and on runs whose silence funduq itself was
+    causing, by holding their KYOK completion.
+
+    How long a provider holds a run is the provider's own business. What
+    funduq judges is whether it is *behaving abnormally*, and the fact that
+    settles that is whether it is still here — `RunBroker.unregister_
+    provider` fails what a departing provider was holding, at once. A
+    paused run is different: nobody is holding it, and the deadline is on
+    the party that owes an answer.
+    """
     settings = funduq.settings
     async with funduq.session() as session:
-        stalled = await repo.fail_stalled_runs(session, settings.run_stall_timeout_seconds)
         stale_paused: list[str] = []
         if settings.paused_timeout_seconds is not None:
             stale_paused = await repo.fail_stale_paused_runs(session, settings.paused_timeout_seconds)
-    for run_id in stalled:
-        await close_with_terminal_event(funduq, run_id, "stalled_no_activity")
-    if stalled:
-        logger.warning(
-            "health sweep: %d run(s) claimed but silent past %ds, marked failed: %s",
-            len(stalled),
-            settings.run_stall_timeout_seconds,
-            stalled,
-        )
     for run_id in stale_paused:
         await close_with_terminal_event(funduq, run_id, "paused_no_resume")
     if stale_paused:

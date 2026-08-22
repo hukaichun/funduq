@@ -354,11 +354,35 @@ class RunBroker:
         return self._live.served_by(public_key)
 
     def unregister_provider(self, agents: list[AgentRef]) -> None:
+        """Takes `agents` off the live roster and fails every run their provider was still
+        holding.
+
+        A claimed run belongs to whoever claimed it, and how long they hold
+        it is theirs to decide — funduq does not pace a provider's work and
+        does not read silence as death. What it does read is the one fact it
+        owns: whether the party holding a run is still here. When they are
+        not, nobody is going to finish it, and that is settled now rather
+        than inferred from a clock later.
+
+        `push`ing a `Fail` for a claimed run is also what records
+        `abandoned` against that provider — took a run and never ended it —
+        so the judgment about the provider and the verdict about the work
+        come from the same observed fact.
+        """
         now = datetime.now(timezone.utc)
         self._live.withdraw(agents)
         for agent in agents:
-            if self._live.serving(agent) is None:
-                self._unserved_since[agent] = now
+            if self._live.serving(agent) is not None:
+                continue
+            self._unserved_since[agent] = now
+            for run in list(self._runs.values()):
+                if run.agent == agent and run.claimed_by is not None:
+                    logger.warning(
+                        "provider %s left holding run %s; failing it",
+                        run.claimed_by[:16],
+                        run.run_id,
+                    )
+                    self.push(run.run_id, Fail("provider_left_holding_it"))
 
     async def _offer_pending(self, agent: AgentRef) -> bool:
         """Offers `agent`'s queued runs, head first, to its provider until the

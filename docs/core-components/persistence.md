@@ -94,4 +94,4 @@ which revision they match. Two facts, both importable:
     Tier-3 database with the wrong revision row reports not-ready rather
     than failing later in some unrelated place. (Note also that
     `Funduq.health()` — the readiness probe — is a different thing from
-    the `health` module, which runs the stalled-run sweeps.)
+    the `health` module, which runs the stale-paused-run sweeps.)
