@@ -392,3 +392,89 @@ async def test_a_provider_that_is_merely_quiet_keeps_its_run(settings: CoreSetti
         if runtime is not None:
             await runtime.aclose(cancel_in_flight=True)
         await funduq.aclose()
+
+
+async def test_a_provider_that_delivers_nothing_is_counted_not_cut_off(settings: CoreSettings):
+    """Whether a provider is working is read from what it **delivers**, not from whether it
+    started. A `RUN_STARTED` is not delivery, and neither is any amount of visible motion —
+    only the run ending clears this.
+
+    Accepting is the declaration being judged. A provider that does not
+    want the work has two honest answers already in the protocol, decline
+    and refuse; choosing *accepted* says it has taken it. So the count
+    lands on the provider, and the run is left alone: funduq still does not
+    decide how long anyone may hold one.
+    """
+    funduq = Funduq(settings, broker=RunBroker(undelivered_window_seconds=0.05))
+    await funduq.start()
+    runtime = None
+    try:
+        registration, identity = await _register(funduq, "squatter")
+        agent = registration.agents["squatter"]
+        provider = BlockedProvider()          # emits RUN_STARTED, then nothing, forever
+        runtime = ProviderRuntime(identity, provider)
+        runtime.start()
+        await funduq.attach_provider(InProcessLink(funduq, runtime), ["squatter"])
+
+        handle = await funduq.start_run(agent, {"messages": []})
+        await asyncio.wait_for(provider.started.wait(), 5)
+        await _until_async(lambda: _status_is(funduq, handle.run_id, "running"))
+
+        await _until(lambda: funduq.broker.quality()[identity.public_key].undelivered >= 1)
+
+        # Give anything the observation might have queued time to land, so
+        # this asserts the run was left alone rather than merely not-yet-
+        # touched.
+        await asyncio.sleep(0.3)
+        assert handle.run_id in funduq.active_runs(), (
+            "the run is untouched — funduq judges the provider, not the work"
+        )
+        assert (await funduq.get_run(handle.run_id)).status == "running"
+        assert [e["type"] for e in await funduq.get_run_events(handle.run_id)] == [
+            "RUN_STARTED"
+        ], "nothing was appended to the caller's stream on its behalf"
+        assert funduq.broker.quality()[identity.public_key].abandoned == 0, (
+            "and it is the observed counter, not the certain one"
+        )
+
+        funduq.cancel_run(handle.run_id)
+        await _until(lambda: handle.run_id not in funduq.active_runs())
+    finally:
+        if runtime is not None:
+            await runtime.aclose(cancel_in_flight=True)
+        await funduq.aclose()
+
+
+async def test_one_run_never_counts_twice_against_its_provider(settings: CoreSettings):
+    """`undelivered` is what funduq observed; `abandoned` is what it knows for certain. A run
+    already counted as undelivered is not counted again when its provider then leaves holding
+    it — otherwise one incident reads as two, and the whole reason for keeping the counters
+    apart (telling a provider that dropped three times from one that was slow three times)
+    is lost."""
+    funduq = Funduq(settings, broker=RunBroker(undelivered_window_seconds=0.05))
+    await funduq.start()
+    runtime = None
+    try:
+        registration, identity = await _register(funduq, "slow-then-gone")
+        agent = registration.agents["slow-then-gone"]
+        provider = BlockedProvider()
+        runtime = ProviderRuntime(identity, provider)
+        runtime.start()
+        link = InProcessLink(funduq, runtime)
+        await funduq.attach_provider(link, ["slow-then-gone"])
+
+        handle = await funduq.start_run(agent, {"messages": []})
+        await asyncio.wait_for(provider.started.wait(), 5)
+        await _until(lambda: funduq.broker.quality()[identity.public_key].undelivered == 1)
+
+        funduq.detach_provider(identity.public_key, link)
+        await _until(lambda: handle.run_id not in funduq.active_runs())
+
+        quality = funduq.broker.quality()[identity.public_key]
+        assert quality.undelivered == 1
+        assert quality.abandoned == 0, "one run, one count — the first thing funduq observed"
+        assert (await funduq.get_run(handle.run_id)).status == "failed"
+    finally:
+        if runtime is not None:
+            await runtime.aclose(cancel_in_flight=True)
+        await funduq.aclose()

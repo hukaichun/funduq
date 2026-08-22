@@ -104,11 +104,15 @@ nothing wrong, and it blamed runs whose silence funduq itself was
 causing, by holding their KYOK completion while the LLM provider worked.
 
 What funduq judges instead is whether a provider is **behaving
-abnormally**, and the fact that settles it is whether the provider is
-still here. A provider that stops serving while still holding a run took
-work and never ended it: the run is failed at once, and the same fact
-records `abandoned` against the provider — the counter whose allowance
-eventually withdraws it. Nothing is inferred from a clock.
+abnormally**, and it reads that from **delivery**, never from motion. A
+provider that stops serving while still holding a run took work and
+never ended it: the run is failed at once, and the same fact records
+`abandoned` against it. A provider still attached that has not delivered
+what it accepted inside the window records `undelivered` — a count
+against the provider, with the run left entirely alone. Neither counter
+ever settles a run on a clock; the allowance withdraws the provider, and
+withdrawal is what then settles what it was holding. See [provider
+quality counters](quality.md).
 
 A provider that stays attached and holds a run indefinitely keeps it
 indefinitely. That is the same answer the queue lane already gives ("a
