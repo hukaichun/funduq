@@ -106,14 +106,44 @@ async def test_a_second_run_on_a_busy_thread_is_queued_behind_the_first(funduq, 
     assert "one more" in [m.get("content") for m in messages], "and its message is kept"
 
 
-async def test_events_encode_as_sse_payloads(funduq, serve):
+async def test_the_stream_carries_events_not_a_framing_of_them(funduq, serve):
+    """`EventStream` used to carry an `encode()` that serialised each event while the serving
+    layer added the `data:` and the blank line — half of SSE on each side of the boundary. The
+    framing is the transport's now, whole."""
     served = await serve(None, "solo")
 
     result = await AGUIAdapter(funduq).run(served.agents["solo"], _body())
 
-    payloads = [p async for p in result.encode()]
-    assert all(isinstance(p, str) for p in payloads)
-    assert payloads[0].startswith("{") and '"RUN_STARTED"' in payloads[0]
+    events = [e async for e in result.events]
+    assert all(isinstance(e, dict) for e in events)
+    assert events[0]["type"] == "RUN_STARTED"
+    assert not hasattr(result, "encode")
+
+
+def test_ag_uis_own_encoder_cannot_be_applied_blindly_downstream():
+    """The one rule constraining how a transport may frame these, kept as a test because it is
+    the reason for a rule rather than a preference.
+
+    An event whose `type` funduq does not recognise is relayed as the
+    original mapping — that is the shipped unknown-event rule, and it is
+    what lets a provider on a newer AG-UI, or one marking its own
+    absorption point with an event of its own naming, survive the trip.
+    `ag_ui.encoder.EventEncoder` serialises by calling `model_dump_json`,
+    so it takes typed events only. A transport that maps it over the whole
+    stream would fail on exactly the events the rule exists to protect.
+
+    If AG-UI ever teaches its encoder to take a mapping, this test goes
+    red, and the rule in docs/writing-a-transport.md can relax. That is
+    the prompt it exists to give.
+    """
+    from ag_ui.core import RunStartedEvent
+    from ag_ui.encoder import EventEncoder
+
+    encoder = EventEncoder()
+    assert encoder.encode(RunStartedEvent(thread_id="t", run_id="r")).startswith("data: ")
+
+    with pytest.raises(AttributeError):
+        encoder.encode({"type": "AGENT_ABSORBED_INTERJECTION", "runId": "r"})
 
 
 async def test_a_provider_can_read_the_history_its_run_input_does_not_carry(funduq, serve):

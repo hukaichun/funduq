@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import json
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
@@ -28,15 +27,26 @@ if TYPE_CHECKING:
 
 @dataclass
 class EventStream:
-    """A live run's AG-UI events, addressable by thread and run id before they are consumed."""
+    """A live run's AG-UI events, addressable by thread and run id before they are consumed.
+
+    The events, not a framing of them. This used to carry an `encode()` that
+    serialised each one to JSON while the serving layer added the `data:` and
+    the blank line — half of SSE on each side of the boundary, with no
+    principle deciding which half went where. Framing is now entirely the
+    transport's.
+
+    One rule constrains how a transport may frame these, and it is the
+    unknown-event rule: an event whose `type` funduq does not recognise is
+    relayed as **the original mapping**, so a serialiser that only accepts
+    AG-UI's typed models (`ag_ui.encoder.EventEncoder` is one — it calls
+    `model_dump_json` on what it is given) cannot be applied blindly. A
+    provider on a newer AG-UI, or one marking its own absorption point with
+    an event of its own naming, must survive the trip.
+    """
 
     thread_id: str
     run_id: str
     events: AsyncIterator[dict[str, Any]]
-
-    async def encode(self) -> AsyncIterator[str]:
-        async for event in self.events:
-            yield json.dumps(event)
 
 
 @dataclass

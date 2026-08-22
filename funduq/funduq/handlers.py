@@ -5,7 +5,7 @@ import logging
 from functools import partial
 from typing import TYPE_CHECKING
 
-from ag_ui.core import Event, EventType
+from ag_ui.core import Event, EventType, RunErrorEvent
 from pydantic import TypeAdapter, ValidationError
 
 from funduq import repo
@@ -28,6 +28,21 @@ logger = logging.getLogger("funduq.handlers")
 
 _EVENT = TypeAdapter(Event)
 _KNOWN_EVENT_TYPES = frozenset(member.value for member in EventType)
+
+
+def run_error(message: str, *, code: str | None = None) -> dict:
+    """A `RUN_ERROR` funduq itself authors, built from AG-UI's own model rather than typed out
+    as a dict.
+
+    `exclude_none=True` for the reason the relay uses it: a default dump
+    injects `timestamp: null` and `rawEvent: null` into a caller's stream.
+    With the flag the result is exactly the two or three keys funduq means
+    to say, which is also what makes this a drop-in for the literals it
+    replaced.
+    """
+    return RunErrorEvent(message=message, code=code).model_dump(
+        mode="json", by_alias=True, exclude_none=True
+    )
 
 
 async def _handle_claim(funduq: "Funduq", run: Run, cmd: Claim) -> None:
@@ -65,12 +80,12 @@ async def _handle_relay(funduq: "Funduq", run: Run, cmd: RelayEvent) -> None:
                 run.in_queue.get_nowait()
             funduq.broker.push(run.run_id, Fail("provider sent a malformed AG-UI event"))
             return
-    if event.get("type") == "RUN_FINISHED":
+    if event.get("type") == EventType.RUN_FINISHED:
         run.saw_run_finished = True
         interrupts = interrupt_outcome_of(event)
         if interrupts is not None:
             run.pause_payload = {"interrupts": interrupts}
-    elif event.get("type") == "RUN_ERROR":
+    elif event.get("type") == EventType.RUN_ERROR:
         run.saw_run_error = True
     run.seq += 1
     async with funduq.session() as session:
@@ -97,11 +112,8 @@ async def _handle_finish(funduq: "Funduq", run: Run, cmd: FinishStream) -> None:
         status, metadata = "failed", {"failureReason": "provider_stream_ended_without_finishing"}
 
     failure_event = (
-        {
-            "type": "RUN_ERROR",
-            "message": "the agent's stream ended without finishing",
-            "code": "provider_stream_ended_without_finishing",
-        }
+        run_error("the agent's stream ended without finishing",
+                  code="provider_stream_ended_without_finishing")
         if status == "failed" and not run.saw_run_error
         else None
     )
@@ -142,7 +154,7 @@ async def _handle_cancel(funduq: "Funduq", run: Run, cmd: RequestCancel) -> None
 
 async def _handle_fail(funduq: "Funduq", run: Run, cmd: Fail) -> None:
     """Append a `RUN_ERROR` event carrying `cmd.reason` and mark the run failed with that reason."""
-    event = {"type": "RUN_ERROR", "message": cmd.reason}
+    event = run_error(cmd.reason)
     run.seq += 1
     async with funduq.session() as session:
         await repo.append_run_event(session, run.run_id, run.seq, event)

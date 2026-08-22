@@ -3,7 +3,7 @@ from __future__ import annotations
 from typing import Any
 
 from a2a.types import a2a_pb2 as pb
-from ag_ui.core import AssistantMessage, UserMessage
+from ag_ui.core import AssistantMessage, EventType, UserMessage
 
 from funduq.pause import interrupt_outcome_of
 
@@ -28,8 +28,10 @@ TERMINAL_STATES = frozenset(
 # whole task). That key is the overflow seam an outside layer attaches to —
 # to strip it, allow it, or audit it — so it has to be exhaustive. Anything
 # leaving by another route, or not leaving at all, is invisible to that layer.
-LIFECYCLE_EVENT_TYPES = frozenset({"RUN_STARTED", "RUN_FINISHED", "RUN_ERROR"})
-TEXT_EVENT_TYPES = frozenset({"TEXT_MESSAGE_CONTENT", "TEXT_MESSAGE_CHUNK"})
+LIFECYCLE_EVENT_TYPES = frozenset(
+    {EventType.RUN_STARTED, EventType.RUN_FINISHED, EventType.RUN_ERROR}
+)
+TEXT_EVENT_TYPES = frozenset({EventType.TEXT_MESSAGE_CONTENT, EventType.TEXT_MESSAGE_CHUNK})
 MAPPED_EVENT_TYPES = LIFECYCLE_EVENT_TYPES | TEXT_EVENT_TYPES
 
 OVERFLOW_METADATA_KEY = "agui_event"
@@ -90,10 +92,10 @@ def agui_event_to_a2a_update(
     event under `metadata.agui_event` so it isn't silently dropped."""
     event_type = event.get("type")
 
-    if event_type == "RUN_STARTED":
+    if event_type == EventType.RUN_STARTED:
         return _status_update(task_id, context_id, pb.TaskState.TASK_STATE_WORKING)
 
-    if event_type == "RUN_FINISHED":
+    if event_type == EventType.RUN_FINISHED:
         # A run that finished on an interrupt is asking, not done. Reporting it
         # as completed contradicts the same run's persisted `input-required`
         # status, which is what `GetTask` answers with.
@@ -107,7 +109,7 @@ def agui_event_to_a2a_update(
             )
         return _status_update(task_id, context_id, pb.TaskState.TASK_STATE_COMPLETED)
 
-    if event_type == "RUN_ERROR":
+    if event_type == EventType.RUN_ERROR:
         return _status_update(
             task_id, context_id, pb.TaskState.TASK_STATE_FAILED, message=event.get("message")
         )
