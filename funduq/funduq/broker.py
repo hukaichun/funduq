@@ -50,14 +50,28 @@ Command = Claim | RelayEvent | FinishStream | RequestCancel | Fail
 @dataclass(frozen=True)
 class ProviderQuality:
     """Per-provider counters of protocol violations observed while dispatching:
-    declining an offer after claiming to have room (misdeclared), taking a run
-    and never ending it (abandoned), not answering an offer within the delivery
-    timeout (unanswered), and acking after funduq gave up waiting (answered_late)."""
+    declining an offer after claiming to have room (misdeclared), taking a run and never
+    ending it (abandoned), taking one and not delivering it inside the window
+    (undelivered), not answering an offer within the delivery timeout (unanswered), and
+    acking after funduq gave up waiting (answered_late).
+
+    `abandoned` and `undelivered` are the same shape of wrong seen with
+    different certainty, which is why they are two counters and not one.
+    Abandonment is **certain**: the provider stopped serving while still
+    holding the run, so it will never be delivered. Non-delivery is
+    **observed**: the window elapsed and nothing came back, and the
+    provider may yet deliver. Merged, a reader could not tell a provider
+    that dropped three times from one that was slow three times.
+
+    Each run contributes at most one count, whichever funduq observed
+    first.
+    """
 
     in_flight: int
     declared: int | None
     misdeclared: int
     abandoned: int
+    undelivered: int
     unanswered: int
     answered_late: int
 
@@ -117,6 +131,8 @@ class Run:
     round_starting_seq: int = 0
     pause_payload: dict[str, Any] | None = None
     claimed_by: str | None = None
+    claimed_at: datetime | None = None
+    noted_abnormal: bool = False
     cancel_notify: Callable[[str], None] | None = None
     cancel_requested: bool = False
     saw_run_finished: bool = False
@@ -207,17 +223,21 @@ class RunBroker:
         sweep_interval_seconds: float = 1.0,
         unserved_timeout_seconds: float = 45.0,
         deliver_timeout_seconds: float = 5.0,
+        undelivered_window_seconds: float = 1800.0,
         quality_tolerance: int | None = None,
     ) -> None:
         self._spawn = spawn or self._spawn_unsupervised
         self._runs: dict[str, Run] = {}
         self._pending_by_agent: dict[AgentRef, deque[str]] = defaultdict(deque)
-        self._live = LiveRoster(("misdeclared", "abandoned", "unanswered", "answered_late"))
+        self._live = LiveRoster(
+            ("misdeclared", "abandoned", "undelivered", "unanswered", "answered_late")
+        )
         self._unserved_since: dict[AgentRef, datetime] = {}
         self._capacity: dict[str, _Capacity] = {}
         self._handlers: dict[str, HandlerMap] = {}
         self._pipeline_tasks: set[asyncio.Task] = set()
         self.sweep_interval_seconds = sweep_interval_seconds
+        self.undelivered_window_seconds = undelivered_window_seconds
         self.unserved_timeout_seconds = unserved_timeout_seconds
         self.deliver_timeout_seconds = deliver_timeout_seconds
         self.quality_tolerance = quality_tolerance
@@ -273,13 +293,14 @@ class RunBroker:
             self._loop_task = None
 
     async def run_forever(self) -> None:
-        """Repeatedly gives up on queued runs whose agent has gone unserved for
-        too long and offers pending runs to their providers, sleeping until new
-        work arrives (`enqueue_run`, `register_provider`) or the unserved
-        timeout elapses. Swallows and logs any exception other than
+        """Repeatedly notes providers that have not delivered what they accepted, gives up on
+        queued runs whose agent has gone unserved for too long, and offers pending runs to
+        their providers — sleeping until new work arrives (`enqueue_run`,
+        `register_provider`) or the shortest window it observes elapses. Swallows and logs any exception other than
         cancellation so one bad sweep doesn't stop future ones."""
         while True:
             try:
+                self.note_undelivered(self.undelivered_window_seconds)
                 self.expire_queued(self.unserved_timeout_seconds)
                 self._work_to_do.clear()
                 placed = False
@@ -290,7 +311,11 @@ class RunBroker:
                     await asyncio.sleep(0)
                     continue
                 with contextlib.suppress(TimeoutError):
-                    async with asyncio.timeout(self.unserved_timeout_seconds):
+                    # Sleep no longer than the shortest window this loop is
+                    # responsible for observing, or the observation misses it.
+                    async with asyncio.timeout(
+                        min(self.unserved_timeout_seconds, self.undelivered_window_seconds)
+                    ):
                         await self._work_to_do.wait()
             except asyncio.CancelledError:
                 raise
@@ -486,6 +511,7 @@ class RunBroker:
                     )
             return False
         run.claimed_by = provider.public_key
+        run.claimed_at = datetime.now(timezone.utc)
         run.cancel_notify = provider.cancel
         if capacity is not None:
             capacity.in_flight += 1
@@ -513,7 +539,8 @@ class RunBroker:
         run = self._runs.get(run_id)
         if run is None:
             return False
-        if isinstance(command, Fail) and run.claimed_by is not None:
+        if isinstance(command, Fail) and run.claimed_by is not None and not run.noted_abnormal:
+            run.noted_abnormal = True
             self._note_abnormal(run.claimed_by, "abandoned")
             logger.warning(
                 "provider %s abandoned run %s (%d so far): took it and never ended it",
@@ -546,6 +573,51 @@ class RunBroker:
             return True
         self._spawn(self._cancel_queued(run), name=f"cancel:{run_id}")
         return True
+
+    def note_undelivered(self, window_seconds: float) -> list[str]:
+        """Counts one `undelivered` against every provider still holding a run it accepted
+        `window_seconds` ago and has not delivered, and returns those run ids.
+
+        **Whether a provider is working is read from what it delivers, not
+        from whether it started.** A `RUN_STARTED`, a stream of tokens, any
+        amount of visible motion — none of that is delivery, and none of it
+        clears this. The only thing that does is the run actually ending,
+        which is also why nothing here reads an event's content: a run the
+        broker still holds, claimed, is by construction one that has not
+        reached a terminal state.
+
+        Accepting is the declaration this judges. A provider that does not
+        want the work has two honest answers already in the protocol —
+        decline (full right now) or refuse (never) — and choosing *accepted*
+        instead says it has taken it. Holding it a long time is that
+        provider's own business; taking it and delivering nothing is not
+        the same thing, and it is what this counts.
+
+        The count is per run, once, and no run contributes twice: a run
+        counted here is not counted again as `abandoned` if the provider
+        later leaves still holding it. There is no exemption for a run
+        whose completion funduq is itself relaying — a provider that
+        accepted work it could not turn around said yes when it could have
+        said no.
+        """
+        cutoff = datetime.now(timezone.utc) - timedelta(seconds=window_seconds)
+        noted: list[str] = []
+        for run in list(self._runs.values()):
+            if run.claimed_by is None or run.noted_abnormal or run.claimed_at is None:
+                continue
+            if run.claimed_at > cutoff:
+                continue
+            run.noted_abnormal = True
+            noted.append(run.run_id)
+            logger.warning(
+                "provider %s has not delivered run %s within %ss (%d so far)",
+                run.claimed_by[:16],
+                run.run_id,
+                window_seconds,
+                self._live.count(run.claimed_by, "undelivered") + 1,
+            )
+            self._note_abnormal(run.claimed_by, "undelivered")
+        return noted
 
     def expire_queued(self, timeout_seconds: float) -> list[str]:
         """Gives up on queued (unclaimed) runs whose agent has had no serving
@@ -636,6 +708,7 @@ class RunBroker:
             self._live.count(claimed_by, "answered_late"),
         )
         run.claimed_by = claimed_by
+        run.claimed_at = datetime.now(timezone.utc)
         run.cancel_notify = provider.cancel
         handlers = self._handlers.get(run_id)
         if handlers is not None:
@@ -651,7 +724,13 @@ class RunBroker:
                 declared=c.declared,
                 **{
                     name: counters.get(key, {}).get(name, 0)
-                    for name in ("misdeclared", "abandoned", "unanswered", "answered_late")
+                    for name in (
+                        "misdeclared",
+                        "abandoned",
+                        "undelivered",
+                        "unanswered",
+                        "answered_late",
+                    )
                 },
             )
             for key, c in self._capacity.items()
