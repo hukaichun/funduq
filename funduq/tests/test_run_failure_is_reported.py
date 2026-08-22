@@ -12,6 +12,14 @@ from funduq.broker import RunBroker
 from funduq.core import Funduq
 
 
+class NeverFinishesProvider:
+    """Claims a run and never ends its stream, so the provider stays at capacity."""
+
+    async def run_stream(self, agent_name: str, run_input):
+        yield {"type": "RUN_STARTED", "threadId": run_input.thread_id, "runId": run_input.run_id}
+        await asyncio.Event().wait()
+
+
 async def _until(predicate, timeout: float = 5.0) -> None:
     async with asyncio.timeout(timeout):
         while not predicate():
@@ -187,21 +195,47 @@ async def test_a_cancelled_run_gets_no_run_error(brisk):
 
 
 async def test_a_run_nobody_ever_comes_for_is_given_up_on(settings: CoreSettings):
+    """The unserved window fails a run that is queued when its agent stops being served.
+
+    Reaching that state takes the sequence it actually arises from, because
+    no entrance will queue for an agent nobody serves: a provider is
+    attached, a run is queued behind one it declined for capacity, and the
+    provider then detaches. The clock runs from the later of when the run
+    was queued and when the agent went unserved — here, the detach.
+    """
     funduq = Funduq(settings, broker=RunBroker(unserved_timeout_seconds=0.05))
     await funduq.start()
+    runtime = None
     try:
-        _registration, identity = await _register(funduq, "unserved")
-        agent = _registration.agents["unserved"]
+        registration, identity = await _register(funduq, "unserved")
+        agent = registration.agents["unserved"]
 
+        runtime = ProviderRuntime(
+            identity, NeverFinishesProvider(), max_queued_runs=1, max_concurrent_runs=1
+        )
+        runtime.start()
+        link = InProcessLink(funduq, runtime)
+        await funduq.attach_provider(link, ["unserved"])
+
+        # Fills the declared capacity and never finishes, so the next run is
+        # declined and sits queued rather than being offered.
+        busy = await funduq.start_run(agent, {"messages": []})
+        await _until(lambda: busy.run_id in funduq.active_runs())
         handle = await funduq.start_run(agent, {"messages": []})
-        async with asyncio.timeout(5):
-            [_ async for _ in handle.events()]
+
+        async with funduq.session() as session:
+            assert (await repo.get_run(session, handle.run_id)).status == "queued"
+
+        funduq.detach_provider(identity.public_key, link)
+        assert not funduq.is_serving(agent)
 
         await _until(lambda: handle.run_id not in funduq.active_runs())
         run = await funduq.get_run(handle.run_id)
         assert run.status == "failed"
         assert run.metadata["failureReason"] == "no_provider_took_it"
     finally:
+        if runtime is not None:
+            await runtime.aclose(cancel_in_flight=True)
         await funduq.aclose()
 
 

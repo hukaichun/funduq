@@ -1,9 +1,12 @@
 from __future__ import annotations
 
+from collections.abc import AsyncIterator
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Literal
 
 from funduq import repo
+from ag_ui.core import RunErrorEvent, RunStartedEvent
+
 from funduq.agui import build_run_agent_input
 from funduq.errors import InvalidRunInput, LlmProviderNotFound
 from funduq.identity import verify_actor_chain, verify_delegation, verify_resolution
@@ -21,6 +24,7 @@ __all__ = [
     "Opened",
     "PendingAsk",
     "dispatch",
+    "offline_events",
     "open_run",
     "resolve_kyok",
     "verify_caller",
@@ -287,3 +291,20 @@ async def open_run(
         metadata=metadata, head_key=head_key,
     )
     return Opened(run_id=created["run_id"], starting_seq=0, landed_on_ask=False)
+
+
+async def offline_events(thread_id: str, run_id: str) -> AsyncIterator[dict[str, Any]]:
+    """The stream a run gets when its agent is registered but nobody is serving it.
+
+    funduq has reached a verdict — the run is recorded `failed` with
+    `agent_offline` — and a caller left holding a silent stream cannot tell
+    that from an agent with nothing to say. Both events are built from
+    AG-UI's own models rather than hand-written dicts, dumped with
+    `exclude_none=True` so no `timestamp: null` enters a caller's stream.
+    """
+    yield RunStartedEvent(thread_id=thread_id, run_id=run_id).model_dump(
+        mode="json", by_alias=True, exclude_none=True
+    )
+    yield RunErrorEvent(message="agent is currently offline").model_dump(
+        mode="json", by_alias=True, exclude_none=True
+    )

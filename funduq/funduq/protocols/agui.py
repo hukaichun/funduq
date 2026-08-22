@@ -5,7 +5,7 @@ from collections.abc import AsyncIterator
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
-from ag_ui.core import RunAgentInput, RunErrorEvent, RunStartedEvent
+from ag_ui.core import RunAgentInput
 
 from funduq import repo
 from funduq.models import AgentRef, LlmRef
@@ -14,6 +14,7 @@ from funduq.doors import (
     InboundRun,
     PendingAsk,
     dispatch,
+    offline_events,
     open_run,
     resolve_kyok,
     verify_caller,
@@ -148,7 +149,7 @@ class AGUIAdapter:
             )
 
         if not live:
-            return EventStream(thread_id, run_id, _offline_events(thread_id, run_id))
+            return EventStream(thread_id, run_id, offline_events(thread_id, run_id))
         return EventStream(thread_id, run_id, _relay(funduq.broker.subscribe(run_id)))
 
 
@@ -156,12 +157,3 @@ async def _relay(events: AsyncIterator[Any]) -> AsyncIterator[dict[str, Any]]:
     message_id_map: dict[str, str] = {}
     async for item in events:
         yield rewrite_message_ids(item, message_id_map)
-
-
-async def _offline_events(thread_id: str, run_id: str) -> AsyncIterator[dict[str, Any]]:
-    yield RunStartedEvent(thread_id=thread_id, run_id=run_id).model_dump(
-        mode="json", by_alias=True, exclude_none=True
-    )
-    yield RunErrorEvent(message="agent is currently offline").model_dump(
-        mode="json", by_alias=True, exclude_none=True
-    )

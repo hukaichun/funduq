@@ -149,14 +149,36 @@ async def test_a_worker_that_ignores_the_cancel_still_completes(funduq, new_iden
     assert (await funduq.get_run(handle.run_id)).status == "completed"
 
 
-async def test_a_cancel_before_any_provider_takes_the_run(funduq, new_identity):
-    agent_id = await _register(funduq, "never-claimed", new_identity())
+async def test_a_cancel_before_any_provider_takes_the_run(funduq, new_identity, attach):
+    """A queued run nobody has claimed is cancelled outright: no provider holds it, so there is
+    no outcome funduq could be pre-empting.
+
+    Getting a run into that state means having a provider that declines —
+    an agent nobody serves does not queue at any entrance, it fails at the
+    door with `agent_offline`.
+    """
+    identity = new_identity()
+    agent_id = await _register(funduq, "never-claimed", identity)
+    await attach(
+        identity, NeverFinishesProvider(), [agent_id.name],
+        max_queued_runs=1, max_concurrent_runs=1,
+    )
+
+    busy = await funduq.start_run(agent_id, {"messages": []})
+    await _until(lambda: busy.run_id in funduq.active_runs())
     handle = await funduq.start_run(agent_id, {"messages": []})
+    assert (await funduq.get_run(handle.run_id)).status == "queued"
 
     assert funduq.cancel_run(handle.run_id) is True
     await _until(lambda: handle.run_id not in funduq.active_runs())
 
-    assert (await funduq.get_run(handle.run_id)).status == "cancelled"
+    cancelled = await funduq.get_run(handle.run_id)
+    assert cancelled.status == "cancelled"
+    # What makes this the queued path rather than the claimed one: no
+    # provider ever started it, so there was no outcome to pre-empt. Without
+    # this the assertion above passes either way — a claimed run whose
+    # stream is cancelled also settles `cancelled`.
+    assert cancelled.started_at is None
 
 
 async def test_thread_lineage(funduq, new_identity):

@@ -25,6 +25,14 @@ from funduq.broker import (
 )
 from funduq.changes import ChangeEvent, LlmRosterChanged, RosterChanged, RunStatusChanged
 from funduq.config import CoreSettings
+from funduq.doors import (
+    InboundRun,
+    dispatch,
+    offline_events,
+    open_run,
+    resolve_kyok,
+    verify_caller,
+)
 from funduq.db_schema import DEFAULT_DB_SCHEMA, EXPECTED_SCHEMA_REVISION, quoted_schema
 from funduq.errors import (
     AgentInUse,
@@ -912,34 +920,72 @@ class Funduq:
         thread_id: str | None = None,
         metadata: dict[str, Any] | None = None,
     ) -> RunHandle:
-        """Create (or reuse) a thread, create a queued run on it, and enqueue it for dispatch.
+        """Create (or reuse) a thread, open a queued run on it, and enqueue it for dispatch.
 
-        Returns a live `RunHandle` subscribed to the run's event stream.
+        Returns a live `RunHandle` subscribed to the run's event stream — or, if the agent is
+        registered but nobody is currently serving it, one carrying the same terminal
+        `RUN_ERROR` a caller at either door would get, because the run is recorded `failed` and
+        a silent stream would hide that.
+
+        `run_input` is AG-UI-shaped, and this goes through the very
+        machinery both doors go through (`doors.open_run` then
+        `doors.dispatch`): the caller's metadata is verified and stripped of
+        funduq's reserved keys, a KYOK opt-in is honoured, the messages
+        enter the thread's history, and funduq's forwarded-props are built.
+        Embedding funduq is not a reason to get a weaker entrance than a
+        socket would — the same rule in-process providers live under.
         """
         async with self.session() as session:
+            caller_metadata, head_key, actor_chain = await verify_caller(session, metadata or {})
+            caller_metadata, kyok = await resolve_kyok(session, caller_metadata)
             resolved_thread_id = await repo.ensure_thread(
-                session, agent, thread_id, metadata=metadata, create_if_missing=True
+                session, agent, thread_id, metadata=caller_metadata,
+                create_if_missing=True, head_key=head_key,
             )
-            await repo.ensure_queue_room(
-                session, resolved_thread_id, self.settings.thread_queue_limit
+            opened = await open_run(
+                self, session,
+                agent=agent,
+                thread_id=resolved_thread_id,
+                # An embedder speaks; it does not answer a pending ask. A
+                # result has its own verb, `resume_run`.
+                entrance="utterance",
+                ask=None,
+                run_input=run_input,
+                metadata=caller_metadata,
+                head_key=head_key,
+                protocol="ag-ui",
             )
-            created = await repo.create_run(
-                session, resolved_thread_id, agent, "ag-ui", run_input, metadata
+            live = await dispatch(
+                self, session,
+                InboundRun(
+                    agent=agent,
+                    messages=run_input.get("messages", []),
+                    metadata=caller_metadata,
+                    head_key=head_key,
+                    actor_chain=actor_chain,
+                    kyok=kyok,
+                    state=run_input.get("state"),
+                    tools=run_input.get("tools"),
+                    context=run_input.get("context"),
+                    resume=run_input.get("resume"),
+                    parent_run_id=run_input.get("parentRunId"),
+                    forwarded_props=run_input.get("forwardedProps"),
+                    protocol="ag-ui",
+                ),
+                thread_id=resolved_thread_id,
+                run_id=opened.run_id,
+                starting_seq=opened.starting_seq,
             )
-            run_id = created["run_id"]
 
-        self.enqueue_run(
-            run_id,
-            agent,
-            resolved_thread_id,
-            _complete_run_agent_input(resolved_thread_id, run_id, run_input),
-            "ag-ui",
-        )
         return RunHandle(
-            run_id=run_id,
+            run_id=opened.run_id,
             thread_id=resolved_thread_id,
             _broker=self.broker,
-            _events=self.broker.subscribe(run_id),
+            _events=(
+                self.broker.subscribe(opened.run_id)
+                if live
+                else offline_events(resolved_thread_id, opened.run_id)
+            ),
         )
 
     async def resume_run(self, run_id: str, run_input: dict[str, Any], metadata: dict | None = None) -> RunHandle:

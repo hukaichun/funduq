@@ -43,6 +43,17 @@ alone is not an identity. `run_input` is the AG-UI-shaped payload the
 provider will receive. Omitting `thread_id` opens a new thread; passing
 one continues it.
 
+This goes through the same machinery both caller doors go through
+(`doors.open_run`, then `doors.dispatch`), so embedding funduq does not
+buy a weaker entrance than a socket would: `metadata` is verified and
+stripped of funduq's reserved keys, an actor chain is checked and its
+head bound to the thread, a KYOK opt-in is honoured, the messages enter
+the thread's history, and funduq's forwarded-props are built. **An agent
+nobody is currently serving fails the run** with `agent_offline`, and
+the handle's stream carries the terminal `RUN_ERROR` that says so — the
+same answer either door gives, rather than a run queued into silence
+behind an empty stream.
+
 The `RunHandle` you get back carries `run_id`, `thread_id`, an
 `async events()` iterator yielding each AG-UI event as the provider
 produces it, and `cancel()`. It once carried an `is_live` flag too,
