@@ -9,12 +9,11 @@ from ag_ui.core import RunAgentInput, RunErrorEvent, RunStartedEvent
 
 from funduq import repo
 from funduq.models import AgentRef, LlmRef
-from funduq.agui import build_run_agent_input, rewrite_message_ids
-from funduq.doors import resolve_kyok, verify_caller
-from funduq.errors import AgentNotFound, InvalidRunInput
+from funduq.agui import rewrite_message_ids
+from funduq.doors import InboundRun, dispatch, resolve_kyok, verify_caller
+from funduq.errors import AgentNotFound
 from funduq.identity import verify_resolution
-from funduq.kyok import KyokBinding, strip_kyok_context
-from funduq.props import build_forwarded_props
+from funduq.kyok import strip_kyok_context
 
 if TYPE_CHECKING:
     from funduq.core import Funduq
@@ -74,7 +73,6 @@ class AGUIAdapter:
 
             metadata, head_key, actor_chain = await verify_caller(session, metadata)
             metadata, kyok = await resolve_kyok(session, metadata)
-            kyok_ref = kyok.llm_provider if kyok is not None else None
 
             thread_id = await repo.ensure_thread(
                 session,
@@ -133,50 +131,31 @@ class AGUIAdapter:
                 run_id = created["run_id"]
                 starting_seq = 0
 
-            raw_messages = [m.model_dump(mode="json", by_alias=True) for m in body.messages]
-            messages = await repo.append_thread_messages(session, thread_id, run_id, raw_messages)
-
-            if not funduq.is_serving(agent):
-                await funduq.mark_run_status(
-                    session, run_id, "failed", metadata={"failureReason": "agent_offline"}
-                )
-                await session.commit()
-                return EventStream(thread_id, run_id, _offline_events(thread_id, run_id))
-
-            try:
-                input_json = build_run_agent_input(
-                    thread_id,
-                    run_id,
-                    messages,
-                    state=body.state,
-                    tools=[t.model_dump(mode="json", by_alias=True) for t in body.tools],
-                    context=[c.model_dump(mode="json", by_alias=True) for c in body.context],
-                    forwarded_props=build_forwarded_props(
-                        funduq.settings.token_signing_secret,
-                        run_id,
-                        agent,
-                        kyok_ref is not None,
-                        body.forwarded_props,
-                        actor_chain,
-                        delegation=metadata.get("delegation"),
-                    ),
-                    resume=resume,
-                    # The caller's own parentRunId, relayed verbatim — AG-UI's
-                    # field for placing another run's id on this input; the
-                    # agent judges what the repetition means from its own loop.
-                    parent_run_id=body.parent_run_id,
-                )
-            except ValueError as e:
-                raise InvalidRunInput(str(e)) from e
-
-            await session.commit()
-
-        if kyok_ref is not None:
-            funduq.kyok_relay.bind_run(
-                run_id,
-                KyokBinding(llm_provider=kyok_ref, context=kyok.context, actor_chain=actor_chain),
+            inbound = InboundRun(
+                agent=agent,
+                messages=[m.model_dump(mode="json", by_alias=True) for m in body.messages],
+                metadata=metadata,
+                head_key=head_key,
+                actor_chain=actor_chain,
+                kyok=kyok,
+                state=body.state,
+                tools=[t.model_dump(mode="json", by_alias=True) for t in body.tools],
+                context=[c.model_dump(mode="json", by_alias=True) for c in body.context],
+                resume=resume,
+                # The caller's own parentRunId, relayed verbatim — AG-UI's
+                # field for placing another run's id on this input; the
+                # agent judges what the repetition means from its own loop.
+                parent_run_id=body.parent_run_id,
+                forwarded_props=body.forwarded_props,
+                protocol="ag-ui",
             )
-        funduq.enqueue_run(run_id, agent, thread_id, input_json, "ag-ui", seq=starting_seq)
+            live = await dispatch(
+                funduq, session, inbound,
+                thread_id=thread_id, run_id=run_id, starting_seq=starting_seq,
+            )
+
+        if not live:
+            return EventStream(thread_id, run_id, _offline_events(thread_id, run_id))
         return EventStream(thread_id, run_id, _relay(funduq.broker.subscribe(run_id)))
 
 

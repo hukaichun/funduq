@@ -14,7 +14,7 @@ from funduq_llm_provider_sdk import (
 from funduq_llm_provider_sdk.provider import DeliveredCompletion
 
 from funduq.kyok import CompletionRequest, ConnectedLLMProvider
-from funduq.protocols import agui as agui_module
+from funduq.props import build_forwarded_props
 from funduq.protocols import kyok as kyok_module
 
 
@@ -51,7 +51,10 @@ def test_the_adapter_reads_the_fields_funduq_actually_sends():
 
 def test_the_token_travels_under_the_key_the_contract_names():
     assert KYOK_FORWARDED_PROPS_KEY == "kyok"
-    source = inspect.getsource(agui_module.build_forwarded_props)
+    # Read where it is defined, not where a door happens to import it:
+    # every door goes through this one builder, so the grant's key has
+    # exactly one author.
+    source = inspect.getsource(build_forwarded_props)
     assert f'extra["{KYOK_FORWARDED_PROPS_KEY}"]' in source
 
 
