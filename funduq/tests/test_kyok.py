@@ -215,21 +215,29 @@ def test_discard_of_a_run_that_never_bound_is_a_no_op():
     KyokRelay().discard("never-seen")
 
 
-def test_inherit_copies_offering_and_context_with_the_childs_own_chain():
+def test_the_relay_has_no_way_to_copy_a_binding_from_one_run_to_another():
+    """A binding is created by exactly one verb, `bind_run`, and only for a run whose own
+    caller submitted the opt-in.
+
+    There used to be a second verb. `inherit` copied a parent run's
+    offering *and context* onto a child whenever an A2A message cited the
+    parent in `referenceTaskIds` — A2A's lineage field, which says "this
+    came from that" and grants nothing. Knowing a live run's id was
+    therefore enough to spend against its key and to be handed the
+    caller's context, which is rule zero with money on it. Whether a
+    delegation spends the user's account or the delegating provider's is
+    a matter between those two; funduq carries what each caller submits
+    and propagates nothing.
+    """
     relay = KyokRelay()
     relay.bind_run(
         "run_parent",
         KyokBinding(llm_provider=_GPT4, context={"voucher": "v1"}, actor_chain=["hop1"]),
     )
 
-    assert relay.inherit("run_parent", "run_child", ["hop1", "hop2"]) is True
-    child = relay.binding_for("run_child")
-    assert child.llm_provider == _GPT4
-    assert child.context == {"voucher": "v1"}
-    assert child.actor_chain == ["hop1", "hop2"]
-
-    assert relay.inherit("never-bound", "run_x", None) is False
-    assert relay.binding_for("run_x") is None
+    assert relay.binding_for("run_parent") is not None
+    assert relay.binding_for("run_child") is None
+    assert not hasattr(relay, "inherit")
 
 
 def test_withdrawing_everything_served_by_an_identity_empties_its_offerings():
