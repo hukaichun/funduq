@@ -1,12 +1,12 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Literal
 
 from funduq import repo
 from funduq.agui import build_run_agent_input
 from funduq.errors import InvalidRunInput, LlmProviderNotFound
-from funduq.identity import verify_actor_chain, verify_delegation
+from funduq.identity import verify_actor_chain, verify_delegation, verify_resolution
 from funduq.kyok import KyokBinding, KyokOptIn, parse_kyok_opt_in, strip_kyok_context
 from funduq.models import AgentRef
 from funduq.props import RESERVED_METADATA_KEYS, build_forwarded_props
@@ -16,7 +16,15 @@ if TYPE_CHECKING:
 
     from funduq.core import Funduq
 
-__all__ = ["InboundRun", "dispatch", "resolve_kyok", "verify_caller"]
+__all__ = [
+    "InboundRun",
+    "Opened",
+    "PendingAsk",
+    "dispatch",
+    "open_run",
+    "resolve_kyok",
+    "verify_caller",
+]
 
 
 async def verify_caller(session: "AsyncSession", metadata: dict) -> tuple[dict, str | None, Any]:
@@ -190,3 +198,92 @@ async def dispatch(
         run_id, inbound.agent, thread_id, input_json, inbound.protocol, seq=starting_seq
     )
     return True
+
+
+@dataclass(frozen=True)
+class PendingAsk:
+    """The paused run a result would land on, and the key authorized to answer it.
+
+    Each door finds this its own way — that lookup is the door's grammar,
+    not funduq's — and hands it over in this one shape.
+    """
+
+    run_id: str
+    head_key: str | None
+
+
+@dataclass(frozen=True)
+class Opened:
+    """The run a request resolved to: a reopened ask, or a fresh one on the thread."""
+
+    run_id: str
+    starting_seq: int
+    landed_on_ask: bool
+
+
+async def open_run(
+    funduq: "Funduq",
+    session: "AsyncSession",
+    *,
+    agent: AgentRef,
+    thread_id: str,
+    entrance: Literal["utterance", "result"],
+    ask: PendingAsk | None,
+    run_input: dict[str, Any],
+    metadata: dict[str, Any],
+    head_key: str | None,
+    protocol: str,
+) -> Opened | None:
+    """Resolves a request to the run it belongs on: the pending ask it answers, or a new run
+    queued on the thread. Returns None only for a declared **result** that found no ask to land
+    on — either there was none, or another caller answered first.
+
+    The two lanes are [the seam's two
+    entrances](../../docs/design-records.md); which one a caller used is
+    theirs to declare, never inferred from the target's state:
+
+    - a **result** must land on a pending ask. It reopens that run under its
+      own id, and the reopen is status-guarded so two concurrent answers
+      resolve to one; the loser gets None, same as if there had been no ask.
+      A result never queues — it drains an ask rather than piling new input,
+      which is why `thread_queue_limit` is not consulted on this path.
+    - an **utterance** becomes a new queued run. If it happens to be
+      addressed at a run that is *currently* a pending ask, it lands there
+      instead — that is A2A's grammar, where a result is a plain message
+      plus addressing, so one that lands on no ask honestly is an
+      utterance. When the reopen loses, it degrades to an utterance too.
+
+    A chained ask names its authorities, and a resolution must carry a
+    signature from one of them (raising `InvalidResolution` otherwise) —
+    checked before the reopen, so a failed signature cannot consume the win.
+    """
+    if ask is not None:
+        if ask.head_key is not None:
+            verify_resolution(
+                metadata.get("resolution") or {},
+                ask.run_id,
+                {ask.head_key, agent.provider_key},
+                metadata.get("delegation"),
+            )
+        if await repo.reopen_run(
+            session,
+            ask.run_id,
+            run_input,
+            metadata=metadata,
+            expected_status="input-required",
+        ):
+            return Opened(
+                run_id=ask.run_id,
+                starting_seq=await repo.get_last_event_seq(session, ask.run_id),
+                landed_on_ask=True,
+            )
+
+    if entrance == "result":
+        return None
+
+    await repo.ensure_queue_room(session, thread_id, funduq.settings.thread_queue_limit)
+    created = await repo.create_run(
+        session, thread_id, agent, protocol, run_input,
+        metadata=metadata, head_key=head_key,
+    )
+    return Opened(run_id=created["run_id"], starting_seq=0, landed_on_ask=False)

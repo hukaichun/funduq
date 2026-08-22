@@ -10,9 +10,15 @@ from ag_ui.core import RunAgentInput, RunErrorEvent, RunStartedEvent
 from funduq import repo
 from funduq.models import AgentRef, LlmRef
 from funduq.agui import rewrite_message_ids
-from funduq.doors import InboundRun, dispatch, resolve_kyok, verify_caller
+from funduq.doors import (
+    InboundRun,
+    PendingAsk,
+    dispatch,
+    open_run,
+    resolve_kyok,
+    verify_caller,
+)
 from funduq.errors import AgentNotFound
-from funduq.identity import verify_resolution
 from funduq.kyok import strip_kyok_context
 
 if TYPE_CHECKING:
@@ -83,53 +89,40 @@ class AGUIAdapter:
                 head_key=head_key,
             )
 
-            # A resume targets the thread's paused (input-required) run
-            # specifically — not "the latest active run", which with queued
-            # siblings on the thread may be a different, merely queued run.
+            # AG-UI declares its entrance in the body: a `resume` payload is a
+            # deferred call's RESULT, anything else is an utterance. A result
+            # targets the thread's paused (input-required) run specifically —
+            # not "the latest active run", which with queued siblings on the
+            # thread may be a different, merely queued run.
             paused = (
                 await repo.get_paused_run_for_thread(session, thread_id) if resume else None
             )
-            if resume and paused is None:
-                # A resume is a deferred call's RESULT, and a result must land
-                # on its pending ask — with nothing paused there is no ask, and
-                # a result must not enter dressed as an utterance (the door's
-                # two entrances are an utterance or a result, nothing else).
-                return ThreadSnapshot(await repo.get_thread_snapshot(session, thread_id))
 
             input_dump = body.model_dump(mode="json", by_alias=True)
             if isinstance(input_dump.get("metadata"), dict):
                 input_dump["metadata"] = strip_kyok_context(input_dump["metadata"])
-            if paused is not None:
-                run_id = paused["run_id"]
-                if paused.get("head_key") is not None:
-                    # A chained ask names its authorities; the resolution must
-                    # be signed by one of them (the 60s-window timestamp
-                    # family — the reopen below consumes the signature with
-                    # the win). Raises InvalidResolution otherwise.
-                    verify_resolution(
-                        metadata.get("resolution") or {},
-                        run_id,
-                        {paused["head_key"], agent.provider_key},
-                        metadata.get("delegation"),
-                    )
-                # Status-guarded so two concurrent resumes resolve to one; the
-                # loser sees the thread as busy, same as any other caller.
-                if not await repo.reopen_run(
-                    session, run_id, input_dump, metadata=metadata,
-                    expected_status="input-required",
-                ):
-                    return ThreadSnapshot(await repo.get_thread_snapshot(session, thread_id))
-                starting_seq = await repo.get_last_event_seq(session, run_id)
-            else:
-                await repo.ensure_queue_room(
-                    session, thread_id, funduq.settings.thread_queue_limit
-                )
-                created = await repo.create_run(
-                    session, thread_id, agent, "ag-ui", input_dump,
-                    metadata=metadata, head_key=head_key,
-                )
-                run_id = created["run_id"]
-                starting_seq = 0
+
+            opened = await open_run(
+                funduq, session,
+                agent=agent,
+                thread_id=thread_id,
+                entrance="result" if resume else "utterance",
+                ask=(
+                    PendingAsk(run_id=paused["run_id"], head_key=paused.get("head_key"))
+                    if paused is not None
+                    else None
+                ),
+                run_input=input_dump,
+                metadata=metadata,
+                head_key=head_key,
+                protocol="ag-ui",
+            )
+            if opened is None:
+                # A result with no ask to land on: there was none, or another
+                # caller answered first. It must not enter dressed as an
+                # utterance, so the caller gets the thread as it now stands.
+                return ThreadSnapshot(await repo.get_thread_snapshot(session, thread_id))
+            run_id, starting_seq = opened.run_id, opened.starting_seq
 
             inbound = InboundRun(
                 agent=agent,

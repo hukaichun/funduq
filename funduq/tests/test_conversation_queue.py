@@ -483,3 +483,90 @@ async def test_addressing_the_paused_task_needs_no_answer_funduq_relays_anything
     assert any("book the train instead" in c for c in contents), (
         "the provider receives the utterance verbatim and judges it itself"
     )
+
+
+async def test_the_second_answer_to_one_ask_degrades_to_an_utterance(funduq, serve):
+    """Two callers answer the same paused task; the reopen is status-guarded, so exactly one
+    wins. The loser is not refused and not dropped — over A2A a result *is* a plain message
+    plus addressing, so one that finds no ask left to land on honestly is an utterance, and it
+    becomes its own queued run on the thread.
+
+    This is the branch both doors now share (`doors.open_run`) and the one
+    place where their grammars deliberately differ: the AG-UI door refuses
+    the same loser with a thread snapshot, because there a `resume` payload
+    *declares* itself a result and a result must not enter dressed as
+    anything else."""
+    provider = AskingAgent()
+    served = await serve(provider, "contested")
+    agent = served.agents["contested"]
+
+    first = await _rpc(funduq, agent, "SendMessage", {"message": _message("do the thing")})
+    task_id = first["result"]["id"]
+    thread_id = first["result"]["contextId"]
+    assert first["result"]["status"]["state"] == "TASK_STATE_INPUT_REQUIRED"
+
+    winner = await _rpc(
+        funduq, agent, "SendMessage",
+        {"message": {**_message("mine is the answer"), "taskId": task_id}},
+    )
+    loser = await _rpc(
+        funduq, agent, "SendMessage",
+        {"message": {**_message("no, mine is"), "taskId": task_id}},
+    )
+
+    assert winner["result"]["id"] == task_id, "the first answer lands on the ask"
+    assert loser["result"]["id"] != task_id, "the second becomes its own run, not a second resume"
+    assert loser["result"]["contextId"] == thread_id, "and it stays on the same thread"
+    assert [r.run_id for r in provider.rounds] == [task_id, task_id, loser["result"]["id"]]
+
+
+async def test_the_second_answer_over_ag_ui_is_refused_with_the_thread_state(funduq, serve):
+    """The mirror of the case above, on the door whose grammar says otherwise. An AG-UI
+    `resume` payload declares itself a **result**; when another caller has already drained the
+    ask, there is nothing for it to land on, and it gets the thread's state back rather than
+    being repackaged as a fresh run carrying an answer nobody asked for."""
+    from ag_ui.core import RunAgentInput, UserMessage
+    from ag_ui.core.types import ResumeEntry
+
+    from funduq.protocols.agui import AGUIAdapter, EventStream, ThreadSnapshot
+
+    provider = AskingAgent()
+    served = await serve(provider, "contested-agui")
+    agent = served.agents["contested-agui"]
+    adapter = AGUIAdapter(funduq)
+
+    opening = await adapter.run(
+        agent,
+        RunAgentInput(
+            thread_id="t-contested", run_id="ignored", state={},
+            messages=[UserMessage(id="m1", role="user", content="do the thing")],
+            tools=[], context=[], forwarded_props={},
+        ),
+    )
+    [event async for event in opening.events]
+    await _until(lambda: _paused(funduq, opening.thread_id))
+
+    def _answer(message_id: str):
+        return adapter.run(
+            agent,
+            RunAgentInput(
+                thread_id=opening.thread_id, run_id="ignored", state={},
+                messages=[UserMessage(id=message_id, role="user", content="the answer")],
+                tools=[], context=[], forwarded_props={},
+                resume=[ResumeEntry.model_validate(
+                    {"interruptId": "int_1", "status": "resolved", "payload": {"answer": 42}}
+                )],
+            ),
+        )
+
+    winner = await _answer("m2")
+    assert isinstance(winner, EventStream)
+    [event async for event in winner.events]
+
+    loser = await _answer("m3")
+    assert isinstance(loser, ThreadSnapshot), "a result that lost the ask is refused, not queued"
+
+
+async def _paused(funduq, thread_id: str) -> bool:
+    async with funduq.session() as session:
+        return await repo.get_paused_run_for_thread(session, thread_id) is not None
