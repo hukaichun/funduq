@@ -19,9 +19,30 @@ from funduq.protocols.a2a import A2AAdapter
 
 from tests.conftest import EchoAgent
 
+from a2a.types import a2a_pb2 as pb
 
-def _message(text: str) -> dict:
-    return {"role": "user", "parts": [{"type": "text", "text": text}]}
+COMPLETED = pb.TaskState.TASK_STATE_COMPLETED
+INPUT_REQUIRED = pb.TaskState.TASK_STATE_INPUT_REQUIRED
+
+
+def _message(
+    text: str,
+    *,
+    context_id: str | None = None,
+    task_id: str | None = None,
+    reference_task_ids: list[str] | None = None,
+) -> dict:
+    """An A2A message. Its addressing rides on the message itself, because in A2A v1.0 that is
+    the only place it exists — `SendMessageRequest` carries `message` and `metadata`, nothing
+    else."""
+    message: dict = {"role": "user", "parts": [{"type": "text", "text": text}]}
+    if context_id is not None:
+        message["contextId"] = context_id
+    if task_id is not None:
+        message["taskId"] = task_id
+    if reference_task_ids is not None:
+        message["referenceTaskIds"] = reference_task_ids
+    return message
 
 
 class AskingAgent:
@@ -56,8 +77,8 @@ async def test_a_chained_thread_binds_its_head_at_birth(funduq, serve, new_ident
     )
 
     async with funduq.session() as session:
-        run = await repo.get_run(session, task["id"])
-        thread = await repo.get_thread(session, task["contextId"])
+        run = await repo.get_run(session, task.id)
+        thread = await repo.get_thread(session, task.context_id)
     assert run.head_key == head.public_key
     assert thread["head_key"] == head.public_key
 
@@ -69,26 +90,25 @@ async def test_a_non_member_cannot_speak_on_a_bound_thread(funduq, serve, new_id
     task = await A2AAdapter(funduq).send_task(
         agent, _message("hi"), actor_chain=[head.sign_chain_hop()]
     )
-    thread_id = task["contextId"]
+    thread_id = task.context_id
 
     with pytest.raises(ThreadMembershipRequired):
         await A2AAdapter(funduq).send_task(
-            agent, _message("let me in"), context_id=thread_id
+            agent, _message("let me in", context_id=thread_id),
         )
     with pytest.raises(ThreadMembershipRequired):
         await A2AAdapter(funduq).send_task(
             agent,
-            _message("me neither"),
-            context_id=thread_id,
+            _message("me neither", context_id=thread_id),
             actor_chain=[stranger.sign_chain_hop()],
         )
 
     # Members interject freely: the head, and the serving provider's own key.
     again = await A2AAdapter(funduq).send_task(
-        agent, _message("still me"), context_id=thread_id,
+        agent, _message("still me", context_id=thread_id),
         actor_chain=[head.sign_chain_hop()],
     )
-    assert again["status"]["state"] == "TASK_STATE_COMPLETED"
+    assert again.status.state == COMPLETED
 
 
 async def test_an_unbound_thread_stays_open_and_is_never_retroactively_locked(
@@ -97,17 +117,17 @@ async def test_an_unbound_thread_stays_open_and_is_never_retroactively_locked(
     agent = (await serve(EchoAgent(), "open")).agents["open"]
 
     first = await A2AAdapter(funduq).send_task(agent, _message("anonymous opener"))
-    thread_id = first["contextId"]
+    thread_id = first.context_id
 
     # A chained writer arriving later does not lock the thread against anyone.
     await A2AAdapter(funduq).send_task(
-        agent, _message("chained visitor"), context_id=thread_id,
+        agent, _message("chained visitor", context_id=thread_id),
         actor_chain=[new_identity().sign_chain_hop()],
     )
     third = await A2AAdapter(funduq).send_task(
-        agent, _message("still anonymous"), context_id=thread_id
+        agent, _message("still anonymous", context_id=thread_id),
     )
-    assert third["status"]["state"] == "TASK_STATE_COMPLETED"
+    assert third.status.state == COMPLETED
 
     async with funduq.session() as session:
         thread = await repo.get_thread(session, thread_id)
@@ -122,15 +142,14 @@ async def test_a_chained_ask_is_resolved_only_by_its_authority(funduq, serve, ne
     first = await A2AAdapter(funduq).send_task(
         agent, _message("go"), actor_chain=[head.sign_chain_hop()]
     )
-    task_id = first["id"]
-    assert first["status"]["state"] == "TASK_STATE_INPUT_REQUIRED"
+    task_id = first.id
+    assert first.status.state == INPUT_REQUIRED
 
     # No proof, no answer — even from the head's own chain.
     with pytest.raises(InvalidResolution):
         await A2AAdapter(funduq).send_task(
             agent,
-            _message("unproven answer"),
-            task_id=task_id,
+            _message("unproven answer", task_id=task_id),
             actor_chain=[head.sign_chain_hop()],
         )
 
@@ -139,8 +158,7 @@ async def test_a_chained_ask_is_resolved_only_by_its_authority(funduq, serve, ne
     with pytest.raises(InvalidResolution):
         await A2AAdapter(funduq).send_task(
             agent,
-            _message("forged answer"),
-            task_id=task_id,
+            _message("forged answer", task_id=task_id),
             actor_chain=[head.sign_chain_hop()],
             metadata={
                 "resolution": {
@@ -155,8 +173,7 @@ async def test_a_chained_ask_is_resolved_only_by_its_authority(funduq, serve, ne
     signature, timestamp = head.sign_resolution(task_id)
     answered = await A2AAdapter(funduq).send_task(
         agent,
-        _message("the answer"),
-        task_id=task_id,
+        _message("the answer", task_id=task_id),
         actor_chain=[head.sign_chain_hop()],
         metadata={
             "resolution": {
@@ -166,8 +183,8 @@ async def test_a_chained_ask_is_resolved_only_by_its_authority(funduq, serve, ne
             }
         },
     )
-    assert answered["id"] == task_id
-    assert answered["status"]["state"] == "TASK_STATE_COMPLETED"
+    assert answered.id == task_id
+    assert answered.status.state == COMPLETED
 
 
 async def test_a_session_key_resolves_to_its_durable_authority(funduq, serve, new_identity):
@@ -185,7 +202,7 @@ async def test_a_session_key_resolves_to_its_durable_authority(funduq, serve, ne
         actor_chain=[session_key.sign_chain_hop()],
         metadata={"delegation": certificate},
     )
-    task_id = first["id"]
+    task_id = first.id
 
     async with funduq.session() as session:
         run = await repo.get_run(session, task_id)
@@ -197,8 +214,7 @@ async def test_a_session_key_resolves_to_its_durable_authority(funduq, serve, ne
     signature, timestamp = session_key_2.sign_resolution(task_id)
     answered = await A2AAdapter(funduq).send_task(
         agent,
-        _message("the answer"),
-        task_id=task_id,
+        _message("the answer", task_id=task_id),
         actor_chain=[session_key_2.sign_chain_hop()],
         metadata={
             "delegation": certificate_2,
@@ -209,7 +225,7 @@ async def test_a_session_key_resolves_to_its_durable_authority(funduq, serve, ne
             },
         },
     )
-    assert answered["status"]["state"] == "TASK_STATE_COMPLETED"
+    assert answered.status.state == COMPLETED
 
 
 async def test_the_provider_may_resolve_its_own_agents_ask(funduq, serve, new_identity):
@@ -221,14 +237,13 @@ async def test_the_provider_may_resolve_its_own_agents_ask(funduq, serve, new_id
     first = await A2AAdapter(funduq).send_task(
         agent, _message("go"), actor_chain=[head.sign_chain_hop()]
     )
-    task_id = first["id"]
+    task_id = first.id
 
     keeper = served.identity
     signature, timestamp = keeper.sign_resolution(task_id)
     answered = await A2AAdapter(funduq).send_task(
         agent,
-        _message("the keeper answers"),
-        task_id=task_id,
+        _message("the keeper answers", task_id=task_id),
         actor_chain=[keeper.sign_chain_hop()],
         metadata={
             "resolution": {
@@ -238,7 +253,7 @@ async def test_the_provider_may_resolve_its_own_agents_ask(funduq, serve, new_id
             }
         },
     )
-    assert answered["status"]["state"] == "TASK_STATE_COMPLETED"
+    assert answered.status.state == COMPLETED
 
 
 async def test_the_agui_door_guards_a_chained_resume_the_same_way(funduq, serve, new_identity):

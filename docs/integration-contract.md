@@ -178,11 +178,18 @@ client author needs them.
 - **An offline agent looks like a failed task, not an error.** The run
   is recorded `failed` with `agent_offline`, and the task comes back
   `FAILED` with no message part.
-- **Only `RunNotFound` becomes a JSON-RPC error in core.** Unknown
-  thread, thread-ownership mismatch, unknown agent, invalid actor chain
-  and invalid run input all escape as Python exceptions for the serving
-  layer to map. Which HTTP status a caller sees is the gateway's choice,
-  not core's.
+- **No error becomes a JSON-RPC error in core**, and core writes no
+  JSON-RPC at all — not the envelopes, not the method names, not the
+  codes. A task id that names nothing raises A2A's own
+  `TaskNotFoundError`; a task that is not this agent's comes back as
+  `None`, which is what A2A's request-handler interface means by
+  not-found. Unknown thread, thread-ownership mismatch, unknown agent,
+  invalid actor chain and invalid run input escape as Python exceptions.
+  Which code or HTTP status a caller sees is the gateway's choice, and
+  it has to be: **the protocol version a caller speaks rides an
+  `A2A-Version` header**, so the gateway is the only party holding the
+  evidence for that decision (see
+  [writing a transport](writing-a-transport.md#serving-the-a2a-door)).
 - **Non-lifecycle AG-UI events ride status updates** under a funduq
   metadata key. A standard client ignores them, which means tool-call
   events are not visible over A2A.

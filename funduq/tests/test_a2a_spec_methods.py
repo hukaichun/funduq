@@ -1,20 +1,59 @@
+"""The A2A door's operations, called as operations.
+
+funduq used to hand-write JSON-RPC here: envelopes, a table of every method
+name the spec has ever used, and the two error codes. All of it is gone, and
+the reason is not tidiness — it could not be correct from this seat.
+**Which protocol version a request speaks rides an `A2A-Version` HTTP
+header** (absent means 0.3, measured against `a2a-sdk 1.1.2`), and core never
+sees headers. So the hand-written table answered v1.0 method names to every
+client regardless of what it declared, and answered v0.3's names with v1.0's
+shapes — which a v0.3 client rejects outright.
+
+A transport mounts `a2a.server.routes.jsonrpc_dispatcher.JsonRpcDispatcher`
+over a `RequestHandler` that forwards to this adapter, and gets the names,
+the envelopes, the error codes and the version negotiation from the package
+that defines them. What stays here is what funduq actually decides, and one
+conformance test so a spec change lands as a red test in this repo rather
+than in production.
+"""
+
 from __future__ import annotations
 
-import pytest
+from typing import get_args
 
-from funduq.protocols.a2a import PROTOCOL_VERSION, A2AAdapter, A2AStream, ServedInterface
+import pytest
+from a2a.server.request_handlers.request_handler import RequestHandler
+from a2a.types import a2a_pb2 as pb
+from a2a.utils.errors import TaskNotFoundError
+from google.protobuf.json_format import MessageToDict
+
+from funduq.protocols.a2a import PROTOCOL_VERSION, A2AAdapter, ServedInterface
 
 from tests.conftest import EchoAgent
 
 
-async def _rpc(funduq, agent, method: str, params: dict):
-    return await A2AAdapter(funduq).handle_rpc(
-        agent, {"jsonrpc": "2.0", "id": "1", "method": method, "params": params}
-    )
+def _message(
+    text: str,
+    *,
+    context_id: str | None = None,
+    task_id: str | None = None,
+    reference_task_ids: list[str] | None = None,
+) -> dict:
+    """An A2A message. Its addressing rides on the message itself, because in A2A v1.0 that is
+    the only place it exists — `SendMessageRequest` carries `message` and `metadata`, nothing
+    else."""
+    message: dict = {"role": "user", "parts": [{"type": "text", "text": text}]}
+    if context_id is not None:
+        message["contextId"] = context_id
+    if task_id is not None:
+        message["taskId"] = task_id
+    if reference_task_ids is not None:
+        message["referenceTaskIds"] = reference_task_ids
+    return message
 
 
-def _message(text: str) -> dict:
-    return {"role": "user", "parts": [{"type": "text", "text": text}]}
+def _wire(message) -> dict:
+    return MessageToDict(message)
 
 
 @pytest.fixture
@@ -22,83 +61,121 @@ async def callee(serve):
     return (await serve(EchoAgent(), "callee")).agents["callee"]
 
 
-@pytest.mark.parametrize("method", ["SendMessage", "message/send", "tasks/send"])
-async def test_send_answers_to_every_name_it_has_ever_had(funduq, callee, method):
-    envelope = await _rpc(funduq, callee, method, {"message": _message("hi")})
+# Every operation A2A's own request-handler interface declares, and what
+# funduq answers it with. A rename upstream fails the import; an addition
+# fails the assertion, which is the point — a new A2A operation should
+# arrive as a decision to make, not as silence.
+OFFERED = {
+    "on_message_send": "send_task",
+    "on_message_send_stream": "send_task_streaming",
+    "on_get_task": "get_task",
+    "on_cancel_task": "cancel_task",
+    "on_subscribe_to_task": "resubscribe_task",
+}
 
-    assert envelope["result"]["status"]["state"] == "TASK_STATE_COMPLETED"
+NOT_OFFERED = {
+    # Push notifications: funduq pushes nothing outward on a caller's behalf.
+    "on_create_task_push_notification_config",
+    "on_get_task_push_notification_config",
+    "on_list_task_push_notification_configs",
+    "on_delete_task_push_notification_config",
+    # Listing tasks and the extended card are the gateway's to answer if it
+    # wants them; core exposes the roster its own way.
+    "on_list_tasks",
+    "on_get_extended_agent_card",
+}
 
 
-@pytest.mark.parametrize("method", ["SendStreamingMessage", "message/stream", "tasks/sendSubscribe"])
-async def test_stream_answers_to_every_name_it_has_ever_had(funduq, callee, method):
-    result = await _rpc(funduq, callee, method, {"message": _message("hi")})
-
-    assert isinstance(result, A2AStream)
-    updates = [item["result"] async for item in result.results]
-    assert all({"statusUpdate", "artifactUpdate"} & set(u) for u in updates)
-    assert updates[-1]["statusUpdate"]["status"]["state"] == "TASK_STATE_COMPLETED"
+def test_every_a2a_operation_is_either_offered_or_deliberately_not():
+    assert set(RequestHandler.__abstractmethods__) == set(OFFERED) | NOT_OFFERED
+    for operation, method in OFFERED.items():
+        assert callable(getattr(A2AAdapter, method)), operation
 
 
-@pytest.mark.parametrize("method", ["GetTask", "tasks/get"])
-async def test_get_answers_to_either_name(funduq, callee, method):
-    sent = await _rpc(funduq, callee, "SendMessage", {"message": _message("hi")})
+def test_the_streams_yield_types_a2a_calls_events():
+    """`a2a.server.events.Event` is what a request handler yields, and it is a type alias over
+    four protobuf messages — vocabulary, not I/O (importing it pulls in no transport module at
+    all, checked). funduq's streams must stay inside it, because a transport wraps them with
+    the package's own `to_stream_response` and would have nothing to wrap otherwise."""
+    from a2a.server.events import Event
 
-    got = await _rpc(funduq, callee, method, {"id": sent["result"]["id"]})
-
-    assert got["result"]["id"] == sent["result"]["id"]
+    assert set(get_args(Event)) >= {pb.TaskStatusUpdateEvent, pb.TaskArtifactUpdateEvent}
 
 
-async def test_an_unknown_method_is_still_method_not_found(funduq, callee):
-    envelope = await _rpc(funduq, callee, "TeleportTask", {"message": _message("hi")})
+async def test_sending_a_message_settles_the_task(funduq, callee):
+    task = await A2AAdapter(funduq).send_task(callee, _message("hi"))
 
-    assert envelope["error"]["code"] == -32601
+    assert task.status.state == pb.TaskState.TASK_STATE_COMPLETED
+
+
+async def test_streaming_yields_a2as_own_events_ending_completed(funduq, callee):
+    stream = await A2AAdapter(funduq).send_task_streaming(callee, _message("hi"))
+
+    events = [event async for event in stream]
+
+    assert all(
+        isinstance(e, pb.TaskStatusUpdateEvent | pb.TaskArtifactUpdateEvent) for e in events
+    )
+    assert events[-1].status.state == pb.TaskState.TASK_STATE_COMPLETED
+
+
+async def test_get_returns_the_task_that_was_sent(funduq, callee):
+    adapter = A2AAdapter(funduq)
+    sent = await adapter.send_task(callee, _message("hi"))
+
+    got = await adapter.get_task(callee, sent.id)
+
+    assert got.id == sent.id
+
+
+async def test_a_task_of_another_agent_is_simply_not_found(funduq, callee, serve):
+    other = (await serve(EchoAgent(), "stranger")).agents["stranger"]
+    adapter = A2AAdapter(funduq)
+    sent = await adapter.send_task(callee, _message("hi"))
+
+    assert await adapter.get_task(other, sent.id) is None
+    assert await adapter.cancel_task(other, sent.id) is None
 
 
 async def test_context_id_is_read_off_the_message(funduq, callee):
-    first = await _rpc(funduq, callee, "SendMessage", {"message": _message("hi")})
-    context_id = first["result"]["contextId"]
+    adapter = A2AAdapter(funduq)
+    first = await adapter.send_task(callee, _message("hi"))
 
-    second = await _rpc(
-        funduq, callee, "SendMessage", {"message": {**_message("again"), "contextId": context_id}}
+    second = await adapter.send_task(
+        callee, {**_message("again"), "contextId": first.context_id}
     )
 
-    assert second["result"]["contextId"] == context_id
-    assert second["result"]["id"] != first["result"]["id"]
+    assert second.context_id == first.context_id
+    assert second.id != first.id
 
 
 async def test_task_id_on_the_message_continues_that_task(funduq, callee):
-    first = await _rpc(funduq, callee, "SendMessage", {"message": _message("hi")})
-    task_id = first["result"]["id"]
+    adapter = A2AAdapter(funduq)
+    first = await adapter.send_task(callee, _message("hi"))
 
-    second = await _rpc(
-        funduq, callee, "SendMessage", {"message": {**_message("again"), "taskId": task_id}}
-    )
+    second = await adapter.send_task(callee, {**_message("again"), "taskId": first.id})
 
-    assert second["result"]["contextId"] == first["result"]["contextId"]
+    assert second.context_id == first.context_id
 
 
 async def test_an_unknown_task_id_is_task_not_found_not_a_fresh_thread(funduq, callee):
-    envelope = await _rpc(
-        funduq, callee, "SendMessage", {"message": {**_message("hi"), "taskId": "run_nope"}}
-    )
-
-    assert envelope["error"]["code"] == -32001
+    """And it is A2A's own error type, so a transport maps it without a table of funduq's."""
+    with pytest.raises(TaskNotFoundError):
+        await A2AAdapter(funduq).send_task(callee, {**_message("hi"), "taskId": "run_nope"})
 
 
-@pytest.mark.parametrize("method", ["SubscribeToTask", "tasks/resubscribe"])
-async def test_subscribing_to_a_finished_task_reports_its_outcome(funduq, callee, method):
-    sent = await _rpc(funduq, callee, "SendMessage", {"message": _message("hi")})
+async def test_subscribing_to_a_finished_task_reports_its_outcome(funduq, callee):
+    adapter = A2AAdapter(funduq)
+    sent = await adapter.send_task(callee, _message("hi"))
 
-    result = await _rpc(funduq, callee, method, {"id": sent["result"]["id"]})
+    events = [event async for event in await adapter.resubscribe_task(callee, sent.id)]
 
-    updates = [item["result"] async for item in result.results]
-    assert updates[-1]["statusUpdate"]["status"]["state"] == "TASK_STATE_COMPLETED"
+    assert events[-1].status.state == pb.TaskState.TASK_STATE_COMPLETED
 
 
-async def test_subscribing_to_an_unknown_task_is_an_error(funduq, callee):
-    envelope = await _rpc(funduq, callee, "SubscribeToTask", {"id": "run_nope"})
-
-    assert envelope["error"]["code"] == -32001
+async def test_subscribing_to_an_unknown_task_is_task_not_found(funduq, callee):
+    with pytest.raises(TaskNotFoundError):
+        await A2AAdapter(funduq).resubscribe_task(callee, "run_nope")
 
 
 async def test_the_agent_card_says_which_spec_this_endpoint_speaks(funduq, callee):
@@ -106,21 +183,21 @@ async def test_the_agent_card_says_which_spec_this_endpoint_speaks(funduq, calle
     card = await A2AAdapter(funduq).agent_card(callee, interfaces=[served])
 
     assert PROTOCOL_VERSION == "1.0"
-    assert card["supportedInterfaces"] == [
+    assert _wire(card)["supportedInterfaces"] == [
         {
             "url": "https://funduq.example/a2a/ab12/callee/rpc",
             "protocolBinding": "JSONRPC",
             "protocolVersion": "1.0",
         }
     ]
-    assert card["capabilities"]["streaming"] is True
+    assert card.capabilities.streaming is True
 
 
 async def test_a_card_for_a_funduq_nobody_serves_advertises_nowhere(funduq, callee):
     card = await A2AAdapter(funduq).agent_card(callee)
 
-    assert "supportedInterfaces" not in card
-    assert card["capabilities"]["streaming"] is True
+    assert "supportedInterfaces" not in _wire(card)
+    assert card.capabilities.streaming is True
 
 
 async def test_the_agent_card_carries_the_agents_own_version(funduq):
@@ -137,4 +214,4 @@ async def test_the_agent_card_carries_the_agents_own_version(funduq):
 
     card = await A2AAdapter(funduq).agent_card(registered.agents["versioned"])
 
-    assert card["version"] == "3.1.4"
+    assert card.version == "3.1.4"

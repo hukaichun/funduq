@@ -4,7 +4,6 @@ from typing import Any
 
 from a2a.types import a2a_pb2 as pb
 from ag_ui.core import AssistantMessage, UserMessage
-from google.protobuf.json_format import MessageToDict
 
 from funduq.pause import interrupt_outcome_of
 
@@ -42,19 +41,17 @@ def is_mapped(event: dict[str, Any]) -> bool:
     return event.get("type") in MAPPED_EVENT_TYPES
 
 
-def to_wire(message) -> dict[str, Any]:
-    return MessageToDict(message)
-
-
 def state_for_run_status(run_status: str):
     """Maps a funduq run status to its A2A `TaskState`, or `TASK_STATE_UNSPECIFIED` for a status
     (e.g. `"cancelling"`) with no A2A equivalent."""
     return RUN_STATUS_TO_A2A_STATE.get(run_status, pb.TaskState.TASK_STATE_UNSPECIFIED)
 
 
-def status_update_for_run_status(task_id: str, context_id: str, run_status: str) -> dict[str, Any]:
-    """Builds a `TaskStatusUpdateEvent` wire payload reflecting a run's persisted status, with
-    no message or metadata attached."""
+def status_update_for_run_status(
+    task_id: str, context_id: str, run_status: str
+) -> pb.TaskStatusUpdateEvent:
+    """Builds a `TaskStatusUpdateEvent` reflecting a run's persisted status, with no message or
+    metadata attached."""
     return _status_update(task_id, context_id, state_for_run_status(run_status))
 
 
@@ -82,8 +79,10 @@ def text_delta_of(event: dict[str, Any]) -> tuple[str, str] | None:
     return event.get("messageId") or "text", event.get("delta") or event.get("content") or ""
 
 
-def agui_event_to_a2a_update(event: dict[str, Any], task_id: str, context_id: str) -> dict[str, Any]:
-    """Translates one AG-UI run event into an A2A `StreamResponse` wire payload: run lifecycle
+def agui_event_to_a2a_update(
+    event: dict[str, Any], task_id: str, context_id: str
+) -> pb.TaskStatusUpdateEvent | pb.TaskArtifactUpdateEvent:
+    """Translates one AG-UI run event into the A2A stream event it projects onto: run lifecycle
     events become status updates (`RUN_STARTED`->working, `RUN_FINISHED`->completed or, when it
     carries an interrupt outcome, input-required with the interrupts attached, `RUN_ERROR`->failed
     with the error message attached), text-content events become appending artifact updates keyed
@@ -116,15 +115,11 @@ def agui_event_to_a2a_update(event: dict[str, Any], task_id: str, context_id: st
     delta = text_delta_of(event)
     if delta is not None:
         artifact_id, text = delta
-        return to_wire(
-            pb.StreamResponse(
-                artifact_update=pb.TaskArtifactUpdateEvent(
-                    task_id=task_id,
-                    context_id=context_id,
-                    artifact=pb.Artifact(artifact_id=artifact_id, parts=[pb.Part(text=text)]),
-                    append=True,
-                )
-            )
+        return pb.TaskArtifactUpdateEvent(
+            task_id=task_id,
+            context_id=context_id,
+            artifact=pb.Artifact(artifact_id=artifact_id, parts=[pb.Part(text=text)]),
+            append=True,
         )
 
     return _status_update(task_id, context_id, pb.TaskState.TASK_STATE_WORKING, agui_event=event)
@@ -138,7 +133,7 @@ def _status_update(
     message: Any = None,
     agui_event: dict[str, Any] | None = None,
     metadata: dict[str, Any] | None = None,
-) -> dict[str, Any]:
+) -> pb.TaskStatusUpdateEvent:
     status = pb.TaskStatus(state=state)
     if message is not None:
         status.message.CopyFrom(
@@ -153,13 +148,13 @@ def _status_update(
         update.metadata.update(metadata)
     if agui_event is not None:
         update.metadata.update({OVERFLOW_METADATA_KEY: agui_event})
-    return to_wire(pb.StreamResponse(status_update=update))
+    return update
 
 
 def build_task(
     task_id: str, context_id: str, agent_name: str, run_status: str, run_events: list[dict[str, Any]]
-) -> dict[str, Any]:
-    """Builds an A2A `Task` wire payload from a run's stored status and event history, merging
+) -> pb.Task:
+    """Builds an A2A `Task` from a run's stored status and event history, merging
     each message's text-content deltas (in event order) into one artifact per `messageId`, and
     carrying every unmapped event, in order, under `metadata.agui_events`.
 
@@ -187,4 +182,4 @@ def build_task(
     )
     if overflow:
         task.metadata.update({OVERFLOW_METADATA_LIST_KEY: overflow})
-    return to_wire(task)
+    return task

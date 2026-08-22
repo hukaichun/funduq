@@ -237,8 +237,11 @@ async def test_a_delegated_run_inherits_binding_and_shows_its_chain(funduq, serv
     chain = new_actor_chain(Ed25519PrivateKey.generate())
     await A2AAdapter(funduq).send_task(
         callee_served.agents["sub-agent"],
-        {"role": "user", "parts": [{"type": "text", "text": "delegated"}]},
-        reference_task_ids=[parent.run_id],
+        {
+            "role": "user",
+            "parts": [{"type": "text", "text": "delegated"}],
+            "referenceTaskIds": [parent.run_id],
+        },
         actor_chain=chain,
     )
 

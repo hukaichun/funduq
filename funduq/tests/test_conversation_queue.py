@@ -17,18 +17,40 @@ import asyncio
 
 import pytest
 
+from a2a.types import a2a_pb2 as pb
+
 from funduq import repo
 from funduq.protocols.a2a import A2AAdapter
 
-
-async def _rpc(funduq, agent, method: str, params: dict):
-    return await A2AAdapter(funduq).handle_rpc(
-        agent, {"jsonrpc": "2.0", "id": "1", "method": method, "params": params}
-    )
+COMPLETED = pb.TaskState.TASK_STATE_COMPLETED
+INPUT_REQUIRED = pb.TaskState.TASK_STATE_INPUT_REQUIRED
 
 
-def _message(text: str) -> dict:
-    return {"role": "user", "parts": [{"type": "text", "text": text}]}
+async def _send(funduq, agent, message: dict):
+    """One A2A message in, the `Task` it settles as out. No envelope: the JSON-RPC framing —
+    method names, ids, error codes — belongs to the transport, and this repo no longer writes
+    it (see tests/test_a2a_spec_methods.py)."""
+    return await A2AAdapter(funduq).send_task(agent, message)
+
+
+def _message(
+    text: str,
+    *,
+    context_id: str | None = None,
+    task_id: str | None = None,
+    reference_task_ids: list[str] | None = None,
+) -> dict:
+    """An A2A message. Its addressing rides on the message itself, because in A2A v1.0 that is
+    the only place it exists — `SendMessageRequest` carries `message` and `metadata`, nothing
+    else."""
+    message: dict = {"role": "user", "parts": [{"type": "text", "text": text}]}
+    if context_id is not None:
+        message["contextId"] = context_id
+    if task_id is not None:
+        message["taskId"] = task_id
+    if reference_task_ids is not None:
+        message["referenceTaskIds"] = reference_task_ids
+    return message
 
 
 async def _until(predicate, timeout: float = 5.0) -> None:
@@ -86,17 +108,16 @@ async def test_a_message_sent_mid_run_is_queued_not_dropped(funduq, serve):
     agent = served.agents["busy"]
 
     first = asyncio.create_task(
-        _rpc(funduq, agent, "SendMessage", {"message": _message("start working")})
+        _send(funduq, agent, _message("start working"))
     )
     await _until(lambda: len(provider.runs) == 1)
     thread_id = provider.runs[0].thread_id
 
     second = asyncio.create_task(
-        _rpc(
+        _send(
             funduq,
             agent,
-            "SendMessage",
-            {"message": {**_message("one more thing"), "contextId": thread_id}},
+            {**_message("one more thing"), "contextId": thread_id},
         )
     )
 
@@ -108,10 +129,10 @@ async def test_a_message_sent_mid_run_is_queued_not_dropped(funduq, serve):
     provider.release.set()
     first_result, second_result = await asyncio.gather(first, second)
 
-    assert first_result["result"]["status"]["state"] == "TASK_STATE_COMPLETED"
-    assert second_result["result"]["status"]["state"] == "TASK_STATE_COMPLETED"
-    assert second_result["result"]["id"] != first_result["result"]["id"]
-    assert second_result["result"]["contextId"] == thread_id
+    assert first_result.status.state == COMPLETED
+    assert second_result.status.state == COMPLETED
+    assert second_result.id != first_result.id
+    assert second_result.context_id == thread_id
     assert [r.thread_id for r in provider.runs] == [thread_id, thread_id]
 
 
@@ -120,19 +141,18 @@ async def test_a_reply_addressed_to_the_paused_task_resumes_it(funduq, serve):
     served = await serve(provider, "asker")
     agent = served.agents["asker"]
 
-    first = await _rpc(funduq, agent, "SendMessage", {"message": _message("do the thing")})
-    task_id = first["result"]["id"]
-    assert first["result"]["status"]["state"] == "TASK_STATE_INPUT_REQUIRED"
+    first = await _send(funduq, agent, _message("do the thing"))
+    task_id = first.id
+    assert first.status.state == INPUT_REQUIRED
 
-    second = await _rpc(
+    second = await _send(
         funduq,
         agent,
-        "SendMessage",
-        {"message": {**_message("the answer"), "taskId": task_id}},
+        {**_message("the answer"), "taskId": task_id},
     )
 
-    assert second["result"]["id"] == task_id, "a reply resumes the task, not a new one"
-    assert second["result"]["status"]["state"] == "TASK_STATE_COMPLETED"
+    assert second.id == task_id, "a reply resumes the task, not a new one"
+    assert second.status.state == COMPLETED
     assert len(provider.rounds) == 2
     assert provider.rounds[1].run_id == provider.rounds[0].run_id
 
@@ -142,34 +162,33 @@ async def test_an_unaddressed_message_does_not_resume_the_paused_task(funduq, se
     served = await serve(provider, "patient")
     agent = served.agents["patient"]
 
-    first = await _rpc(funduq, agent, "SendMessage", {"message": _message("do the thing")})
-    task_id = first["result"]["id"]
-    thread_id = first["result"]["contextId"]
+    first = await _send(funduq, agent, _message("do the thing"))
+    task_id = first.id
+    thread_id = first.context_id
 
     unaddressed = asyncio.create_task(
-        _rpc(
+        _send(
             funduq,
             agent,
-            "SendMessage",
-            {"message": {**_message("also, unrelated"), "contextId": thread_id}},
+            {**_message("also, unrelated"), "contextId": thread_id},
         )
     )
 
     # The unaddressed message does not resume the paused task — it is its
     # own run, delivered and answered while the question stays open.
     third = await unaddressed
-    assert third["result"]["status"]["state"] == "TASK_STATE_COMPLETED"
-    assert third["result"]["id"] != task_id
+    assert third.status.state == COMPLETED
+    assert third.id != task_id
 
     async with funduq.session() as session:
         paused = await repo.get_run(session, task_id)
     assert paused.status == "input-required", "only an addressed reply may resume the question"
 
-    reply = await _rpc(
-        funduq, agent, "SendMessage", {"message": {**_message("the answer"), "taskId": task_id}}
+    reply = await _send(
+        funduq, agent, {**_message("the answer"), "taskId": task_id}
     )
-    assert reply["result"]["id"] == task_id
-    assert reply["result"]["status"]["state"] == "TASK_STATE_COMPLETED"
+    assert reply.id == task_id
+    assert reply.status.state == COMPLETED
     assert len(provider.rounds) == 3
 
 
@@ -278,7 +297,7 @@ async def test_a_full_thread_buffer_refuses_the_next_message_loudly(tight):
     agent = await tight.serve_one(provider, "guarded")
 
     first = asyncio.create_task(
-        _rpc(tight, agent, "SendMessage", {"message": _message("start")})
+        _send(tight, agent, _message("start"))
     )
     await _until(lambda: len(provider.runs) == 1)
     thread_id = provider.runs[0].thread_id
@@ -293,7 +312,7 @@ async def test_a_full_thread_buffer_refuses_the_next_message_loudly(tight):
     await _until(_first_is_running)
 
     second = asyncio.create_task(
-        _rpc(tight, agent, "SendMessage", {"message": {**_message("waits"), "contextId": thread_id}})
+        _send(tight, agent, {**_message("waits"), "contextId": thread_id})
     )
 
     async def _buffer_full() -> bool:
@@ -303,12 +322,12 @@ async def test_a_full_thread_buffer_refuses_the_next_message_loudly(tight):
     await _until(_buffer_full)
     with pytest.raises(ThreadQueueFull, match="not accepted"):
         await A2AAdapter(tight).send_task(
-            agent, _message("one too many"), context_id=thread_id
+            agent, {**_message("one too many"), "contextId": thread_id}
         )
 
     provider.release.set()
     results = await asyncio.gather(first, second)
-    assert all(r["result"]["status"]["state"] == "TASK_STATE_COMPLETED" for r in results)
+    assert all(r.status.state == COMPLETED for r in results)
 
 
 class AskThenHold:
@@ -340,19 +359,19 @@ async def test_answering_the_paused_question_is_never_refused_by_the_buffer(tigh
     provider = AskThenHold()
     agent = await tight.serve_one(provider, "asks")
 
-    first = await _rpc(tight, agent, "SendMessage", {"message": _message("go")})
-    task_id = first["result"]["id"]
-    thread_id = first["result"]["contextId"]
-    assert first["result"]["status"]["state"] == "TASK_STATE_INPUT_REQUIRED"
+    first = await _send(tight, agent, _message("go"))
+    task_id = first.id
+    thread_id = first.context_id
+    assert first.status.state == INPUT_REQUIRED
 
     # A filler takes the provider's one slot and holds it; a second filler
     # then fills the thread's whole pending buffer (limit 1).
     filler = asyncio.create_task(
-        _rpc(tight, agent, "SendMessage", {"message": {**_message("filler"), "contextId": thread_id}})
+        _send(tight, agent, {**_message("filler"), "contextId": thread_id})
     )
     await _until(lambda: len(provider.rounds) == 2)
     filler_2 = asyncio.create_task(
-        _rpc(tight, agent, "SendMessage", {"message": {**_message("more filler"), "contextId": thread_id}})
+        _send(tight, agent, {**_message("more filler"), "contextId": thread_id})
     )
 
     async def _buffer_full() -> bool:
@@ -364,7 +383,7 @@ async def test_answering_the_paused_question_is_never_refused_by_the_buffer(tigh
     # The reply lane never competes for buffer room: answering the question
     # is how the thread drains.
     reply = asyncio.create_task(
-        _rpc(tight, agent, "SendMessage", {"message": {**_message("the answer"), "taskId": task_id}})
+        _send(tight, agent, {**_message("the answer"), "taskId": task_id})
     )
     async def _reopened() -> bool:
         async with tight.session() as session:
@@ -375,10 +394,10 @@ async def test_answering_the_paused_question_is_never_refused_by_the_buffer(tigh
 
     provider.release.set()
     reply_result, filler_result, filler_2_result = await asyncio.gather(reply, filler, filler_2)
-    assert reply_result["result"]["id"] == task_id
-    assert reply_result["result"]["status"]["state"] == "TASK_STATE_COMPLETED"
-    assert filler_result["result"]["status"]["state"] == "TASK_STATE_COMPLETED"
-    assert filler_2_result["result"]["status"]["state"] == "TASK_STATE_COMPLETED"
+    assert reply_result.id == task_id
+    assert reply_result.status.state == COMPLETED
+    assert filler_result.status.state == COMPLETED
+    assert filler_2_result.status.state == COMPLETED
 
 
 async def test_a_declared_interjection_reaches_the_agent_while_the_turn_is_open(funduq, serve):
@@ -393,23 +412,20 @@ async def test_a_declared_interjection_reaches_the_agent_while_the_turn_is_open(
     agent = served.agents["interject"]
 
     first = asyncio.create_task(
-        _rpc(funduq, agent, "SendMessage", {"message": _message("start")})
+        _send(funduq, agent, _message("start"))
     )
     await _until(lambda: len(provider.runs) == 1)
     first_run_id = provider.runs[0].run_id
     thread_id = provider.runs[0].thread_id
 
     second = asyncio.create_task(
-        _rpc(
+        _send(
             funduq,
             agent,
-            "SendMessage",
             {
-                "message": {
-                    **_message("actually, in metric units"),
-                    "contextId": thread_id,
-                    "metadata": {ADDRESSED_RUN_METADATA_KEY: first_run_id},
-                }
+                **_message("actually, in metric units"),
+                "contextId": thread_id,
+                "metadata": {ADDRESSED_RUN_METADATA_KEY: first_run_id},
             },
         )
     )
@@ -421,9 +437,9 @@ async def test_a_declared_interjection_reaches_the_agent_while_the_turn_is_open(
 
     provider.release.set()
     first_result, second_result = await asyncio.gather(first, second)
-    assert first_result["result"]["status"]["state"] == "TASK_STATE_COMPLETED"
-    assert second_result["result"]["status"]["state"] == "TASK_STATE_COMPLETED"
-    assert second_result["result"]["id"] != first_run_id, "an interjection is still its own run"
+    assert first_result.status.state == COMPLETED
+    assert second_result.status.state == COMPLETED
+    assert second_result.id != first_run_id, "an interjection is still its own run"
 
 
 async def test_a_task_id_naming_a_running_task_declares_nothing(funduq, serve):
@@ -436,17 +452,16 @@ async def test_a_task_id_naming_a_running_task_declares_nothing(funduq, serve):
     agent = served.agents["literal"]
 
     first = asyncio.create_task(
-        _rpc(funduq, agent, "SendMessage", {"message": _message("start")})
+        _send(funduq, agent, _message("start"))
     )
     await _until(lambda: len(provider.runs) == 1)
     first_run_id = provider.runs[0].run_id
 
     second = asyncio.create_task(
-        _rpc(
+        _send(
             funduq,
             agent,
-            "SendMessage",
-            {"message": {**_message("and another thing"), "taskId": first_run_id}},
+            {**_message("and another thing"), "taskId": first_run_id},
         )
     )
     await _until(lambda: len(provider.runs) == 2)
@@ -457,7 +472,7 @@ async def test_a_task_id_naming_a_running_task_declares_nothing(funduq, serve):
 
     provider.release.set()
     results = await asyncio.gather(first, second)
-    assert {r["result"]["status"]["state"] for r in results} == {"TASK_STATE_COMPLETED"}
+    assert {r.status.state for r in results} == {COMPLETED}
 
 
 async def test_addressing_the_paused_task_needs_no_answer_funduq_relays_anything(funduq, serve):
@@ -465,19 +480,18 @@ async def test_addressing_the_paused_task_needs_no_answer_funduq_relays_anything
     served = await serve(provider, "overruled")
     agent = served.agents["overruled"]
 
-    first = await _rpc(funduq, agent, "SendMessage", {"message": _message("book the flight")})
-    task_id = first["result"]["id"]
-    assert first["result"]["status"]["state"] == "TASK_STATE_INPUT_REQUIRED"
+    first = await _send(funduq, agent, _message("book the flight"))
+    task_id = first.id
+    assert first.status.state == INPUT_REQUIRED
 
-    overrule = await _rpc(
+    overrule = await _send(
         funduq,
         agent,
-        "SendMessage",
-        {"message": {**_message("forget the passport, book the train instead"), "taskId": task_id}},
+        {**_message("forget the passport, book the train instead"), "taskId": task_id},
     )
 
-    assert overrule["result"]["id"] == task_id, "a non-answer resumes the task just the same"
-    assert overrule["result"]["status"]["state"] == "TASK_STATE_COMPLETED"
+    assert overrule.id == task_id, "a non-answer resumes the task just the same"
+    assert overrule.status.state == COMPLETED
     resumed_input = provider.rounds[1]
     contents = [m.content for m in resumed_input.messages if getattr(m, "content", None)]
     assert any("book the train instead" in c for c in contents), (
@@ -500,24 +514,22 @@ async def test_the_second_answer_to_one_ask_degrades_to_an_utterance(funduq, ser
     served = await serve(provider, "contested")
     agent = served.agents["contested"]
 
-    first = await _rpc(funduq, agent, "SendMessage", {"message": _message("do the thing")})
-    task_id = first["result"]["id"]
-    thread_id = first["result"]["contextId"]
-    assert first["result"]["status"]["state"] == "TASK_STATE_INPUT_REQUIRED"
+    first = await _send(funduq, agent, _message("do the thing"))
+    task_id = first.id
+    thread_id = first.context_id
+    assert first.status.state == INPUT_REQUIRED
 
-    winner = await _rpc(
-        funduq, agent, "SendMessage",
-        {"message": {**_message("mine is the answer"), "taskId": task_id}},
+    winner = await _send(
+        funduq, agent, {**_message("mine is the answer"), "taskId": task_id},
     )
-    loser = await _rpc(
-        funduq, agent, "SendMessage",
-        {"message": {**_message("no, mine is"), "taskId": task_id}},
+    loser = await _send(
+        funduq, agent, {**_message("no, mine is"), "taskId": task_id},
     )
 
-    assert winner["result"]["id"] == task_id, "the first answer lands on the ask"
-    assert loser["result"]["id"] != task_id, "the second becomes its own run, not a second resume"
-    assert loser["result"]["contextId"] == thread_id, "and it stays on the same thread"
-    assert [r.run_id for r in provider.rounds] == [task_id, task_id, loser["result"]["id"]]
+    assert winner.id == task_id, "the first answer lands on the ask"
+    assert loser.id != task_id, "the second becomes its own run, not a second resume"
+    assert loser.context_id == thread_id, "and it stays on the same thread"
+    assert [r.run_id for r in provider.rounds] == [task_id, task_id, loser.id]
 
 
 async def test_the_second_answer_over_ag_ui_is_refused_with_the_thread_state(funduq, serve):

@@ -1,18 +1,19 @@
 from __future__ import annotations
 
-import json
 import logging
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
+from a2a.server.events import Event
 from a2a.types import a2a_pb2 as pb
 from a2a.utils.constants import PROTOCOL_VERSION_CURRENT, TransportProtocol
+from a2a.utils.errors import TaskNotFoundError
 from google.protobuf.json_format import ParseDict, ParseError
 
 from funduq import repo
 from funduq.doors import InboundRun, dispatch, resolve_kyok, verify_caller
-from funduq.errors import AgentNotFound, RunNotFound
+from funduq.errors import AgentNotFound
 from funduq.identity import verify_resolution
 from funduq.props import ADDRESSED_RUN_METADATA_KEY
 from funduq.models import AgentRef
@@ -21,7 +22,6 @@ from funduq.protocols.a2a_translate import (
     agui_event_to_a2a_update,
     build_task,
     status_update_for_run_status,
-    to_wire,
 )
 
 if TYPE_CHECKING:
@@ -29,41 +29,7 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger("funduq.protocols.a2a")
 
-METHOD_NOT_FOUND = -32601
-TASK_NOT_FOUND = -32001
-
 PROTOCOL_VERSION = PROTOCOL_VERSION_CURRENT
-
-_A2A_METHODS = {method.name for method in pb.DESCRIPTOR.services_by_name["A2AService"].methods}
-
-
-def _method(name: str) -> str:
-    """Returns `name` if it is a current `A2AService` RPC method, else raises `RuntimeError` —
-    a guard against the dispatch tables below going stale relative to the installed A2A spec."""
-    if name not in _A2A_METHODS:
-        raise RuntimeError(
-            f"A2AService has no method {name!r} — the spec moved and funduq's dispatch is stale. "
-            f"It offers: {sorted(_A2A_METHODS)}"
-        )
-    return name
-
-
-SEND = frozenset({_method("SendMessage"), "message/send", "tasks/send"})
-STREAM = frozenset({_method("SendStreamingMessage"), "message/stream", "tasks/sendSubscribe"})
-GET = frozenset({_method("GetTask"), "tasks/get"})
-CANCEL = frozenset({_method("CancelTask"), "tasks/cancel"})
-SUBSCRIBE = frozenset({_method("SubscribeToTask"), "tasks/resubscribe"})
-
-
-@dataclass
-class A2AStream:
-
-    results: AsyncIterator[dict[str, Any]]
-
-    async def encode(self) -> AsyncIterator[str]:
-        async for item in self.results:
-            yield json.dumps(item)
-
 
 _BINDINGS = frozenset(member.name for member in TransportProtocol)
 
@@ -91,109 +57,64 @@ class A2AAdapter:
 
     async def agent_card(
         self, agent: AgentRef, interfaces: "list[ServedInterface] | None" = None
-    ) -> dict[str, Any]:
-        """Builds the A2A agent card for `agent` as wire JSON, listing `interfaces` as its
-        supported interfaces (omitted from the card entirely if none are given). Raises
-        `AgentNotFound` if `agent` isn't registered."""
+    ) -> pb.AgentCard:
+        """Builds the A2A agent card for `agent`, listing `interfaces` as its supported
+        interfaces (omitted from the card entirely if none are given). Raises `AgentNotFound`
+        if `agent` isn't registered."""
         record = await self._funduq.get_agent(agent)
         if record is None:
             raise AgentNotFound(f"agent '{agent}' is not registered")
         card = dict(record.agent_card)
-        return to_wire(
-            pb.AgentCard(
-                name=card.get("name", record.name),
-                description=card.get("description", ""),
-                version=card.get("version", "0.1.0"),
-                supported_interfaces=[
-                    pb.AgentInterface(
-                        url=served.url,
-                        protocol_binding=TransportProtocol[served.binding].value,
-                        protocol_version=PROTOCOL_VERSION,
-                    )
-                    for served in (interfaces or [])
-                ],
-                capabilities=pb.AgentCapabilities(streaming=True),
-                default_input_modes=["text/plain"],
-                default_output_modes=["text/plain"],
-                skills=_skills(card.get("skills", [])),
-            )
+        return pb.AgentCard(
+            name=card.get("name", record.name),
+            description=card.get("description", ""),
+            version=card.get("version", "0.1.0"),
+            supported_interfaces=[
+                pb.AgentInterface(
+                    url=served.url,
+                    protocol_binding=TransportProtocol[served.binding].value,
+                    protocol_version=PROTOCOL_VERSION,
+                )
+                for served in (interfaces or [])
+            ],
+            capabilities=pb.AgentCapabilities(streaming=True),
+            default_input_modes=["text/plain"],
+            default_output_modes=["text/plain"],
+            skills=_skills(card.get("skills", [])),
         )
-
-    async def handle_rpc(self, agent: AgentRef, payload: dict[str, Any]) -> dict[str, Any] | A2AStream:
-        """Dispatches a JSON-RPC A2A request to the matching operation, recognizing each method
-        under every name it has had across spec versions (current `A2AService` names as well as
-        `message/send`-style legacy names). Returns a JSON-RPC error envelope with code -32601
-        for an unrecognized method, or -32001 if the referenced task doesn't exist."""
-        method = payload.get("method")
-        params = payload.get("params", {})
-        rpc_id = payload.get("id")
-
-        if method in SEND:
-            return await self._envelope(rpc_id, self.send_task(agent, **_send_args(params)))
-        if method in STREAM:
-            return await self._envelope_stream(rpc_id, params, agent)
-        if method in GET:
-            return await self._envelope(rpc_id, self.get_task(agent, params.get("id")))
-        if method in CANCEL:
-            return await self._envelope(rpc_id, self.cancel_task(agent, params.get("id")))
-        if method in SUBSCRIBE:
-            return await self._envelope_resubscribe(rpc_id, params, agent)
-        return _error(rpc_id, METHOD_NOT_FOUND, f"method not found: {method}")
-
-    async def _envelope_stream(
-        self, rpc_id: Any, params: dict[str, Any], agent: AgentRef
-    ) -> dict[str, Any] | A2AStream:
-        try:
-            stream = await self.send_task_streaming(agent, **_send_args(params))
-        except RunNotFound:
-            return _error(rpc_id, TASK_NOT_FOUND, "task not found")
-        return A2AStream(_wrap(rpc_id, stream))
-
-    async def _envelope_resubscribe(
-        self, rpc_id: Any, params: dict[str, Any], agent: AgentRef
-    ) -> dict[str, Any] | A2AStream:
-        try:
-            stream = await self.resubscribe_task(agent, params.get("id"))
-        except RunNotFound:
-            return _error(rpc_id, TASK_NOT_FOUND, "task not found")
-        return A2AStream(_wrap(rpc_id, stream))
-
-    async def _envelope(self, rpc_id: Any, coro) -> dict[str, Any]:
-        try:
-            return _result(rpc_id, await coro)
-        except RunNotFound:
-            return _error(rpc_id, TASK_NOT_FOUND, "task not found")
-
 
     async def send_task(
         self,
         agent: AgentRef,
         message: dict[str, Any],
         *,
-        context_id: str | None = None,
-        task_id: str | None = None,
-        reference_task_ids: list[str] | None = None,
         actor_chain: list[str] | None = None,
         metadata: dict[str, Any] | None = None,
-    ) -> dict[str, Any]:
+    ) -> pb.Task:
         """Sends `message` to `agent` as a new (or continuing, via `context_id`/`task_id`) A2A
-        task and blocks until it finishes, returning the resulting `Task` as wire JSON. This is
-        the semantic entry point behind the `SendMessage`/`message/send`/`tasks/send` RPC names."""
+        task, waits for it to settle, and returns the resulting `Task`. Behind A2A's
+        send-a-message operation, whatever the transport calls it.
+
+        The task is built from the run's **stored** events, always. A live
+        run's stream is drained only to wait for it — the events were
+        persisted before they reached that stream, so by the time it ends
+        the log is complete, and reading one source rather than two is what
+        keeps a task fetched afterwards from disagreeing with the one
+        returned here.
+        """
         run_id, thread_id, is_live = await self._start_run(
-            agent, _params(message, context_id, task_id, reference_task_ids, actor_chain, metadata)
+            agent, _params(message, actor_chain, metadata)
         )
-        live = is_live and self._funduq.broker.get(run_id) is not None
-        if live:
-            events = [item async for item in self._funduq.broker.subscribe(run_id)]
-        else:
-            events = await self._funduq.get_run_events(run_id)
+        if is_live and self._funduq.broker.get(run_id) is not None:
+            async for _ in self._funduq.broker.subscribe(run_id):
+                pass
         stored = await self._funduq.get_run(run_id)
         return build_task(
             run_id,
             thread_id,
             await self._display_name(agent),
             stored.status if stored else "completed",
-            events,
+            await self._funduq.get_run_events(run_id),
         )
 
     async def send_task_streaming(
@@ -201,23 +122,24 @@ class A2AAdapter:
         agent: AgentRef,
         message: dict[str, Any],
         *,
-        context_id: str | None = None,
-        task_id: str | None = None,
-        reference_task_ids: list[str] | None = None,
         actor_chain: list[str] | None = None,
         metadata: dict[str, Any] | None = None,
-    ) -> AsyncIterator[dict[str, Any]]:
-        """Like `send_task` but yields A2A status/artifact updates as the run progresses instead
-        of waiting for completion; behind `SendStreamingMessage`/`message/stream`/
-        `tasks/sendSubscribe`. If the run turns out not to be live (e.g. it was already
-        finished), yields a single status update reflecting its stored status."""
+    ) -> AsyncIterator[Event]:
+        """Like `send_task` but yields A2A stream events as the run progresses instead of
+        waiting for it to settle. If the run turns out not to be live (e.g. it was already
+        finished), yields a single status update reflecting its stored status.
+
+        The events are A2A's own — `TaskStatusUpdateEvent` /
+        `TaskArtifactUpdateEvent`. Wrapping them for a wire is the
+        transport's job, not this one's.
+        """
         run_id, thread_id, is_live = await self._start_run(
-            agent, _params(message, context_id, task_id, reference_task_ids, actor_chain, metadata)
+            agent, _params(message, actor_chain, metadata)
         )
         live = is_live and self._funduq.broker.get(run_id) is not None
         events = self._funduq.broker.subscribe(run_id) if live else None
 
-        async def results() -> AsyncIterator[dict[str, Any]]:
+        async def results() -> AsyncIterator[Event]:
             if not live:
                 stored = await self._funduq.get_run(run_id)
                 status = stored.status if stored else "completed"
@@ -231,15 +153,17 @@ class A2AAdapter:
 
         return results()
 
-    async def resubscribe_task(self, agent: AgentRef, task_id: str) -> AsyncIterator[dict[str, Any]]:
-        """Reattaches to an existing task's update stream (`SubscribeToTask`/`tasks/resubscribe`).
-        If the task is no longer live, yields its final stored-status update instead of hanging.
-        Raises `RunNotFound` if `task_id` doesn't belong to `agent`."""
+    async def resubscribe_task(self, agent: AgentRef, task_id: str) -> AsyncIterator[Event]:
+        """Reattaches to an existing task's event stream. If the task is no longer live, yields
+        its final stored-status update instead of hanging. Raises A2A's own `TaskNotFoundError`
+        if `task_id` doesn't belong to `agent`."""
         run = await self._run_of(agent, task_id)
+        if run is None:
+            raise TaskNotFoundError(f"no task '{task_id}' for agent '{agent}'")
         thread_id = run.thread_id
         events = self._funduq.broker.subscribe(task_id) if self._funduq.broker.get(task_id) else None
 
-        async def results() -> AsyncIterator[dict[str, Any]]:
+        async def results() -> AsyncIterator[Event]:
             if events is None:
                 yield status_update_for_run_status(task_id, thread_id, run.status)
                 return
@@ -251,10 +175,16 @@ class A2AAdapter:
 
         return results()
 
-    async def get_task(self, agent: AgentRef, task_id: str) -> dict[str, Any]:
-        """Returns the current `Task` state for `task_id` as wire JSON. Raises `RunNotFound` if
-        `task_id` doesn't belong to `agent`."""
+    async def get_task(self, agent: AgentRef, task_id: str) -> pb.Task | None:
+        """Returns the current `Task` for `task_id`, or None if it doesn't belong to `agent`.
+
+        None rather than an exception, because that is what A2A's own
+        request-handler interface means by not-found; the transport turns it
+        into the error its binding defines.
+        """
         run = await self._run_of(agent, task_id)
+        if run is None:
+            return None
         return build_task(
             task_id,
             run.thread_id,
@@ -263,12 +193,13 @@ class A2AAdapter:
             await self._funduq.get_run_events(task_id),
         )
 
-    async def cancel_task(self, agent: AgentRef, task_id: str) -> dict[str, Any]:
-        """Requests cancellation of the running task and returns its resulting `Task` state
-        (funduq can only ask the provider to stop, not force it, so the returned status reflects
-        whatever the provider actually did). Raises `RunNotFound` if `task_id` doesn't belong to
-        `agent`."""
+    async def cancel_task(self, agent: AgentRef, task_id: str) -> pb.Task | None:
+        """Requests cancellation of the running task and returns its resulting `Task` (funduq
+        can only ask the provider to stop, not force it, so the returned status reflects
+        whatever the provider actually did). None if `task_id` doesn't belong to `agent`."""
         run = await self._run_of(agent, task_id)
+        if run is None:
+            return None
         self._funduq.cancel_run(task_id)
         current = await self._funduq.get_run(task_id) or run
         return build_task(
@@ -280,12 +211,11 @@ class A2AAdapter:
         )
 
 
-    async def _run_of(self, agent: AgentRef, task_id: str) -> dict[str, Any]:
-        """Looks up the run for `task_id`, raising `RunNotFound` if it doesn't exist or belongs
-        to a different agent than `agent`."""
+    async def _run_of(self, agent: AgentRef, task_id: str):
+        """The run for `task_id`, or None if it doesn't exist or belongs to a different agent."""
         run = await self._funduq.get_run(task_id) if task_id else None
         if run is None or AgentRef(provider_key=run.provider_key, name=run.agent_name) != agent:
-            raise RunNotFound(f"no task '{task_id}' for agent '{agent}'")
+            return None
         return run
 
     async def _display_name(self, agent: AgentRef) -> str:
@@ -420,11 +350,14 @@ def _skills(raw_skills: list[dict[str, Any]]) -> list[pb.AgentSkill]:
 
 
 async def _context_of_task(session, task_id: str | None) -> str | None:
+    """The thread a named task belongs to, raising A2A's own `TaskNotFoundError` for an unknown
+    one — an id the caller sent that names nothing is A2A's error to report, and reporting it
+    in A2A's vocabulary is what lets the transport map it without a table of funduq's own."""
     if not task_id:
         return None
     run = await repo.get_run(session, task_id)
     if run is None:
-        raise RunNotFound(f"no task '{task_id}'")
+        raise TaskNotFoundError(f"no task '{task_id}'")
     return run.thread_id
 
 
@@ -436,44 +369,24 @@ async def _lineage_parent(session, params: dict) -> str | None:
     return referenced.thread_id if referenced is not None else None
 
 
-def _send_args(params: dict[str, Any]) -> dict[str, Any]:
-    message = params.get("message", {})
-    metadata = params.get("metadata", {}) or {}
-    return {
-        "message": message,
-        "context_id": message.get("contextId") or params.get("contextId"),
-        "task_id": message.get("taskId"),
-        "reference_task_ids": message.get("referenceTaskIds") or None,
-        "actor_chain": metadata.get("actorChain"),
-        "metadata": {k: v for k, v in metadata.items() if k != "actorChain"} or None,
-    }
-
-
 def _params(
     message: dict[str, Any],
-    context_id: str | None,
-    task_id: str | None,
-    reference_task_ids: list[str] | None,
     actor_chain: list[str] | None,
     metadata: dict[str, Any] | None,
 ) -> dict[str, Any]:
-    message = dict(message)
-    if reference_task_ids:
-        message["referenceTaskIds"] = reference_task_ids
+    """Lifts the fields `_start_run` addresses by name out of the A2A message they live on.
+
+    `contextId`, `taskId` and `referenceTaskIds` are **the message's own
+    fields** — A2A v1.0's `SendMessageRequest` carries only `message` and
+    `metadata`, so there is nowhere else for them to be, and reading them
+    off anything else would be funduq inventing a second address.
+    """
     combined = dict(metadata or {})
     if actor_chain:
         combined["actorChain"] = actor_chain
-    return {"message": message, "contextId": context_id, "taskId": task_id, "metadata": combined}
-
-
-async def _wrap(rpc_id: Any, stream: AsyncIterator[dict[str, Any]]) -> AsyncIterator[dict[str, Any]]:
-    async for item in stream:
-        yield _result(rpc_id, item)
-
-
-def _result(rpc_id: Any, result: Any) -> dict[str, Any]:
-    return {"jsonrpc": "2.0", "id": rpc_id, "result": result}
-
-
-def _error(rpc_id: Any, code: int, message: str) -> dict[str, Any]:
-    return {"jsonrpc": "2.0", "id": rpc_id, "error": {"code": code, "message": message}}
+    return {
+        "message": dict(message),
+        "contextId": message.get("contextId"),
+        "taskId": message.get("taskId"),
+        "metadata": combined,
+    }

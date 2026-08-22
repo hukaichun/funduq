@@ -115,6 +115,52 @@ Everything else about how the answer travels is yours: framing,
 correlation, backpressure, reconnect policy. funduq asks a question and
 reads an answer; it has no opinion on the envelope.
 
+## Serving the A2A door
+
+Core hands back A2A's own messages — `AgentCard`, `Task`,
+`TaskStatusUpdateEvent`, `TaskArtifactUpdateEvent` — and nothing else. It
+writes no JSON-RPC: no envelopes, no method names, no error codes. Mount
+the package's own dispatcher over a thin handler:
+
+```python
+from a2a.server.request_handlers.request_handler import RequestHandler
+from a2a.server.routes.jsonrpc_dispatcher import JsonRpcDispatcher
+
+class FunduqRequestHandler(RequestHandler):
+    async def on_message_send(self, params, context):
+        return await adapter.send_task(agent, MessageToDict(params.message))
+    async def on_get_task(self, params, context):
+        return await adapter.get_task(agent, params.id)      # None = not found
+    ...
+
+dispatcher = JsonRpcDispatcher(
+    request_handler=FunduqRequestHandler(),
+    enable_v0_3_compat=True,     # ← see below
+)
+```
+
+`get_task` and `cancel_task` return `None` for a task that is not this
+agent's, which is what the handler interface means by not-found; the
+dispatcher turns it into the right error for the binding. An id the
+caller sent that names nothing at all raises A2A's own
+`TaskNotFoundError`, for the same reason.
+
+!!! warning "`enable_v0_3_compat` is off by default, and forgetting it drops every v0.3 client"
+
+    Measured against `a2a-sdk 1.1.2`: **which protocol version a request
+    speaks rides the `A2A-Version` HTTP header, and no header means
+    `0.3`.** With the flag off, `message/send` answers `-32601` and
+    `SendMessage` without the header answers `-32009`. With it on, the
+    dispatcher accepts the v0.3 names *and converts the shapes*
+    (`"state": "completed"`, `parts` with `"kind"`), which a v0.3 client
+    parses.
+
+    That header is why this cannot live in core: core never sees one.
+    funduq used to hand-write the method table here, and it answered
+    v0.3's names with v1.0's shapes — a v0.3 client rejected the reply
+    outright. Deciding a caller's version is the transport's job because
+    only the transport holds the evidence.
+
 ## Relaying events
 
 Dump typed events with `exclude_none=True`. A default dump injects
