@@ -631,6 +631,55 @@ comes only from guarded transitions on the one ordered ledger; caches
 and shadows may buy efficiency, never correctness; and funduq asserts no
 fact whose owner is someone else.**
 
+### Silence was read as death, and the party that had done nothing wrong was blamed
+
+A claimed run with no event for `run_stall_timeout_seconds` (120s) was
+failed `stalled_no_activity`. It is gone, and nothing replaces the clock.
+
+An agent's loop is silent for most of its life **by construction**: the
+model call it is waiting on is the segment nothing can be injected into,
+and funduq cannot see inside it. So the timeout measured a proxy for
+something funduq had already decided it could not observe, and the
+verdict landed on whoever was merely slow. That is the same failure the
+[inter-chunk timeout](#an-inter-chunk-timeout-kills-slow-models-and-blames-the-wrong-side)
+was removed for — the record protected the LLM provider from being
+blamed, and this clock went on blaming the agent for the same wait, from
+the other end.
+
+Worse, funduq blamed a run for silence it was itself causing: while a
+KYOK completion was in flight, funduq held the reason the agent had
+nothing to say, and failed the run for saying nothing. Probed, both
+halves:
+
+- provider detaches mid-run → `is_serving` is False **at once**, the run
+  sits `running` for the whole window, then is recorded
+  `stalled_no_activity` — a reason funduq did not observe, while the one
+  it did observe went unrecorded;
+- LLM provider holds a completion → the agent's run is failed under it,
+  and the money is still spent when the completion returns, on work
+  already thrown away.
+
+The rule that replaced it was already written down for the *queued* lane:
+liveness is a fact funduq holds, not a deduction from a timestamp
+([liveness stopped being an inference](#liveness-stopped-being-an-inference)).
+`expire_queued` asks whether the agent is served; the claimed lane asked
+whether the run had spoken lately. Now both ask the same question. **A
+provider that stops serving while still holding a run** has taken work
+and never ended it: the run fails at once as `provider_left_holding_it`,
+and the same fact records `abandoned` — so the judgment about the
+provider and the verdict about the work come from one observation
+instead of two clocks.
+
+How long an attached provider holds a run is its own business, and
+nothing settles that run but the provider or the caller's cancel. The
+queue lane already accepted exactly this ("a run whose agent *is* served
+stays queued indefinitely"). One consequence is recorded rather than
+patched: [self-delegation
+deadlock](#self-delegation-deadlocks-a-capacity-capped-provider) used to
+break itself on this clock at 120s, and now does not.
+
+See [Runs and cancels are requests](mechanisms/requests.md).
+
 ### Enforcing cancellation produced a family of bugs
 
 funduq used to enforce cancellation by cancelling its own pump task and

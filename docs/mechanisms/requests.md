@@ -65,9 +65,10 @@ so the run that stopped to ask a human is not filed as one that finished.
 Runs that never reach that funnel are failed with a reason instead: an
 agent with no attached provider (`agent_offline`), a queued run whose
 agent went unserved past its window (`no_provider_took_it`), a claimed
-run gone silent past the stall timeout (`stalled_no_activity`), a paused
-run nobody answered before its deadline (`paused_no_resume`), a
-permanent refusal, and a malformed event — one whose known AG-UI `type` fails
+run whose provider stopped serving while still holding it
+(`provider_left_holding_it`), a paused run nobody answered before its
+deadline (`paused_no_resume`), a permanent refusal, and a malformed
+event — one whose known AG-UI `type` fails
 validation, or one with no `type` string at all. An event whose `type`
 is a string funduq merely does not recognise is not malformed: it is a
 newer AG-UI's event, and funduq relays it untouched — whether to skip it
@@ -88,6 +89,31 @@ onto, and the status changes in the database with nothing said. A caller
 watching the stream sees it simply stop after the `RUN_FINISHED` that
 asked the question. That is the same silence the synthesized `RUN_ERROR`
 exists to prevent, and it is a gap rather than a decision.
+
+## Silence is not a verdict
+
+**How long a provider holds a claimed run is the provider's own
+business.** funduq does not pace a provider's work, and it does not read
+quiet as death: an agent's loop is silent for most of its life by
+construction, because the model call it is waiting on is the segment
+nothing can be injected into (see [the agent loop](../agent-loop.md)).
+
+There was a clock here once — `run_stall_timeout_seconds`, 120s — that
+failed a claimed run for going quiet. It blamed slow providers for doing
+nothing wrong, and it blamed runs whose silence funduq itself was
+causing, by holding their KYOK completion while the LLM provider worked.
+
+What funduq judges instead is whether a provider is **behaving
+abnormally**, and the fact that settles it is whether the provider is
+still here. A provider that stops serving while still holding a run took
+work and never ended it: the run is failed at once, and the same fact
+records `abandoned` against the provider — the counter whose allowance
+eventually withdraws it. Nothing is inferred from a clock.
+
+A provider that stays attached and holds a run indefinitely keeps it
+indefinitely. That is the same answer the queue lane already gives ("a
+run whose agent *is* served stays queued indefinitely"), and the party
+with a stake has the lever funduq does not need: the caller can cancel.
 
 ## Cancelling is not a state a caller can read as final
 

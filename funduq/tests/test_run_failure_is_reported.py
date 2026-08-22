@@ -6,7 +6,7 @@ from funduq_provider_sdk import InProcessLink, ProviderIdentity, ProviderRuntime
 
 import pytest
 
-from funduq import repo
+from funduq import health, repo
 from funduq.config import CoreSettings
 from funduq.broker import RunBroker
 from funduq.core import Funduq
@@ -18,6 +18,17 @@ class NeverFinishesProvider:
     async def run_stream(self, agent_name: str, run_input):
         yield {"type": "RUN_STARTED", "threadId": run_input.thread_id, "runId": run_input.run_id}
         await asyncio.Event().wait()
+
+
+async def _status_is(funduq, run_id: str, status: str) -> bool:
+    run = await funduq.get_run(run_id)
+    return run is not None and run.status == status
+
+
+async def _until_async(predicate, timeout: float = 5.0) -> None:
+    async with asyncio.timeout(timeout):
+        while not await predicate():
+            await asyncio.sleep(0.005)
 
 
 async def _until(predicate, timeout: float = 5.0) -> None:
@@ -290,3 +301,94 @@ async def test_an_event_with_no_type_string_is_malformation_not_version_skew(bri
 
     assert [e["type"] for e in events] == ["RUN_STARTED", "RUN_ERROR"]
     assert events[-1]["message"] == "provider sent a malformed AG-UI event"
+
+
+class BlockedProvider:
+    """Claims its run, says one thing, and then goes quiet indefinitely."""
+
+    def __init__(self) -> None:
+        self.started = asyncio.Event()
+
+    async def run_stream(self, agent_name: str, run_input):
+        yield {"type": "RUN_STARTED", "threadId": run_input.thread_id, "runId": run_input.run_id}
+        self.started.set()
+        await asyncio.Event().wait()
+
+
+async def test_a_provider_that_leaves_holding_a_run_fails_it_at_once(settings: CoreSettings):
+    """The one fact funduq owns about a claimed run is whether the party holding it is still
+    here. When they are not, nobody is going to finish it, and that is settled immediately —
+    not inferred from a clock later, and recorded as what actually happened.
+
+    The same fact is the judgment about the provider: failing a claimed run
+    is what records `abandoned` against it — took a run and never ended it.
+    """
+    funduq = Funduq(settings, broker=RunBroker())
+    await funduq.start()
+    runtime = None
+    try:
+        registration, identity = await _register(funduq, "held")
+        agent = registration.agents["held"]
+        provider = BlockedProvider()
+        runtime = ProviderRuntime(identity, provider)
+        runtime.start()
+        link = InProcessLink(funduq, runtime)
+        await funduq.attach_provider(link, ["held"])
+
+        handle = await funduq.start_run(agent, {"messages": []})
+        await asyncio.wait_for(provider.started.wait(), 5)
+        # The claim's status write is asynchronous; wait for it to land so
+        # the assertion below is about a run that was genuinely claimed.
+        await _until_async(lambda: _status_is(funduq, handle.run_id, "running"))
+
+        funduq.detach_provider(identity.public_key, link)
+
+        await _until(lambda: handle.run_id not in funduq.active_runs())
+        run = await funduq.get_run(handle.run_id)
+        assert run.status == "failed"
+        assert run.metadata["failureReason"] == "provider_left_holding_it"
+        assert funduq.broker.quality()[identity.public_key].abandoned == 1
+    finally:
+        if runtime is not None:
+            await runtime.aclose(cancel_in_flight=True)
+        await funduq.aclose()
+
+
+async def test_a_provider_that_is_merely_quiet_keeps_its_run(settings: CoreSettings):
+    """Silence is not a verdict. How long a provider holds a run is its own business — funduq
+    does not pace a provider's work, and an agent's loop is silent for most of its life by
+    construction, because the model call it waits on is the segment nothing can be injected
+    into.
+
+    There used to be a clock here (`run_stall_timeout_seconds`, 120s) that
+    failed a claimed run for going quiet. It blamed slow providers for
+    doing nothing wrong, and it blamed runs whose silence funduq itself was
+    causing by holding their KYOK completion. The party with a stake has a
+    lever that funduq does not need: the caller can cancel.
+    """
+    funduq = Funduq(settings, broker=RunBroker())
+    await funduq.start()
+    runtime = None
+    try:
+        registration, identity = await _register(funduq, "thinking")
+        agent = registration.agents["thinking"]
+        provider = BlockedProvider()
+        runtime = ProviderRuntime(identity, provider)
+        runtime.start()
+        await funduq.attach_provider(InProcessLink(funduq, runtime), ["thinking"])
+
+        handle = await funduq.start_run(agent, {"messages": []})
+        await asyncio.wait_for(provider.started.wait(), 5)
+        await _until_async(lambda: _status_is(funduq, handle.run_id, "running"))
+
+        for _ in range(3):
+            await health.sweep_once(funduq)
+        assert (await funduq.get_run(handle.run_id)).status == "running"
+        assert funduq.broker.quality()[identity.public_key].abandoned == 0
+
+        assert funduq.cancel_run(handle.run_id) is True
+        await _until(lambda: handle.run_id not in funduq.active_runs())
+    finally:
+        if runtime is not None:
+            await runtime.aclose(cancel_in_flight=True)
+        await funduq.aclose()
