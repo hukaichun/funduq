@@ -12,8 +12,9 @@ from google.protobuf.json_format import ParseDict, ParseError
 
 from funduq import repo
 from funduq.agui import build_run_agent_input
-from funduq.errors import AgentNotFound, InvalidRunInput, LlmProviderNotFound, RunNotFound
-from funduq.kyok import KyokBinding, parse_kyok_opt_in, strip_kyok_context
+from funduq.doors import resolve_kyok, verify_caller
+from funduq.errors import AgentNotFound, InvalidRunInput, RunNotFound
+from funduq.kyok import KyokBinding
 from funduq.identity import verify_resolution
 from funduq.props import ADDRESSED_RUN_METADATA_KEY, build_forwarded_props
 from funduq.models import AgentRef
@@ -24,7 +25,6 @@ from funduq.protocols.a2a_translate import (
     status_update_for_run_status,
     to_wire,
 )
-from funduq.protocols.agui import verify_caller
 
 if TYPE_CHECKING:
     from funduq.core import Funduq
@@ -312,12 +312,8 @@ class A2AAdapter:
             if record is None:
                 raise AgentNotFound(f"agent '{agent}' is not registered")
 
-            metadata = params.get("metadata", {})
-            kyok = parse_kyok_opt_in(metadata)
+            metadata, kyok = await resolve_kyok(session, params.get("metadata", {}))
             kyok_ref = kyok.llm_provider if kyok is not None else None
-            if kyok_ref is not None and await repo.get_llm_provider(session, kyok_ref) is None:
-                raise LlmProviderNotFound(f"unknown KYOK LLM provider '{kyok_ref}'")
-            metadata = strip_kyok_context(metadata)
             parent_thread_id = await _lineage_parent(session, params)
             context_id = params.get("contextId") or await _context_of_task(session, params.get("taskId"))
 

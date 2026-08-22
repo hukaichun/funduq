@@ -10,14 +10,11 @@ from ag_ui.core import RunAgentInput, RunErrorEvent, RunStartedEvent
 from funduq import repo
 from funduq.models import AgentRef, LlmRef
 from funduq.agui import build_run_agent_input, rewrite_message_ids
-from funduq.errors import AgentNotFound, InvalidRunInput, LlmProviderNotFound
-from funduq.identity import verify_actor_chain, verify_delegation, verify_resolution
-from funduq.kyok import (
-    KyokBinding,
-    parse_kyok_opt_in,
-    strip_kyok_context,
-)
-from funduq.props import RESERVED_METADATA_KEYS, build_forwarded_props
+from funduq.doors import resolve_kyok, verify_caller
+from funduq.errors import AgentNotFound, InvalidRunInput
+from funduq.identity import verify_resolution
+from funduq.kyok import KyokBinding, strip_kyok_context
+from funduq.props import build_forwarded_props
 
 if TYPE_CHECKING:
     from funduq.core import Funduq
@@ -76,13 +73,8 @@ class AGUIAdapter:
             resume = [r.model_dump(mode="json", by_alias=True) for r in body.resume] if body.resume else None
 
             metadata, head_key, actor_chain = await verify_caller(session, metadata)
-
-            kyok = parse_kyok_opt_in(metadata)
+            metadata, kyok = await resolve_kyok(session, metadata)
             kyok_ref = kyok.llm_provider if kyok is not None else None
-            metadata = strip_kyok_context(metadata)
-            if kyok_ref is not None:
-                if await repo.get_llm_provider(session, kyok_ref) is None:
-                    raise LlmProviderNotFound(f"unknown KYOK LLM provider '{kyok_ref}'")
 
             thread_id = await repo.ensure_thread(
                 session,
@@ -201,37 +193,3 @@ async def _offline_events(thread_id: str, run_id: str) -> AsyncIterator[dict[str
     yield RunErrorEvent(message="agent is currently offline").model_dump(
         mode="json", by_alias=True, exclude_none=True
     )
-
-
-async def verify_caller(session, metadata: dict) -> tuple[dict, str | None, Any]:
-    """Verifies `metadata["actorChain"]` if present and returns
-    `(metadata stripped of funduq's reserved keys, the chain's head key, the raw chain)` —
-    `(metadata, None, None)` when no chain is attached. Raises `InvalidActorChain` if the
-    chain is tampered: a bad chain is refused at the door, never carried.
-
-    funduq's whole part in caller identity is four verbs — verify, copy the
-    head, relay, refuse — and this is the verify. No summary is produced:
-    the chain reaches the agent verbatim (`forwardedProps.actorChain`) and
-    the agent verifies for itself; the head key is what funduq copies onto
-    the records that need an authority (a thread's binding, a paused ask).
-
-    A session delegation certificate under `metadata["delegation"]` resolves
-    the head: when the certificate's named delegate signed the chain's first
-    hop, the certificate's authority is the effective head — rights attach to
-    the durable key; the session key is a glove.
-
-    Both doors funnel caller metadata through here, which also makes it the
-    one place to strip funduq's reserved keys from the caller's input."""
-    metadata = {k: v for k, v in metadata.items() if k not in RESERVED_METADATA_KEYS}
-    actor_chain = metadata.get("actorChain")
-    if not actor_chain:
-        return metadata, None, None
-    head = verify_actor_chain(actor_chain).head
-    delegation = metadata.get("delegation")
-    if delegation is not None:
-        authority = verify_delegation(delegation)
-        if delegation.get("delegatePublicKey") == head:
-            head = authority
-    return metadata, head, actor_chain
-
-

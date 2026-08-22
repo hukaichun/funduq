@@ -31,8 +31,9 @@ RESERVED_METADATA_KEYS = frozenset({"interrupts", "failureReason", "funduq"})
 reserve). A caller-supplied value under any of these is stripped at the doors
 before anything reads or stores the metadata — otherwise a caller could plant
 a fake failure reason that would sit in the record wearing funduq's
-handwriting. The strip happens in one place, `protocols.agui.verify_caller`,
-because both doors funnel caller metadata through it. (`verifiedActorChain`
+handwriting. The strip happens in one place, `doors.verify_caller`, because
+every door funnels caller metadata through it — and that place is outside
+`protocols/` because nothing about it is any protocol's. (`verifiedActorChain`
 left this list when funduq stopped summarizing chains: with no funduq-authored
 digest there is no digest to forge — the chain reaches the agent verbatim and
 the agent verifies for itself.)"""
