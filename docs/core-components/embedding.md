@@ -68,9 +68,27 @@ start result plus a broker lookup.
 handle = await funduq.resume_run(run_id, run_input, metadata=None)
 ```
 
-A resumed run **keeps its id**. It is the same run being invoked again
-with the caller's answer, not a successor — which is why an A2A task id
-stays valid across a pause. An unknown run id raises `LookupError`.
+A resumed run **keeps its id**, because it is the same run. A run is the
+agent's loop up to its natural exit, and a deferred call is a pause
+*inside* that run — so the result goes back into the loop it suspended,
+and the event log continues rather than starting over. That is why an
+A2A task id stays valid across a pause.
+
+The provider sees that pause as an ending: its stream really did return,
+and its loop is gone. funduq holds the run's identity across the gap the
+provider cannot hold, invoking the agent again and telling it which run
+it is continuing.
+
+So a run must actually be waiting for a result. An unknown run id raises
+`LookupError`; one that is not suspended raises `NoPendingAsk` — a run
+that already exited has no suspension to return to, and running it again
+would put a second loop under the first one's id. That is a new run;
+open one with `start_run`. `NoPendingAsk` is also what the loser of a
+race sees when two results reach one pending ask.
+
+`start_run` is the utterance entrance and `resume_run` is the result
+one. There is no third — see [every seam has exactly two
+entrances](../design-records.md#every-seam-has-exactly-two-entrances-an-utterance-or-a-result).
 
 `funduq.cancel_run(run_id)` requests a cancel. It is synchronous and
 returns whether the request was passed on, not whether the run stopped —

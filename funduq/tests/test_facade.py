@@ -6,6 +6,7 @@ import pytest
 
 from funduq import repo
 from funduq.core import Funduq
+from funduq.errors import NoPendingAsk
 from funduq.models import AgentRef
 
 
@@ -18,6 +19,29 @@ class EchoProvider:
         yield {"type": "TEXT_MESSAGE_CONTENT", "messageId": "m1", "delta": f"echo: {text}"}
         yield {"type": "TEXT_MESSAGE_END", "messageId": "m1"}
         yield {"type": "RUN_FINISHED", "threadId": run_input.thread_id, "runId": run_input.run_id}
+
+
+class PausingProvider:
+    """Pauses its first round on a deferred call; any later round runs to its natural exit."""
+
+    def __init__(self) -> None:
+        self.rounds: list = []
+
+    async def run_stream(self, agent_id: str, run_input):
+        self.rounds.append(run_input)
+        ids = {"threadId": run_input.thread_id, "runId": run_input.run_id}
+        yield {"type": "RUN_STARTED", **ids}
+        if len(self.rounds) == 1:
+            yield {
+                "type": "RUN_FINISHED",
+                **ids,
+                "outcome": {
+                    "type": "interrupt",
+                    "interrupts": [{"id": "int_1", "reason": "question", "message": "which?"}],
+                },
+            }
+        else:
+            yield {"type": "RUN_FINISHED", **ids}
 
 
 class NeverFinishesProvider:
@@ -214,23 +238,66 @@ async def test_start_run_reuses_an_existing_thread(funduq, new_identity, attach)
     assert AgentRef(provider_key=thread["provider_key"], name=thread["agent_name"]) == agent_id
 
 
-async def test_resume_keeps_the_same_run_id(funduq, new_identity, attach):
+async def test_a_deferred_calls_result_returns_to_the_run_it_suspended(
+    funduq, new_identity, attach
+):
+    """A deferred call pauses a run; it does not end one. The result goes back into that same
+    run — same id, and the event log continues rather than starting over — because the run is
+    the agent's loop up to its natural exit, and this loop has not reached it yet.
+
+    The provider's own stream *did* end at the pause, which is the gap
+    funduq holds the identity across: the agent is invoked again, told which
+    run it is continuing.
+    """
     identity = new_identity()
-    agent_id = await _register(funduq, "echo", identity)
-    await attach(identity, EchoProvider(), [agent_id.name])
+    agent_id = await _register(funduq, "asker", identity)
+    provider = PausingProvider()
+    await attach(identity, provider, [agent_id.name])
 
     handle = await funduq.start_run(agent_id, {"messages": [{"role": "user", "content": "one"}]})
     first_round = [e async for e in handle.events()]
     await _until(lambda: handle.run_id not in funduq.active_runs())
+    assert (await funduq.get_run(handle.run_id)).status == "input-required"
 
     resumed = await funduq.resume_run(
-        handle.run_id, {"messages": [{"role": "user", "content": "two"}]}
+        handle.run_id,
+        {
+            "messages": [{"role": "user", "content": "two"}],
+            "resume": [{"interruptId": "int_1", "status": "resolved", "payload": {"answer": 42}}],
+        },
     )
     assert resumed.run_id == handle.run_id
     second_round = [e async for e in resumed.events()]
     await _until(lambda: handle.run_id not in funduq.active_runs())
 
     assert len(await funduq.get_run_events(handle.run_id)) == len(first_round) + len(second_round)
+    assert (await funduq.get_run(handle.run_id)).status == "completed"
+    assert [r.run_id for r in provider.rounds] == [handle.run_id, handle.run_id]
+
+
+async def test_a_result_offered_to_a_run_that_already_exited_is_refused(
+    funduq, new_identity, attach
+):
+    """A run that reached its natural exit has no suspension to return to. Running it again
+    would put a second loop under the first one's id — which is a new run, not a resume, and
+    the caller is told so instead of getting the fork silently."""
+    identity = new_identity()
+    agent_id = await _register(funduq, "echo", identity)
+    await attach(identity, EchoProvider(), [agent_id.name])
+
+    handle = await funduq.start_run(agent_id, {"messages": [{"role": "user", "content": "one"}]})
+    [_ async for _ in handle.events()]
+    await _until(lambda: handle.run_id not in funduq.active_runs())
+    assert (await funduq.get_run(handle.run_id)).status == "completed"
+    settled = await funduq.get_run_events(handle.run_id)
+
+    with pytest.raises(NoPendingAsk):
+        await funduq.resume_run(
+            handle.run_id, {"messages": [{"role": "user", "content": "two"}]}
+        )
+
+    assert await funduq.get_run_events(handle.run_id) == settled, "nothing was appended"
+    assert (await funduq.get_run(handle.run_id)).status == "completed", "and it stays exited"
 
 
 async def test_resume_an_unknown_run_is_an_error(funduq):
@@ -287,3 +354,43 @@ async def test_start_keeps_exactly_one_sweeper_and_aclose_stops_it(own_funduq):
 
 async def test_aclose_without_start_is_fine(own_funduq):
     assert not [t for t in own_funduq._tasks if not t.done()]
+
+
+async def test_an_exited_chained_run_is_told_it_exited_not_that_it_signed_wrong(
+    funduq, new_identity, attach
+):
+    """The order of the two refusals matters. A run bound to a responsibility chain will only
+    accept a result carrying a signature from one of its authorities — but that check belongs
+    to a run that is *asking*. A run that already exited is not asking, and answering the
+    wrong question first ("your signature is invalid") sends the caller to fix a signature
+    when what happened is that there was nothing left to sign for.
+
+    Both guards are real: this one is the ordinary case, and the
+    status-guarded reopen behind it is the concurrent one, where two results
+    race for the same pending ask and exactly one wins.
+    """
+    from sqlalchemy import update
+
+    from funduq.identity import InvalidResolution
+    from funduq.schema import runs
+
+    identity = new_identity()
+    agent_id = await _register(funduq, "chained", identity)
+    await attach(identity, EchoProvider(), [agent_id.name])
+
+    handle = await funduq.start_run(agent_id, {"messages": [{"role": "user", "content": "one"}]})
+    [_ async for _ in handle.events()]
+    await _until(lambda: handle.run_id not in funduq.active_runs())
+
+    async with funduq.session() as session:
+        await session.execute(
+            update(runs).where(runs.c.run_id == handle.run_id).values(head_key="a" * 64)
+        )
+        await session.commit()
+
+    with pytest.raises(NoPendingAsk):
+        await funduq.resume_run(handle.run_id, {"messages": []})
+
+    # ...and specifically not the signature complaint the chain check would
+    # have made had it run first.
+    assert not issubclass(NoPendingAsk, InvalidResolution)

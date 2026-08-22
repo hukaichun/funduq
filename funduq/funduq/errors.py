@@ -14,6 +14,7 @@ __all__ = [
     "InvalidRegistration",
     "KyokRejected",
     "InvalidRunInput",
+    "NoPendingAsk",
     "ProviderFingerprintTaken",
     "RunNotFound",
     "FunduqError",
@@ -91,6 +92,20 @@ class KyokRejected(FunduqError):
 
 class RunNotFound(FunduqError):
     pass
+
+
+class NoPendingAsk(FunduqError):
+    """Raised when a deferred call's result is offered to a run that is not waiting for one.
+
+    A run is the agent's loop up to its natural exit; a deferred call is a
+    pause *inside* that run, and the result goes back into the loop it
+    suspended. A run that already exited has no suspension to return to, so
+    running it again would be a second loop wearing the first one's id —
+    that is a new run, and the caller should open one.
+
+    It is also what a loser sees when two results race for the same pending
+    ask: exactly one reopen wins, and the other finds nothing left waiting.
+    """
 
 
 class InvalidRunInput(FunduqError):
