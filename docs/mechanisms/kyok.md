@@ -37,6 +37,21 @@ with its TTL); and the call itself is signed, fresh, by the agent
 provider's own key over the token, a timestamp, and the request body's
 hash.
 
+## No queue, and not as a trade-off
+
+Every other door funduq opens holds a gap: a message arrives when the
+caller chooses and the agent's loop accepts it when *it* chooses, and
+funduq carries it in between. KYOK has no such gap and no queue, and the
+reason is structural rather than operational.
+
+The other doors deliver *into* an agent's loop. KYOK **is** that loop's
+own model call, relayed outward — the segment at the top of the loop that
+nothing can be injected into, because the party who would wait is the
+party already blocked on it (see [the agent loop](../agent-loop.md)). So
+none of the gap's four questions apply: nobody is waiting but the asker.
+A detached provider fast-fails for the same reason — holding the call
+would stall the very loop that made it.
+
 ## Serving, refusing, and what funduq relays
 
 Each delivered completion carries the run id, the *proven* calling-agent
@@ -67,10 +82,15 @@ There are two shapes, depending on where the caller is when it happens:
   401 for a bad token or signature, 400 for a malformed body, 403 for an
   inactive run or an unregistered agent, 503 for a missing binding or a
   detached provider, 502 for the provider's own call failing.
-- **Mid-stream**, the relay emits one final `{"error": ...}` frame
-  carrying the same payload. Note that this path ends the stream
-  *without* the trailing `[DONE]` sentinel a successful stream emits — a
-  client that waits for `[DONE]` before acting will wait forever.
+- **Mid-stream**, the relay yields one final `CompletionFailure` carrying
+  the same payload — as *data*, not as a frame. By then the caller is
+  holding an open stream and there is no status left to change, so the
+  failure has to travel in band; but which band, and what terminates it,
+  is the gateway's. That is also the only place the question "does a
+  failed stream still get its `[DONE]`?" can be answered, because only
+  the gateway knows which wire's conventions apply. It used to be
+  answered here, in core, with "no" — and a client that waited for the
+  sentinel waited forever.
 
 An exception that is not a structured refusal collapses to plain prose
 instead, and the quality counters record it as `failed` rather than

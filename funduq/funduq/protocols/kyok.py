@@ -10,6 +10,7 @@ from typing import TYPE_CHECKING, Any, cast
 from openai.types.chat import ChatCompletion, ChatCompletionChunk, CompletionCreateParams
 from openai.types.chat.chat_completion import Choice
 from openai.types.chat.chat_completion_message import ChatCompletionMessage
+from openai.types.shared import ErrorObject
 
 from funduq import repo
 from funduq.errors import KyokRejected
@@ -26,21 +27,42 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+@dataclass(frozen=True)
+class CompletionFailure:
+    """A completion that stopped before it finished, carried **as data** because by then there
+    is no status left to change — the caller is already holding an open stream.
+
+    `payload` is what belongs under the caller's error key. When the LLM
+    provider raised a structured refusal it *is* that refusal, relayed
+    intact: funduq never interprets it, because its vocabulary belongs to
+    the provider and its callers. When there was no structured refusal,
+    funduq says so in its own words — built from OpenAI's own `ErrorObject`
+    rather than typed out as a dict, the same rule that has funduq's AG-UI
+    events built from `RunErrorEvent`.
+
+    `refused` says whose words these are: the provider's policy working, or
+    funduq reporting a failure it observed. It is the same distinction the
+    quality counters record, and neither is a judgment.
+    """
+
+    payload: dict[str, Any]
+    refused: bool
+
+
 @dataclass
 class CompletionRelay:
-    """A completion in flight from an attached LLM provider back to the KYOK caller, either
-    consumed in one shot as an OpenAI `ChatCompletion` (`collapsed`) or streamed out as
-    server-sent chunks (`encode`). Any error raised while draining `chunks` is surfaced as
-    `KyokRejected` (status 502) from `collapsed`, or as an inline `{"error": ...}` payload
-    followed by end-of-stream from `encode`.
+    """A completion in flight from an attached LLM provider back to the KYOK caller: consumed
+    in one shot as an OpenAI `ChatCompletion` (`collapsed`), or drained as it arrives
+    (`stream`).
 
-    An error carrying a `refusal` dict (the LLM provider's structured
-    refusal — `funduq_llm_provider_sdk.CompletionRefused` builds these; the
-    attribute name is the contract, read duck-typed) travels intact: it
-    becomes the `{"error": ...}` payload in-stream, or rides `KyokRejected.
-    refusal`, instead of being flattened to prose. funduq relays the payload
-    and never interprets it — its vocabulary belongs to the LLM provider
-    and its callers."""
+    `stream` yields OpenAI's own `ChatCompletionChunk`s, and a
+    `CompletionFailure` as the last item if the completion breaks
+    mid-flight. It yields no framing at all — no JSON, no `[DONE]`
+    sentinel. That sentinel is a convention of the wire the caller is on,
+    and this relay does not know which wire that is; a transport that emits
+    one is also the only party that can be sure to emit it *after* a
+    failure frame, which is the gap the old in-core framing left open.
+    """
 
     stream_requested: bool
     chunks: AsyncIterator[ChatCompletionChunk]
@@ -56,16 +78,23 @@ class CompletionRelay:
             ) from e
         return collapse_stream(collected)
 
-    async def encode(self) -> AsyncIterator[str]:
+    async def stream(self) -> AsyncIterator[ChatCompletionChunk | CompletionFailure]:
         try:
             async for chunk in self.chunks:
-                yield chunk.model_dump_json()
+                yield chunk
         except Exception as e:
             logger.warning("KYOK bridge failed mid-stream: %s", e)
             refusal = _refusal_of(e)
-            yield json.dumps({"error": refusal if refusal is not None else {"message": str(e)}})
-            return
-        yield "[DONE]"
+            yield CompletionFailure(
+                payload=(
+                    refusal
+                    if refusal is not None
+                    else ErrorObject(message=str(e), type="funduq_relay_failed").model_dump(
+                        exclude_none=True
+                    )
+                ),
+                refused=refusal is not None,
+            )
 
 
 def _refusal_of(e: Exception) -> dict[str, Any] | None:
