@@ -21,11 +21,16 @@ roster at run start (a typo fails the run immediately, not on the first
 completion) and names an offering, not a connection — the provider can
 drop and re-attach mid-run.
 
-When a bound run delegates, funduq itself copies the binding to the child
-run — never the delegating agent, which would otherwise be an agent
-holding the caller's `context`. One opt-in therefore covers a run tree,
-and the LLM provider polices the tree's shape with the material each
-completion carries.
+**A binding covers one run, and nothing propagates.** When an agent
+delegates, it is the caller of the new run, and what that run may spend
+is whatever *it* submitted — the user's offering if the user arranged
+that with it, its own if it is paying, or nothing. Whether a delegation
+continues the user's account or the delegating provider's is a matter
+between those two parties, and funduq has no opinion about it: it
+carries what each caller submits.
+
+funduq used to copy the binding down the tree instead, which is the
+[reversal record](../design-records.md#a-run-id-was-the-whole-proof-again-so-kyok-inherits-nothing).
 
 ## Authorizing a completion
 

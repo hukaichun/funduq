@@ -205,53 +205,85 @@ async def test_the_callers_context_is_never_persisted(funduq, serve, llm):
     await _finish(agent, stream)
 
 
-async def test_a_delegated_run_inherits_binding_and_shows_its_chain(funduq, serve, llm):
+class GrantWatcher:
+    """An agent that records the KYOK grant it was handed, or its absence."""
+
+    def __init__(self) -> None:
+        self.identity: Identity | None = None
+        self.grant: object = "never ran"
+
+    async def run_stream(self, agent_name: str, run_input):
+        ids = {"threadId": run_input.thread_id, "runId": run_input.run_id}
+        yield {"type": "RUN_STARTED", **ids}
+        self.grant = read_kyok_forwarded_props(run_input.forwarded_props)
+        yield {"type": "RUN_FINISHED", **ids}
+
+
+async def test_citing_a_bound_task_grants_the_citer_nothing(funduq, serve, llm):
+    """`referenceTaskIds` is A2A's lineage field: it says "this came from that", and it grants
+    nothing. A run spends against the opt-in its **own** caller submitted.
+
+    This used to be inheritance. Citing a live bound run copied its
+    offering *and the caller's context* onto the new run — so knowing a
+    run id was enough to spend against someone else's key and to be
+    handed their reconciliation handle. A responsibility chain on the
+    original thread did not help: citing a task makes a *new* thread
+    whose parent is the cited one, and membership governs writing on a
+    thread, not referencing it.
+
+    Whether a delegation continues the user's account or the delegating
+    provider's own is between those two parties. funduq carries what each
+    caller submits.
+    """
     stub, _, ref = llm
     parent = KyokTokenAgent()
     served, stream = await _run_with_token(
         funduq, serve, parent, ref, context={"voucher": "user-42"}
     )
 
-    class CalleeLLMCaller:
+    citer = GrantWatcher()
+    citer_served = await serve(citer, "unrelated-agent")
+    citer.identity = citer_served.identity
 
-        def __init__(self) -> None:
-            self.identity: Identity | None = None
-            self.answer: str | None = None
+    await A2AAdapter(funduq).send_task(
+        citer_served.agents["unrelated-agent"],
+        {
+            "role": "user",
+            "parts": [{"type": "text", "text": "I know a task id"}],
+            "referenceTaskIds": [parent.run_id],
+        },
+    )
 
-        async def run_stream(self, agent_name: str, run_input):
-            ids = {"threadId": run_input.thread_id, "runId": run_input.run_id}
-            yield {"type": "RUN_STARTED", **ids}
-            grant = read_kyok_forwarded_props(run_input.forwarded_props)
-            assert grant, "delegated run should inherit a KYOK token"
-            token = grant.token
-            body = _completion_body()
-            relay = await KyokAdapter(funduq).complete(
-                token, body, **_signed_call(self.identity, token, body)
-            )
-            self.answer = (await relay.collapsed()).choices[0].message.content
-            yield {"type": "RUN_FINISHED", **ids}
+    assert citer.grant is None, "an id is not a grant"
+    assert stub.seen == [] or stub.seen[-1].context != {"voucher": "user-42"}, (
+        "and the caller's context never reached an agent they did not fund"
+    )
+    await _finish(parent, stream)
 
-    callee = CalleeLLMCaller()
-    callee_served = await serve(callee, "sub-agent")
-    callee.identity = callee_served.identity
+
+async def test_a_delegating_caller_funds_the_sub_agent_by_saying_so(funduq, serve, llm):
+    """The other half: propagation is available, as an explicit act by the party doing the
+    delegating. It submits its own `metadata.kyok` like any caller, and the sub-agent is funded
+    — with a grant that names what that caller chose, not what funduq copied."""
+    stub, _, ref = llm
+    sub = GrantWatcher()
+    sub_served = await serve(sub, "sub-agent")
+    sub.identity = sub_served.identity
 
     chain = new_actor_chain(Ed25519PrivateKey.generate())
     await A2AAdapter(funduq).send_task(
-        callee_served.agents["sub-agent"],
-        {
-            "role": "user",
-            "parts": [{"type": "text", "text": "delegated"}],
-            "referenceTaskIds": [parent.run_id],
-        },
+        sub_served.agents["sub-agent"],
+        {"role": "user", "parts": [{"type": "text", "text": "delegated"}]},
         actor_chain=chain,
+        metadata={
+            "kyok": {
+                "llmProvider": {"providerKey": ref.provider_key, "name": ref.name},
+                "context": {"voucher": "delegator-7"},
+            }
+        },
     )
 
-    assert callee.answer == "hello world"
-    delivered = stub.seen[-1]
-    assert delivered.agent_name == "sub-agent"
-    assert delivered.context == {"voucher": "user-42"}
-    assert delivered.actor_chain == chain
-    await _finish(parent, stream)
+    assert sub.grant is not None, "the sub-agent is funded because its caller said so"
 
 
 async def test_an_a2a_caller_opts_in_with_metadata(funduq, serve, llm):

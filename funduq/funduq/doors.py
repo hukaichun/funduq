@@ -108,7 +108,6 @@ class InboundRun:
     head_key: str | None = None
     actor_chain: Any = None
     kyok: KyokOptIn | None = None
-    inherit_kyok_from: str | None = None
     addressed_run_id: str | None = None
     state: Any = None
     tools: list[dict[str, Any]] | None = None
@@ -155,13 +154,6 @@ async def dispatch(
         return False
 
     kyok_ref = inbound.kyok_ref
-    inherited = (
-        kyok_ref is None
-        and inbound.inherit_kyok_from is not None
-        and funduq.kyok_relay.inherit(
-            inbound.inherit_kyok_from, run_id, inbound.actor_chain
-        )
-    )
 
     try:
         input_json = build_run_agent_input(
@@ -175,7 +167,7 @@ async def dispatch(
                 funduq.settings.token_signing_secret,
                 run_id,
                 inbound.agent,
-                kyok_ref is not None or inherited,
+                kyok_ref is not None,
                 inbound.forwarded_props,
                 inbound.actor_chain,
                 addressed_run_id=inbound.addressed_run_id,

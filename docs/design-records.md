@@ -664,6 +664,40 @@ now a real LLM provider on the same identity machinery.
 See [Keep your own key](mechanisms/kyok.md) →
 [full record](https://github.com/hukaichun/funduq/blob/d78d0638c0ec2126167240c62471651b5468d35b/design/keep-your-own-key.md#history-two-designs-this-replaced-and-why)
 
+### A run id was the whole proof again, so KYOK inherits nothing
+
+A bound run's KYOK binding used to be copied onto any run whose A2A
+message cited it in `referenceTaskIds`. The stated reason was to keep the
+delegating agent from holding the caller's `context`: funduq would copy
+it so the agent never had to.
+
+Probed: an unrelated caller, with no chain and no relationship to
+anyone, sent a message to a **different** agent citing a live bound run's
+id. The new run got the offering **and the victim's context verbatim** —
+a spending grant, and the caller's reconciliation handle, handed out for
+knowing an identifier. A responsibility chain on the original thread did
+not narrow it: citing a task opens a *new* thread whose parent is the
+cited one, and membership governs writing on a thread, not referencing
+it.
+
+So the mitigation was worse than what it mitigated. It was invented to
+stop one known agent from seeing the context, and it gave the context to
+anyone holding an id. And this repo had already named the failure, in
+the record of the *first* KYOK design it threw away: "hashing the id
+closed the disclosure funduq itself was creating, but **the id remained
+the entire proof**." Inheritance put that back, with money on it.
+
+The rule that replaced it needs no mechanism: **a run spends against the
+opt-in its own caller submitted.** An agent that delegates is the caller
+of the new run and says what it funds — the user's offering if the user
+arranged that with it, its own if it is paying, or nothing. Whether a
+delegation continues the user's account or the delegating provider's is
+between those two; it was never funduq's to decide, and deciding it is
+what created the hole. `referenceTaskIds` goes back to meaning only what
+A2A says it means: this came from that.
+
+See [Keep your own key](mechanisms/kyok.md).
+
 ### An inter-chunk timeout kills slow models and blames the wrong side
 
 There is deliberately no timeout on a hung LLM provider. The old 30s

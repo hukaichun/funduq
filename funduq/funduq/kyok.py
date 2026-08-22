@@ -193,21 +193,6 @@ class KyokRelay:
     def binding_for(self, run_id: str) -> KyokBinding | None:
         return self._bindings.get(run_id)
 
-    def inherit(self, parent_run_id: str, child_run_id: str, actor_chain: list[str] | None) -> bool:
-        """Bind `child_run_id` to the parent run's offering and context, with its own `actor_chain`.
-
-        Returns False (and binds nothing) if the parent run has no binding.
-        """
-        parent = self._bindings.get(parent_run_id)
-        if parent is None:
-            return False
-        self._bindings[child_run_id] = KyokBinding(
-            llm_provider=parent.llm_provider,
-            context=parent.context,
-            actor_chain=actor_chain,
-        )
-        return True
-
     def discard(self, run_id: str) -> None:
         self._bindings.pop(run_id, None)
 
