@@ -10,6 +10,7 @@ from sqlalchemy import text
 from funduq.config import CoreSettings
 from funduq.core import Funduq
 from funduq.db_schema import EXPECTED_SCHEMA_REVISION
+from funduq_provider_sdk import ProviderIdentity
 
 
 
@@ -105,3 +106,30 @@ def test_running_migrations_does_not_disable_funduqs_own_loggers() -> None:
         f"running migrations disabled {silenced}. See funduq/alembic/env.py — fileConfig needs "
         "disable_existing_loggers=False."
     )
+
+
+async def test_the_database_accepts_every_status_the_code_can_write(funduq) -> None:
+    """`schema.RUN_STATUSES` is what funduq writes; the CHECK constraint the
+    database actually carries was written by the migration chain, which
+    freezes its own copy of the vocabulary on purpose. Nothing else makes the
+    two agree — a status added to the tuple without a migration would be
+    rejected by the row, not by the type checker."""
+    from sqlalchemy import update
+
+    from funduq import repo
+    from funduq.models import AgentRef
+    from funduq.schema import RUN_STATUSES, runs
+
+    identity = ProviderIdentity.generate()
+    signature, timestamp = identity.sign_registration(["statuses"])
+    await funduq.register_agents(identity.public_key, signature, timestamp, [{"name": "statuses"}])
+    agent = AgentRef(provider_key=identity.public_key, name="statuses")
+
+    async with funduq.session() as session:
+        thread_id = await repo.create_thread(session, agent)
+        run_id = (await repo.create_run(session, thread_id, agent, "ag-ui", {}))["run_id"]
+        for status in RUN_STATUSES:
+            await session.execute(
+                update(runs).where(runs.c.run_id == run_id).values(status=status)
+            )
+        await session.commit()

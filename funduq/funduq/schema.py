@@ -87,6 +87,27 @@ threads = Table(
 )
 
 
+# Every status a run row may carry. "offering" is the dispatch window: funduq
+# has handed the run to a provider and is waiting for an answer, which is
+# neither "queued" (nobody has it yet) nor "running" (nobody has accepted it
+# yet). This tuple is what funduq writes; the CHECK constraint here is built
+# from it, but the database's own copy was written by the migration that
+# widened it — a migration freezes its vocabulary on purpose, so the two are
+# kept in step by a test that writes every status to a real row.
+RUN_STATUSES = (
+    "queued",
+    "offering",
+    "running",
+    "input-required",
+    "cancelling",
+    "completed",
+    "failed",
+    "cancelled",
+)
+
+RUN_STATUS_CHECK = "status IN (%s)" % ", ".join(repr(s) for s in RUN_STATUSES)
+
+
 runs = Table(
     "runs",
     metadata,
@@ -107,10 +128,7 @@ runs = Table(
     Column("metadata", _JSON, nullable=False, default=dict),
     Column("created_at", _TS, nullable=False, default=_utcnow),
     CheckConstraint("protocol IN ('ag-ui', 'a2a')", name="ck_runs_protocol"),
-    CheckConstraint(
-        "status IN ('queued', 'running', 'input-required', 'cancelling', 'completed', 'failed', 'cancelled')",
-        name="ck_runs_status",
-    ),
+    CheckConstraint(RUN_STATUS_CHECK, name="ck_runs_status"),
     ForeignKeyConstraint(
         ["provider_key", "agent_name"], ["agents.provider_key", "agents.name"],
         name="fk_runs_agent",

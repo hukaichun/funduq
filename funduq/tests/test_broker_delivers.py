@@ -5,7 +5,7 @@ import logging
 
 import pytest
 
-from funduq.broker import Fail, RequestCancel, RunBroker
+from funduq.broker import Claim, Fail, RequestCancel, RunBroker
 from funduq.models import AgentRef
 
 AGENT = AgentRef(provider_key="pk_provider", name="translator")
@@ -28,12 +28,17 @@ class Recording:
         answers: list[bool] | None = None,
         default: bool = True,
         hang: bool = False,
+        hold: asyncio.Event | None = None,
     ) -> None:
         self.public_key = key
         self.max_concurrent_runs = max_concurrent_runs
         self._answers = list(answers or [])
         self._default = default
         self._hang = hang
+        # An offer this provider has in its hands and has not answered yet —
+        # the window every in-process test provider otherwise closes instantly,
+        # and the one a networked provider is always inside.
+        self._hold = hold
         self.offered: list[str] = []
         self.cancelled: list[str] = []
 
@@ -41,6 +46,8 @@ class Recording:
         self.offered.append(run.run_id)
         if self._hang:
             await asyncio.Event().wait()
+        if self._hold is not None:
+            await self._hold.wait()
         return self._answers.pop(0) if self._answers else self._default
 
     def cancel(self, run_id: str) -> None:
@@ -50,6 +57,19 @@ class Recording:
 @pytest.fixture
 async def broker():
     b = RunBroker(deliver_timeout_seconds=0.05, unserved_timeout_seconds=30)
+    b.start()
+    try:
+        yield b
+    finally:
+        b.stop()
+
+
+@pytest.fixture
+async def patient_broker():
+    """A broker that will wait for an answer. The tests about the dispatch
+    window hold an offer open on purpose, and the default fixture's 0.05s
+    delivery timeout would call that silence a timeout instead."""
+    b = RunBroker(deliver_timeout_seconds=5.0, unserved_timeout_seconds=30)
     b.start()
     try:
         yield b
@@ -487,3 +507,135 @@ async def test_an_unlimited_provider_that_declines_is_not_asked_again(broker):
     await _until(lambda: broker.get("run_1").is_claimed)
 
 
+
+
+async def _recorder(seen: list[str], name: str):
+    async def handler(run, cmd) -> None:
+        seen.append(name)
+
+    return handler
+
+
+async def test_a_provider_slow_to_answer_does_not_hold_up_another_agents_handover(patient_broker):
+    """One loop offering to one agent at a time, blocking on each answer, made
+    a provider's slowness everyone's: an unrelated agent's trivial run took
+    3.1s to reach its own unrelated provider (funduq#164). Handover is now one
+    lane per agent, and only that agent's queue waits."""
+    held = asyncio.Event()
+    slow = Recording(key="pk_slow", hold=held)
+    quick = Recording(key="pk_quick")
+    patient_broker.register_provider({AGENT: slow, OTHER: quick})
+    _enqueue(patient_broker, "run_slow", agent=AGENT)
+    await _until(lambda: slow.offered == ["run_slow"])
+
+    _enqueue(patient_broker, "run_quick", agent=OTHER)
+    await _until(lambda: patient_broker.get("run_quick").is_claimed)
+
+    assert patient_broker.get("run_slow").is_offered
+    assert not patient_broker.get("run_slow").is_claimed, "the slow offer is still unanswered"
+    held.set()
+
+
+async def test_a_place_is_taken_when_the_offer_leaves_not_when_it_is_answered(patient_broker):
+    """A provider that declared room for one, serving two agents, gets one
+    offer — not two. The second lane would otherwise read an in-flight count
+    the first lane has not been able to raise yet, and both would conclude
+    there was room."""
+    held = asyncio.Event()
+    provider = Recording(max_concurrent_runs=1, hold=held)
+    patient_broker.register_provider({AGENT: provider, OTHER: provider})
+    _enqueue(patient_broker, "run_1", agent=AGENT)
+    await _until(lambda: provider.offered == ["run_1"])
+
+    _enqueue(patient_broker, "run_2", agent=OTHER)
+    await asyncio.sleep(0.05)
+
+    assert provider.offered == ["run_1"]
+    assert patient_broker.quality()["pk_provider"].in_flight == 1
+    held.set()
+
+
+async def test_an_unaccepted_offer_gives_back_the_place_it_took(patient_broker):
+    """The place is spent at dispatch, so a declined offer has to return it —
+    otherwise a provider that declines enough times is silently full for good."""
+    provider = Recording(default=False)
+    patient_broker.register_provider({AGENT: provider})
+    _enqueue(patient_broker, "run_1")
+
+    await _until(lambda: provider.offered == ["run_1"])
+    await _until(lambda: patient_broker.quality()["pk_provider"].in_flight == 0)
+    assert patient_broker.get("run_1").is_offered is False
+
+
+async def test_a_cancel_inside_the_dispatch_window_waits_for_the_answer(patient_broker):
+    """A cancel arriving while an offer is unanswered used to take the queued
+    path — funduq recorded the run cancelled and handed it to the provider a
+    moment later, which then worked on something nobody would collect and lost
+    its place for good (funduq#164). The claim is the older fact, so it is
+    processed first and the cancel follows it: funduq asks the provider that
+    took the run to stop, which is what a cancel is."""
+    held = asyncio.Event()
+    seen: list[str] = []
+    handlers = {
+        Claim: await _recorder(seen, "claim"),
+        RequestCancel: await _recorder(seen, "cancel"),
+    }
+    provider = Recording(hold=held)
+    patient_broker.register_provider({AGENT: provider})
+    patient_broker.enqueue_run("run_1", AGENT, "thread_1", {"messages": []}, "ag-ui", handlers)
+    await _until(lambda: provider.offered == ["run_1"])
+
+    assert patient_broker.request_cancel("run_1") is True
+    held.set()
+
+    await _until(lambda: seen == ["claim", "cancel"])
+    assert patient_broker.get("run_1").claimed_by == "pk_provider"
+    assert patient_broker.quality()["pk_provider"].in_flight == 1
+
+
+async def test_a_cancel_inside_the_window_settles_the_run_when_nobody_takes_it(patient_broker):
+    """The other half of the same window: the offer comes back declined, so no
+    provider is working on anything, and the run is funduq's to end."""
+    held = asyncio.Event()
+    seen: list[str] = []
+    handlers = {RequestCancel: await _recorder(seen, "cancel")}
+    provider = Recording(default=False, hold=held)
+    patient_broker.register_provider({AGENT: provider})
+    patient_broker.enqueue_run("run_1", AGENT, "thread_1", {"messages": []}, "ag-ui", handlers)
+    await _until(lambda: provider.offered == ["run_1"])
+
+    patient_broker.request_cancel("run_1")
+    await asyncio.sleep(0.02)
+    assert seen == [] and patient_broker.get("run_1") is not None, (
+        "nothing about the run is settled while its answer is still out"
+    )
+
+    held.set()
+    await _until(lambda: seen == ["cancel"])
+    await _until(lambda: patient_broker.get("run_1") is None)
+    assert patient_broker.quality()["pk_provider"].in_flight == 0
+
+
+async def test_a_provider_that_stopped_serving_while_answering_does_not_keep_the_run(
+    patient_broker,
+):
+    """The offer was out when the provider left the roster, and it came back
+    accepted. The provider believes it took the run and nothing will finish
+    it — the same fact `unregister_provider` records for a run it was already
+    holding, reached through the one window that call cannot see into."""
+    held = asyncio.Event()
+    seen: list[str] = []
+    handlers = {
+        Claim: await _recorder(seen, "claim"),
+        Fail: await _recorder(seen, "fail"),
+    }
+    provider = Recording(hold=held)
+    patient_broker.register_provider({AGENT: provider})
+    patient_broker.enqueue_run("run_1", AGENT, "thread_1", {"messages": []}, "ag-ui", handlers)
+    await _until(lambda: provider.offered == ["run_1"])
+
+    patient_broker.unregister_provider([AGENT])
+    held.set()
+
+    await _until(lambda: seen == ["claim", "fail"])
+    assert patient_broker.quality()["pk_provider"].abandoned == 1

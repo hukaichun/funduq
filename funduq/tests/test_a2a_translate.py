@@ -95,7 +95,24 @@ def test_run_statuses_map_to_a2a_states():
     assert state_for_run_status("completed") == pb.TaskState.TASK_STATE_COMPLETED
     assert state_for_run_status("failed") == pb.TaskState.TASK_STATE_FAILED
     assert state_for_run_status("cancelled") == pb.TaskState.TASK_STATE_CANCELED
+    assert state_for_run_status("offering") == pb.TaskState.TASK_STATE_SUBMITTED
     assert state_for_run_status("cancelling") == pb.TaskState.TASK_STATE_UNSPECIFIED
+
+
+def test_every_status_a_run_can_carry_has_an_answer_here():
+    """A status funduq can write and this table does not know reaches an A2A
+    caller as `TASK_STATE_UNSPECIFIED` — a shrug, on a wire where every other
+    answer means something. `cancelling` is the one deliberate shrug (A2A's
+    `CANCELED` would assert an outcome funduq has not observed); anything else
+    landing there is a status somebody added and forgot to translate."""
+    from funduq.schema import RUN_STATUSES
+
+    unmapped = {
+        status
+        for status in RUN_STATUSES
+        if state_for_run_status(status) == pb.TaskState.TASK_STATE_UNSPECIFIED
+    }
+    assert unmapped == {"cancelling"}
 
 
 def test_status_update_from_a_persisted_status_has_no_final_flag():

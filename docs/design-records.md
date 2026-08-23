@@ -786,8 +786,11 @@ A provider with `max_concurrent_runs=1` that delegates to **its own**
 agent deadlocks: the outer run holds the slot while it waits, the inner
 run needs a slot from the same provider, and funduq — tracking that
 provider's budget itself — withholds the offer rather than asking. The
-outer run sits `running` until the stall sweep
-gives up on it — `run_stall_timeout_seconds`, 120s by default. A
+outer run sits `running` indefinitely: the clock that used to give up on
+it was removed when [silence stopped being read as
+death](#silence-was-read-as-death-and-the-party-that-had-done-nothing-wrong-was-blamed),
+so what ends the deadlock now is the caller cancelling, or the provider's
+`undelivered` allowance running out and withdrawing it. A
 provider that recurses should stay on the default unlimited capacity.
 Delegating to a *different* provider is unaffected, since it has its own
 budget.
@@ -795,6 +798,55 @@ budget.
 funduq imposes no depth limit and performs no cycle detection.
 
 [full record](https://github.com/hukaichun/funduq/blob/d78d0638c0ec2126167240c62471651b5468d35b/design/agent-provider-guide.md#multi-agent-topologies--verified-not-just-argued)
+
+### Dispatch was single-file, and the queue it blocked was everyone's
+
+Runs executed concurrently from the beginning — each claimed run got its
+own pipeline task. **Handing them over did not.** One loop offered to one
+agent at a time and blocked on the provider's answer before moving to the
+next, so a provider slow to answer stalled the handover of every other
+agent, provider and caller. Measured, with two unrelated agents on two
+unrelated providers and the first sitting on its offer for 3 s:
+
+```
+slow provider holds the offer, unanswered (3s)
+the other agent's run, sent to finished: 3.10s
+```
+
+Milliseconds of work, three seconds of waiting, for a run that shared
+nothing with the one ahead of it but the loop. **A networked provider is
+always slow to answer**, so the worst case was the full delivery timeout
+added to every other agent's next handover, per unanswered offer.
+
+No test saw it, and the reason is worth keeping: every test provider is
+in-process and acks immediately, so the window whose width is the whole
+defect had zero width. The second defect in the same window was worse —
+a cancel arriving while the offer was in flight took the
+nobody-has-it-yet path, so funduq recorded the run `cancelled` **and**
+handed it to the provider, which then worked on something nobody would
+collect and lost a capacity slot permanently.
+
+The fix was not to make the loop faster but to notice that **the run has
+an owner from dispatch onwards**. The offer leaves, and with it goes the
+run's place on the provider and a status of its own (`offering`); a
+cancel arriving now queues behind the pending answer instead of being
+decided in funduq's favour; and the waiting itself moved out of the
+shared loop into one lane per agent. The sweep starts lanes and goes back
+to sleep.
+
+One thing deliberately stayed serial: **a declined head must not be
+overtaken by its own sibling**, and nothing knows the head is declined
+until the provider says so. That is why the lane is per agent rather than
+per run — the queue is per agent, so the thing that drains it is too.
+Arrival order was already the one sequencing funduq owns, and it survived
+the change intact.
+
+An earlier attempt fixed only the cancel race, by arbitrating the run's
+status with a conditional UPDATE. It was abandoned: every fix needed
+another field to keep memory and the record in step, which is patching
+the seam rather than closing it.
+
+funduq#164.
 
 ## Open contradictions
 

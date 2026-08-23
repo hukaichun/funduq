@@ -64,7 +64,9 @@ protocol difference has already been erased.
 `RunBroker` keeps the live state in memory: a `Run` object per active
 run, a pending deque per agent, and a capacity bucket per provider
 (declared limit vs in-flight count). A sweep task wakes whenever work
-arrives or capacity frees, and walks each agent's queue:
+arrives or capacity frees, and makes sure every agent with pending runs
+has a **lane** draining it. One lane per agent, because the queue is per
+agent; the sweep itself never waits for a provider:
 
 1. **Offer.** The head of the agent's queue is offered to its attached
    connection — one awaited call carrying the claimed-run envelope,
@@ -80,8 +82,17 @@ arrives or capacity frees, and walks each agent's queue:
    The provider answers accepted / declined-full /
    refused-permanently; timeouts and refusals are handled per
    [runs and cancels are requests](../mechanisms/requests.md).
-2. **Claim.** An accepted run is marked claimed by that provider's key
-   and its in-flight count rises.
+
+   The lane waits here, and only this agent's queue waits with it: the
+   head has to be answered before its own sibling is offered, and every
+   other agent is draining at the same time in a lane of its own. The
+   run leaves the queue and takes its place on the provider as the offer
+   goes out, is recorded `offering` for the length of the wait, and is
+   handed back — place and status both — if the answer is not an
+   acceptance.
+2. **Claim.** An accepted run is marked claimed by that provider's key.
+   Its place was already taken at step 1; claiming is when funduq starts
+   calling it `running`.
 3. **Pipeline.** Each claimed run gets its own consumer task draining a
    per-run command queue **in order**: the provider reporting an event
    becomes a relay command (persist the event row, forward it to the
@@ -112,18 +123,26 @@ holding a live stream open — queueing here would help nobody.
 ## One deliverer, and why that is load-bearing
 
 Exactly one place in the process offers a run to a provider: the
-broker's own loop. `enqueue_run` and attaching a provider do not deliver
-anything — they set a flag that wakes the loop, which then walks the
-queues. The call that actually hands a run over has a single call site,
-and the sweep that finds candidates has a single caller.
+broker's dispatch lane. `enqueue_run` and attaching a provider do not
+deliver anything — they set a flag that wakes the sweep, which starts
+lanes. The call that actually hands a run over has a single call site,
+and each agent's queue has exactly one lane draining it.
 
 That is an invariant, not a coincidence of the current code. Two callers
 racing to offer the same head run both plausibly succeed, and the run is
 delivered twice or claimed by one provider while the other's ack arrives
 against a run already in flight — either way a run is lost or
 duplicated, and neither is recoverable from the outcome funduq records.
-Anything that needs a run dispatched sooner should wake the loop, never
+Anything that needs a run dispatched sooner should wake the sweep, never
 deliver on its own.
+
+Lanes running side by side do not weaken this. A lane takes the run off
+the queue before the offer leaves, and the run is nobody's to offer
+again until it comes back; a second lane for the same agent is never
+started while the first is alive. What the lanes share is the provider's
+capacity bucket, which is why a place is spent at dispatch — two lanes
+reading an in-flight count that only rises on acceptance would both find
+room that is not there.
 
 The same rule explains why `enqueue_run` raises when the broker is not
 running. Accepting work that nothing will ever dispatch would leave a
@@ -139,8 +158,9 @@ decline and the run stays queued; a refusal is permanent and fails the
 run with that reason recorded verbatim.
 
 Two clocks bound the wait. A single offer has a **delivery timeout**
-(5 s): expiry counts an `unanswered` against the provider and leaves the
-run queued, because a provider that did not answer has not refused. An
+(5 s): expiry counts an `unanswered` against the provider and hands the
+run back to the queue, because a provider that did not answer has not
+refused. An
 agent left with **no serving provider** past its window (45 s) has its
 queued runs failed `no_provider_took_it`, clocked from the later of when
 the run was queued and when the agent went unserved. While a provider is
@@ -202,5 +222,6 @@ detach ceremony above them is likewise stated once, in the facade's
 
 Why this is shaped the way it is, and what it was shaped like first:
 
+- [Dispatch was single-file, and the queue it blocked was everyone's](../design-records.md#dispatch-was-single-file-and-the-queue-it-blocked-was-everyones)
 - [Wrapping an unknown event in `RawEvent` is quiet corruption](../design-records.md#wrapping-an-unknown-event-in-rawevent-is-quiet-corruption)
 - [Liveness stopped being an inference](../design-records.md#liveness-stopped-being-an-inference)

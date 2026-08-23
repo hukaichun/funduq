@@ -8,11 +8,12 @@ only ask, watch what happens, and record exactly that.
 
 ## Offering a run
 
-A queued run is *offered* to its agent's provider — in order, one turn
-per thread at a time: a run whose thread already has a run in flight
-(claimed, or paused waiting for an answer) stays queued until that turn
-ends, without holding up runs on other threads — and the provider
-answers with one of three values:
+A queued run is *offered* to its agent's provider in arrival order, head
+of the queue first — arrival order is the one sequencing funduq owns, and
+[the thread gate is retired](../design-records.md#the-thread-gate-is-retired-funduq-does-not-pace-a-providers-conversation),
+so a sibling utterance is offered as soon as it reaches the head whether
+or not the previous turn is still running. The provider answers with one
+of three values:
 
 - **accepted** — the run is claimed and its events start flowing;
 - **declined** — "full right now"; funduq keeps the run queued and offers
@@ -30,6 +31,37 @@ answers with one of three values:
 The three-valued answer exists because collapsing decline and refusal
 into one bit left runs re-offered forever, reading as `queued` from every
 vantage point while the provider's log alone knew the truth.
+
+## The wait for that answer is a state, and it belongs to one agent
+
+Between the offer leaving and the answer arriving, the run is
+**`offering`**: funduq no longer has it and no provider has accepted it,
+so neither `queued` nor `running` is true, and a caller reading the
+record during that window has to be told something. (To A2A it is still
+`submitted` — nothing is being worked on yet.) A declined offer puts it
+back to `queued`, which is the only transition that does not go through
+the status machine, because a run is otherwise never *moved* to queued —
+it is born there.
+
+Two things happen the moment the offer leaves rather than when it is
+accepted, and both are the same idea: **the run has an owner from
+dispatch onwards.**
+
+- **Its place on the provider is spent.** A provider that declared room
+  for one gets one offer, not one *accepted* run plus however many
+  offers were in flight while it was thinking.
+- **A cancel arriving now queues behind the pending answer** instead of
+  being decided in funduq's favour. If the provider took the run it is
+  asked to stop; if it declined, the run ends here. What cannot happen
+  any more is both — funduq recording `cancelled` and handing the same
+  run over a moment later.
+
+**Waiting for an answer holds up one agent's queue and nothing else.**
+It has to hold up that one: a declined head must not be overtaken by its
+own sibling, and nothing knows the head is declined until the provider
+says so. It used to hold up all of them, because one loop offered to one
+agent at a time — see [the design
+record](../design-records.md#dispatch-was-single-file-and-the-queue-it-blocked-was-everyones).
 
 ## Cancelling a run
 
@@ -121,8 +153,8 @@ with a stake has the lever funduq does not need: the caller can cancel.
 
 ## Cancelling is not a state a caller can read as final
 
-`cancelling` is an **active** status, alongside `queued`, `running` and
-`input-required`. It means funduq has passed the request on and is still
+`cancelling` is an **active** status, alongside `queued`, `offering`,
+`running` and `input-required`. It means funduq has passed the request on and is still
 relaying — not that the run stopped. It has no A2A equivalent, because
 A2A's `TASK_STATE_CANCELED` asserts an outcome funduq has not observed
 yet; only the settled `cancelled` maps to it.
@@ -152,5 +184,6 @@ would read it is the one who asked.
 
 Why this is shaped the way it is, and what it was shaped like first:
 
+- [Dispatch was single-file, and the queue it blocked was everyone's](../design-records.md#dispatch-was-single-file-and-the-queue-it-blocked-was-everyones)
 - [Silence about a verdict funduq has reached is a bug](../design-records.md#silence-about-a-verdict-funduq-has-reached-is-a-bug)
 - [Enforcing cancellation produced a family of bugs](../design-records.md#enforcing-cancellation-produced-a-family-of-bugs)
