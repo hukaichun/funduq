@@ -82,14 +82,24 @@ def text_delta_of(event: dict[str, Any]) -> tuple[str, str] | None:
 
 
 def agui_event_to_a2a_update(
-    event: dict[str, Any], task_id: str, context_id: str
+    event: dict[str, Any], task_id: str, context_id: str, *, opened: set[str]
 ) -> pb.TaskStatusUpdateEvent | pb.TaskArtifactUpdateEvent:
     """Translates one AG-UI run event into the A2A stream event it projects onto: run lifecycle
     events become status updates (`RUN_STARTED`->working, `RUN_FINISHED`->completed or, when it
     carries an interrupt outcome, input-required with the interrupts attached, `RUN_ERROR`->failed
     with the error message attached), text-content events become appending artifact updates keyed
     by message id, and anything else falls back to a working status update carrying the raw AG-UI
-    event under `metadata.agui_event` so it isn't silently dropped."""
+    event under `metadata.agui_event` so it isn't silently dropped.
+
+    `opened` is the set of artifact ids this **stream** has already
+    created, and it is mutated here. A2A gives `append` a meaning funduq
+    has to honour: `append=false` *creates* the artifact, `append=true`
+    adds to one the receiver already holds. Whether a chunk is the first
+    is a property of the stream, not of the event, so it cannot be decided
+    from the event alone — the argument is required rather than defaulted
+    for that reason. Marking every chunk as an append tells a receiver to
+    add to something it was never given, and A2A's own aggregator refuses
+    that stream outright."""
     event_type = event.get("type")
 
     if event_type == EventType.RUN_STARTED:
@@ -117,11 +127,13 @@ def agui_event_to_a2a_update(
     delta = text_delta_of(event)
     if delta is not None:
         artifact_id, text = delta
+        already_open = artifact_id in opened
+        opened.add(artifact_id)
         return pb.TaskArtifactUpdateEvent(
             task_id=task_id,
             context_id=context_id,
             artifact=pb.Artifact(artifact_id=artifact_id, parts=[pb.Part(text=text)]),
-            append=True,
+            append=already_open,
         )
 
     return _status_update(task_id, context_id, pb.TaskState.TASK_STATE_WORKING, agui_event=event)

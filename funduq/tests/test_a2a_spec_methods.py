@@ -108,13 +108,19 @@ async def test_sending_a_message_settles_the_task(funduq, callee):
     assert task.status.state == pb.TaskState.TASK_STATE_COMPLETED
 
 
-async def test_streaming_yields_a2as_own_events_ending_completed(funduq, callee):
+async def test_streaming_opens_with_the_task_then_yields_a2as_own_events(funduq, callee):
+    """A2A carries a task as a **snapshot** followed by increments layered onto it, so the
+    stream opens with the `Task` itself — a receiver handed a status update first has nothing
+    to layer onto. Whether the layering then works is not asserted here; it is checked by A2A's
+    own aggregator in `tests/test_a2a_conformance.py`."""
     stream = await A2AAdapter(funduq).send_task_streaming(callee, _message("hi"))
 
     events = [event async for event in stream]
 
+    assert isinstance(events[0], pb.Task)
     assert all(
-        isinstance(e, pb.TaskStatusUpdateEvent | pb.TaskArtifactUpdateEvent) for e in events
+        isinstance(e, pb.TaskStatusUpdateEvent | pb.TaskArtifactUpdateEvent)
+        for e in events[1:]
     )
     assert events[-1].status.state == pb.TaskState.TASK_STATE_COMPLETED
 

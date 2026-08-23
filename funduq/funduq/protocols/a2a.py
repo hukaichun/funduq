@@ -129,9 +129,12 @@ class A2AAdapter:
         waiting for it to settle. If the run turns out not to be live (e.g. it was already
         finished), yields a single status update reflecting its stored status.
 
-        The events are A2A's own — `TaskStatusUpdateEvent` /
-        `TaskArtifactUpdateEvent`. Wrapping them for a wire is the
-        transport's job, not this one's.
+        The events are A2A's own, and the stream opens with the **`Task`
+        itself**: A2A carries a task as a snapshot followed by increments
+        layered onto it, so a receiver that gets a status update first has
+        nothing to layer onto — the package's own aggregator refuses that
+        stream rather than tolerating it. Wrapping any of it for a wire is
+        the transport's job, not this one's.
         """
         run_id, thread_id, is_live = await self._start_run(
             agent, _params(message, actor_chain, metadata)
@@ -140,13 +143,21 @@ class A2AAdapter:
         events = self._funduq.broker.subscribe(run_id) if live else None
 
         async def results() -> AsyncIterator[Event]:
+            stored = await self._funduq.get_run(run_id)
+            yield build_task(
+                run_id,
+                thread_id,
+                await self._display_name(agent),
+                stored.status if stored else "queued",
+                [],
+            )
             if not live:
-                stored = await self._funduq.get_run(run_id)
                 status = stored.status if stored else "completed"
                 yield status_update_for_run_status(run_id, thread_id, status)
                 return
+            opened: set[str] = set()
             async for item in events:
-                yield agui_event_to_a2a_update(item, run_id, thread_id)
+                yield agui_event_to_a2a_update(item, run_id, thread_id, opened=opened)
             stored = await self._funduq.get_run(run_id)
             if stored is not None and stored.status != "completed":
                 yield status_update_for_run_status(run_id, thread_id, stored.status)
@@ -162,13 +173,24 @@ class A2AAdapter:
             raise TaskNotFoundError(f"no task '{task_id}' for agent '{agent}'")
         thread_id = run.thread_id
         events = self._funduq.broker.subscribe(task_id) if self._funduq.broker.get(task_id) else None
+        opening = build_task(
+            task_id,
+            thread_id,
+            await self._display_name(agent),
+            run.status,
+            await self._funduq.get_run_events(task_id),
+        )
 
         async def results() -> AsyncIterator[Event]:
+            yield opening
             if events is None:
                 yield status_update_for_run_status(task_id, thread_id, run.status)
                 return
+            # The opening snapshot already carries whatever this run had
+            # produced, so those artifacts exist for the receiver already.
+            opened: set[str] = {a.artifact_id for a in opening.artifacts}
             async for item in events:
-                yield agui_event_to_a2a_update(item, task_id, thread_id)
+                yield agui_event_to_a2a_update(item, task_id, thread_id, opened=opened)
             stored = await self._funduq.get_run(task_id)
             if stored is not None and stored.status != "completed":
                 yield status_update_for_run_status(task_id, thread_id, stored.status)

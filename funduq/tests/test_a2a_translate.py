@@ -21,7 +21,7 @@ def _wire(message) -> dict:
 
 def test_run_error_event_maps_to_failed_status_with_message():
     update = agui_event_to_a2a_update(
-        {"type": "RUN_ERROR", "message": "no_provider_online"}, "task_1", "session_1"
+        {"type": "RUN_ERROR", "message": "no_provider_online"}, "task_1", "session_1", opened=set()
     )
 
     assert _wire(update) == {
@@ -39,7 +39,7 @@ def test_run_error_event_maps_to_failed_status_with_message():
 
 
 def test_run_finished_is_completed():
-    update = agui_event_to_a2a_update({"type": "RUN_FINISHED"}, "task_1", "session_1")
+    update = agui_event_to_a2a_update({"type": "RUN_FINISHED"}, "task_1", "session_1", opened=set())
 
     assert _wire(update) == {
         "taskId": "task_1",
@@ -48,23 +48,41 @@ def test_run_finished_is_completed():
     }
 
 
-def test_text_content_becomes_an_appending_artifact_update():
-    update = agui_event_to_a2a_update(
-        {"type": "TEXT_MESSAGE_CONTENT", "messageId": "m1", "delta": "hel"}, "task_1", "session_1"
+def test_the_first_chunk_creates_the_artifact_and_the_rest_append():
+    """A2A gives `append` a meaning funduq has to honour: false *creates* the artifact, true
+    adds to one the receiver already holds. This used to send true for every chunk, including
+    the first — telling a receiver to append to something it had never been given, which A2A's
+    own aggregator refuses outright (`tests/test_a2a_conformance.py` is where that is checked
+    by the package rather than asserted here)."""
+    opened: set[str] = set()
+
+    first = agui_event_to_a2a_update(
+        {"type": "TEXT_MESSAGE_CONTENT", "messageId": "m1", "delta": "hel"},
+        "task_1", "session_1", opened=opened,
+    )
+    second = agui_event_to_a2a_update(
+        {"type": "TEXT_MESSAGE_CONTENT", "messageId": "m1", "delta": "lo"},
+        "task_1", "session_1", opened=opened,
+    )
+    other_message = agui_event_to_a2a_update(
+        {"type": "TEXT_MESSAGE_CONTENT", "messageId": "m2", "delta": "hi"},
+        "task_1", "session_1", opened=opened,
     )
 
-    assert _wire(update) == {
+    assert first.append is False, "the first chunk creates"
+    assert second.append is True, "the rest append"
+    assert other_message.append is False, "and each message id is its own artifact"
+    assert _wire(first) == {
         "taskId": "task_1",
         "contextId": "session_1",
         "artifact": {"artifactId": "m1", "parts": [{"text": "hel"}]},
-        "append": True,
     }
 
 
 def test_unmodeled_event_falls_back_to_a_working_update():
     event = {"type": "CUSTOM", "name": "sub_agent_progress", "value": {"sub_agent": "translator"}}
 
-    update = _wire(agui_event_to_a2a_update(event, "task_1", "session_1"))
+    update = _wire(agui_event_to_a2a_update(event, "task_1", "session_1", opened=set()))
 
     assert update["status"]["state"] == "TASK_STATE_WORKING"
     assert update["metadata"]["agui_event"] == event
@@ -137,6 +155,7 @@ def test_run_finished_on_an_interrupt_is_input_required_not_completed():
         },
         "task_1",
         "session_1",
+        opened=set(),
     )
 
     assert _wire(update)["status"]["state"] == "TASK_STATE_INPUT_REQUIRED"
@@ -157,7 +176,7 @@ def test_every_ag_ui_event_type_is_mapped_or_reaches_the_overflow_seam():
 
     for event_type in EventType:
         event = {"type": event_type.value}
-        update = agui_event_to_a2a_update(event, "task_1", "session_1")
+        update = agui_event_to_a2a_update(event, "task_1", "session_1", opened=set())
 
         if event_type.value in MAPPED_EVENT_TYPES:
             assert is_mapped(event)
