@@ -262,14 +262,18 @@ class RunBroker:
     ) -> None:
         self._spawn = spawn or self._spawn_unsupervised
         self._runs: dict[str, Run] = {}
-        self._pending_by_agent: dict[AgentRef, deque[str]] = defaultdict(deque)
+        # Keyed by thread, because a thread is the pipe whose delivery order
+        # funduq guarantees. An agent is not a pipe: two of its conversations
+        # have no order between them, and making them share a queue only
+        # made one wait for the other.
+        self._pending_by_thread: dict[str, deque[str]] = defaultdict(deque)
         self._live = LiveRoster(
             ("misdeclared", "abandoned", "undelivered", "unanswered", "answered_late")
         )
         self._unserved_since: dict[AgentRef, datetime] = {}
         self._capacity: dict[str, _Capacity] = {}
         self._handlers: dict[str, HandlerMap] = {}
-        self._draining: dict[AgentRef, asyncio.Task] = {}
+        self._draining: dict[str, asyncio.Task] = {}
         self._pipeline_tasks: set[asyncio.Task] = set()
         self.sweep_interval_seconds = sweep_interval_seconds
         self.undelivered_window_seconds = undelivered_window_seconds
@@ -335,8 +339,8 @@ class RunBroker:
         cancellation so one bad sweep doesn't stop future ones.
 
         **This loop never waits for a provider's answer.** It starts lanes and
-        goes back to sleep; the waiting happens in `_drain_agent`, one lane per
-        agent. It used to offer inline, and one provider slow to answer then
+        goes back to sleep; the waiting happens in `_drain_thread`, one lane per
+        thread. It used to offer inline, and one provider slow to answer then
         held up the handover of every other agent, provider and caller —
         measured at 3.1s for a trivial run that shared nothing with the one
         ahead of it but this loop (funduq#164).
@@ -346,8 +350,8 @@ class RunBroker:
                 self.note_undelivered(self.undelivered_window_seconds)
                 self.expire_queued(self.unserved_timeout_seconds)
                 self._work_to_do.clear()
-                for agent in list(self._pending_by_agent):
-                    self._start_draining(agent)
+                for thread_id in list(self._pending_by_thread):
+                    self._start_draining(thread_id)
                 with contextlib.suppress(TimeoutError):
                     # Sleep no longer than the shortest window this loop is
                     # responsible for observing, or the observation misses it.
@@ -389,7 +393,7 @@ class RunBroker:
             round_starting_seq=seq,
         )
         self._runs[run_id] = run
-        self._pending_by_agent[agent].append(run_id)
+        self._pending_by_thread[thread_id].append(run_id)
         self._work_to_do.set()
         if handlers is not None:
             self._handlers[run_id] = handlers
@@ -447,35 +451,35 @@ class RunBroker:
                     )
                     self.push(run.run_id, Fail("provider_left_holding_it"))
 
-    def _start_draining(self, agent: AgentRef) -> None:
-        """Ensures `agent`'s queue has a lane draining it. One lane per agent,
-        because the queue is per agent: the head must be answered before its
-        successor is offered (see `_drain_agent`), and that is the only thing
-        that has to be serial."""
-        existing = self._draining.get(agent)
+    def _start_draining(self, thread_id: str) -> None:
+        """Ensures the thread has a lane handing its utterances over. One lane
+        per thread, because a thread is the one pipe whose delivery order
+        funduq guarantees (see `_drain_thread`)."""
+        existing = self._draining.get(thread_id)
         if existing is not None and not existing.done():
             return
-        self._draining[agent] = self._spawn(
-            self._drain_agent(agent), name=f"dispatch:{agent.provider_key[:8]}/{agent.name}"
+        self._draining[thread_id] = self._spawn(
+            self._drain_thread(thread_id), name=f"dispatch:{thread_id}"
         )
 
-    async def _drain_agent(self, agent: AgentRef) -> None:
-        """Offers `agent`'s queued runs, head first, to its provider until the
-        queue is empty, the provider has no room, or an offer is not accepted.
+    async def _drain_thread(self, thread_id: str) -> None:
+        """Hands the thread's queued runs to its agent's provider, head first,
+        until the queue is empty, the provider has no room, or an offer is not
+        accepted.
 
-        The queue's own FIFO order is the only sequencing funduq imposes: a
-        thread's utterances are offered in arrival order, and a sibling is
-        offered as soon as it reaches the head — whether the provider runs it,
-        holds it, or absorbs it into a turn already in flight is the
-        provider's decision, not funduq's (funduq never paces a provider's
-        conversation; see the queueing design record).
+        **What funduq guarantees is the delivery order of one thread**, and
+        that is the whole reason this is serial. A conversation's utterances
+        reach the provider in the order they arrived, because a provider that
+        wants to take turns can only take them in the order things arrive —
+        deliver two of them at once and its own sequencing would lock in an
+        order nobody chose, invisibly. What the provider then *does* with that
+        order — run the new turn at once, hold it, fold it into the turn in
+        flight — is its decision and not funduq's (see the queueing design
+        record); funduq imposes no turn-taking, only sequence.
 
-        That order is why the lane is serial and why the wait for an answer
-        lives here rather than in the sweep loop. A declined head must not be
-        overtaken by its own sibling, and nothing knows the head is declined
-        until the provider says so — so this lane blocks on the answer, and
-        only this lane does. Every other agent is draining at the same time,
-        in a lane of its own.
+        Nothing wider than a thread is serialized. Two conversations have no
+        order between them, so they hand over side by side even when they
+        share an agent, a provider and a caller.
 
         Exits with no work left to do; the sweep loop starts it again when
         anything changes (`enqueue_run`, `register_provider`, a freed
@@ -486,15 +490,17 @@ class RunBroker:
         """
         try:
             while True:
-                provider = self._live.serving(agent)
-                queue = self._pending_by_agent.get(agent)
-                if provider is None or not queue:
+                queue = self._pending_by_thread.get(thread_id)
+                if not queue:
                     return
                 run_id = queue[0]
                 run = self._runs.get(run_id)
                 if run is None or run.cancel_requested:
                     queue.remove(run_id)
                     continue
+                provider = self._live.serving(run.agent)
+                if provider is None:
+                    return
                 capacity = self._capacity.get(provider.public_key)
                 if capacity is not None and not capacity.has_room:
                     return
@@ -518,7 +524,7 @@ class RunBroker:
                     queue.appendleft(run_id)
                     return
         finally:
-            self._draining.pop(agent, None)
+            self._draining.pop(thread_id, None)
 
     def _reserve(self, run: Run, provider: ConnectedProvider) -> None:
         """Takes `run`'s place on `provider` as the offer leaves.
@@ -587,7 +593,7 @@ class RunBroker:
           "full right now" are all this, and each counts against the
           provider's quality counters (`unanswered` or `misdeclared`). The
           run's place and its recorded status are both handed back, and
-          `_drain_agent` puts it at the head of the queue again.
+          `_drain_thread` puts it at the head of the queue again.
         - **"refused"** — permanent. The run is failed with the provider's
           own reason recorded verbatim and never re-offered.
 
@@ -806,14 +812,16 @@ class RunBroker:
         unserved when it arrived."""
         cutoff = datetime.now(timezone.utc) - timedelta(seconds=timeout_seconds)
         expired: list[str] = []
-        for agent, queue in list(self._pending_by_agent.items()):
-            if self._live.serving(agent) is not None:
-                continue
-            unserved_since = self._unserved_since.get(agent)
+        for queue in list(self._pending_by_thread.values()):
             for run_id in list(queue):
                 run = self._runs.get(run_id)
                 if run is None:
                     continue
+                # Read off the run rather than the queue's key: the clock this
+                # gives up on is the agent's, and the queue is now the thread's.
+                if self._live.serving(run.agent) is not None:
+                    continue
+                unserved_since = self._unserved_since.get(run.agent)
                 reference = (
                     max(run.queued_at, unserved_since) if unserved_since else run.queued_at
                 )
@@ -858,7 +866,7 @@ class RunBroker:
         if provider is None or provider.public_key != claimed_by:
             return False
 
-        queue = self._pending_by_agent.get(run.agent)
+        queue = self._pending_by_thread.get(run.thread_id)
         if queue is not None and run_id in queue:
             queue.remove(run_id)
 

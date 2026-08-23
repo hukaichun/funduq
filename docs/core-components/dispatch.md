@@ -64,9 +64,10 @@ protocol difference has already been erased.
 `RunBroker` keeps the live state in memory: a `Run` object per active
 run, a pending deque per agent, and a capacity bucket per provider
 (declared limit vs in-flight count). A sweep task wakes whenever work
-arrives or capacity frees, and makes sure every agent with pending runs
-has a **lane** draining it. One lane per agent, because the queue is per
-agent; the sweep itself never waits for a provider:
+arrives or capacity frees, and makes sure every conversation with pending
+runs has a **lane** handing them over. One lane per thread, because a
+thread is the one pipe whose delivery order funduq guarantees; the sweep
+itself never waits for a provider:
 
 1. **Offer.** The head of the agent's queue is offered to its attached
    connection — one awaited call carrying the claimed-run envelope,
@@ -83,9 +84,12 @@ agent; the sweep itself never waits for a provider:
    refused-permanently; timeouts and refusals are handled per
    [runs and cancels are requests](../mechanisms/requests.md).
 
-   The lane waits here, and only this agent's queue waits with it: the
-   head has to be answered before its own sibling is offered, and every
-   other agent is draining at the same time in a lane of its own. The
+   The lane waits here, and only this conversation waits with it: a
+   thread's utterances reach the provider in arrival order, because a
+   provider that takes turns can only take them in the order they reach
+   it. Every other conversation is handing over at the same time in a
+   lane of its own, including the other conversations of this same
+   agent. The
    run leaves the queue and takes its place on the provider as the offer
    goes out, is recorded `offering` for the length of the wait, and is
    handed back — place and status both — if the answer is not an
@@ -135,7 +139,7 @@ Exactly one place in the process offers a run to a provider: the
 broker's dispatch lane. `enqueue_run` and attaching a provider do not
 deliver anything — they set a flag that wakes the sweep, which starts
 lanes. The call that actually hands a run over has a single call site,
-and each agent's queue has exactly one lane draining it.
+and each conversation has exactly one lane draining it.
 
 That is an invariant, not a coincidence of the current code. Two callers
 racing to offer the same head run both plausibly succeed, and the run is
@@ -147,7 +151,7 @@ deliver on its own.
 
 Lanes running side by side do not weaken this. A lane takes the run off
 the queue before the offer leaves, and the run is nobody's to offer
-again until it comes back; a second lane for the same agent is never
+again until it comes back; a second lane for the same thread is never
 started while the first is alive. What the lanes share is the provider's
 capacity bucket, which is why a place is spent at dispatch — two lanes
 reading an in-flight count that only rises on acceptance would both find

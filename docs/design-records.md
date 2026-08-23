@@ -847,12 +847,30 @@ function applies every command about a run whichever owner is holding
 it. The reordering, and the flag tracking whether a lane had been
 started, both disappeared with it.
 
-One thing deliberately stayed serial: **a declined head must not be
-overtaken by its own sibling**, and nothing knows the head is declined
-until the provider says so. That is why the lane is per agent rather than
-per run — the queue is per agent, so the thing that drains it is too.
-Arrival order was already the one sequencing funduq owns, and it survived
-the change intact.
+One thing deliberately stayed serial, and getting its *unit* right took
+one more pass. The first answer was "per agent, because the queue is per
+agent" — which is the data structure justifying itself, and it is the
+same mistake one size down: two conversations with one agent still made
+each other wait, measured at 2.00s for a conversation that shared
+nothing with the slow one but its agent.
+
+The unit is the **thread**, because a thread is the pipe whose delivery
+order funduq guarantees, and nothing wider has an order at all. The
+reason funduq owes that order is worth stating exactly, because it is
+not pacing: a conversation can only be generating one turn at a time,
+resolving that is the agent's own scheduling, and **a provider that
+takes turns can only take them in the order things reach it.** Deliver
+two utterances of one conversation at once and its sequencing locks in
+an order nobody chose, invisibly. funduq owes sequence; the provider
+owns pacing.
+
+A test was measured against this and found not to hold its own claim.
+`test_a_declined_head_is_not_overtaken_by_its_sibling` said arrival
+order held the sibling back; what actually held it back was the capacity
+rule that treats a decline as reaching the provider's declared limit.
+Against a provider that declares no limit there was no such brake, and
+the test passed with per-run queues — that is, with no arrival order at
+all. It now uses an unlimited provider and asserts the whole order.
 
 An earlier attempt fixed only the cancel race, by arbitrating the run's
 status with a conditional UPDATE. It was abandoned: every fix needed

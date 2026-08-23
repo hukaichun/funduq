@@ -78,9 +78,9 @@ async def patient_broker():
 
 
 def _enqueue(broker: RunBroker, run_id: str, agent: AgentRef = AGENT, thread_id: str | None = None):
-    # Each run gets its own thread unless a test is about thread order:
-    # dispatch is one turn per thread at a time, and these tests exercise
-    # delivery and capacity, not the thread gate.
+    # Each run gets its own thread unless a test names one: a thread is the
+    # unit funduq hands over serially, and most of these tests are about
+    # delivery and capacity rather than about a conversation's order.
     return broker.enqueue_run(
         run_id, agent, thread_id or f"thread_{run_id}", {"messages": []}, "ag-ui", {}
     )
@@ -449,10 +449,15 @@ async def test_a_declined_head_is_not_overtaken_by_its_sibling(broker):
     """Arrival order is the one sequencing funduq does own: while the head of
     the queue stands declined, a later utterance of the same thread must not
     reach the provider first — offers resume (head first) as capacity
-    frees."""
+    frees.
+
+    The provider declares no limit on purpose. With a declared one, a decline
+    is additionally treated as reaching it, and *that* is what would hold the
+    sibling back — the test would pass without arrival order existing at all.
+    """
     from funduq.broker import FinishStream
 
-    provider = Recording(max_concurrent_runs=5, answers=[True, False, True, True])
+    provider = Recording(answers=[True, False, True, True])
     broker.register_provider({AGENT: provider})
     _enqueue(broker, "run_1", thread_id="thread_shared")
     _enqueue(broker, "run_2", thread_id="thread_shared")
@@ -463,9 +468,10 @@ async def test_a_declined_head_is_not_overtaken_by_its_sibling(broker):
     assert "run_3" not in provider.offered, "run_3 must not overtake the declined run_2"
 
     broker.push("run_1", FinishStream())
-    await _until(lambda: provider.offered == ["run_1", "run_2", "run_2"], timeout=2.0)
-    broker.push("run_2", FinishStream())
     await _until(lambda: "run_3" in provider.offered, timeout=2.0)
+    assert provider.offered == ["run_1", "run_2", "run_2", "run_3"], (
+        "the declined head is retried before its sibling is offered at all"
+    )
 
 
 async def test_a_paused_run_does_not_hold_back_its_siblings(broker):
@@ -639,3 +645,56 @@ async def test_a_provider_that_stopped_serving_while_answering_does_not_keep_the
 
     await _until(lambda: seen == ["claim", "fail"])
     assert patient_broker.quality()["pk_provider"].abandoned == 1
+
+
+async def test_two_conversations_with_one_agent_do_not_wait_for_each_other(patient_broker):
+    """A thread is the pipe whose delivery order funduq guarantees. An agent is
+    not a pipe: two of its conversations have no order between them, and a
+    provider slow to answer about one of them says nothing about the other.
+    Serializing per agent made Alice's 2s cost Bob 2s (funduq#164)."""
+    held = asyncio.Event()
+
+    class SlowAboutAlice(Recording):
+        async def deliver(self, run) -> bool:
+            self.offered.append(run.thread_id)
+            if run.thread_id == "chat_alice":
+                await held.wait()
+            return True
+
+    provider = SlowAboutAlice()
+    patient_broker.register_provider({AGENT: provider})
+    _enqueue(patient_broker, "run_alice", thread_id="chat_alice")
+    await _until(lambda: provider.offered == ["chat_alice"])
+
+    _enqueue(patient_broker, "run_bob", thread_id="chat_bob")
+    await _until(lambda: patient_broker.get("run_bob").is_claimed)
+
+    assert not patient_broker.get("run_alice").is_claimed
+    held.set()
+
+
+async def test_one_conversation_is_handed_over_one_utterance_at_a_time(patient_broker):
+    """The order funduq does owe: a provider that takes turns can only take
+    them in the order things reach it, so two utterances of the same thread are
+    never in flight to it at once. Handing both over together would let its own
+    sequencing lock in an order nobody chose."""
+    held = asyncio.Event()
+
+    class SlowAboutTheFirst(Recording):
+        async def deliver(self, run) -> bool:
+            self.offered.append(run.run_id)
+            if run.run_id == "run_1":
+                await held.wait()
+            return True
+
+    provider = SlowAboutTheFirst()
+    patient_broker.register_provider({AGENT: provider})
+    _enqueue(patient_broker, "run_1", thread_id="one_chat")
+    await _until(lambda: provider.offered == ["run_1"])
+
+    _enqueue(patient_broker, "run_2", thread_id="one_chat")
+    await asyncio.sleep(0.05)
+    assert provider.offered == ["run_1"], "the second utterance must not overtake the first"
+
+    held.set()
+    await _until(lambda: provider.offered == ["run_1", "run_2"])

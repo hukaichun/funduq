@@ -65,12 +65,33 @@ claim became true first, so it is applied first, and the handover
 between the two owners happens at the one moment there is nothing in
 flight to reorder.
 
-**Waiting for an answer holds up one agent's queue and nothing else.**
-It has to hold up that one: a declined head must not be overtaken by its
-own sibling, and nothing knows the head is declined until the provider
-says so. It used to hold up all of them, because one loop offered to one
-agent at a time — see [the design
+**Waiting for an answer holds up one conversation and nothing else.** A
+thread is the pipe whose delivery order funduq guarantees, so a thread's
+utterances go over one at a time, in the order they arrived. Everything
+wider hands over side by side: two conversations have no order between
+them even when they share an agent, a provider and a caller.
+
+The order matters because of who does the sequencing. funduq imposes no
+turn-taking — a provider decides whether to run a new utterance at once,
+hold it, or fold it into the turn in flight — but a provider that *does*
+take turns can only take them in the order things reach it. Deliver two
+utterances of one conversation at once and its own sequencing locks in
+an order nobody chose, invisibly. So funduq owes sequence, not pacing.
+
+It used to hold up everything, because one loop offered to one agent at
+a time — and then, briefly, one agent's whole roster of conversations,
+which was the same mistake at a smaller size. See [the design
 record](../design-records.md#dispatch-was-single-file-and-the-queue-it-blocked-was-everyones).
+
+!!! note "One active turn per conversation is the provider's to enforce"
+    A conversation can only be generating one turn at a time — that is a
+    property of the medium, not a rule funduq invented — and an
+    interjection is not a second turn but something injected into the
+    one in flight. Resolving that is the agent's own scheduling
+    ([`serialize_per_thread`](../sdks/provider-sdk.md) is the
+    off-the-shelf form), and funduq deliberately does not do it for
+    them. What funduq owes is that the utterances arrive in order for
+    that scheduling to be possible at all.
 
 ## Cancelling a run
 
