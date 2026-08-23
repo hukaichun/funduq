@@ -268,7 +268,9 @@ class A2AAdapter:
             await self._funduq.get_run_events(task_id),
         )
 
-    async def cancel_task(self, agent: AgentRef, task_id: str) -> pb.Task | None:
+    async def cancel_task(
+        self, agent: AgentRef, task_id: str, *, metadata: dict[str, Any] | None = None
+    ) -> pb.Task | None:
         """Asks the provider to stop and returns the task as it stands, marked with the
         pending request. None if `task_id` doesn't belong to `agent`; raises
         `TaskNotCancelableError` if it has already ended.
@@ -288,6 +290,13 @@ class A2AAdapter:
         what a2a-python does in the same place. Returning the finished task as
         though the cancel had been accepted is the same unreadable answer in a
         different disguise.
+
+        On a thread that bound an authority at birth, `metadata["cancel"]`
+        must carry a signature from one of the run's authorities
+        (`doors.authorize_cancel`). A2A has the slot for it —
+        `CancelTaskRequest` carries `metadata` even though it carries no
+        message — so nothing is invented here and a standard client can
+        send one.
         """
         run = await self._run_of(agent, task_id)
         if run is None:
@@ -296,7 +305,7 @@ class A2AAdapter:
             raise TaskNotCancelableError(
                 f"task {task_id} is already {run.status} and cannot be cancelled"
             )
-        asked = self._funduq.cancel_run(task_id)
+        asked = await self._funduq.cancel_run(task_id, metadata=metadata or {})
         current = await self._funduq.get_run(task_id) or run
         return build_task(
             task_id,

@@ -16,8 +16,10 @@ is the 64-char hex). Around it, builders for every payload the provider
 signs: registration and deletion (timestamped), the link-open connect
 proof (challenge-answered — `sign_connect` over the pinned funduq key,
 funduq's nonce, the provider's own nonce, and the names to serve, so the
-proof names its recipient and cannot be relayed to another funduq), and
-the per-call KYOK signature. Each builder is the independent twin of funduq's, and
+proof names its recipient and cannot be relayed to another funduq), the
+per-call KYOK signature, and the two singular acts on a bound thread's
+run — `sign_resolution` to answer its ask, `sign_cancel` to ask that it
+stop, each under its own tag so neither is ever the other. Each builder is the independent twin of funduq's, and
 reproduces the published vectors byte-for-byte, deterministic signatures
 included.
 

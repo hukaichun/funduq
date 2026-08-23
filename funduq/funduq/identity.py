@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from collections.abc import Callable
+
 import hashlib
 import time
 from dataclasses import dataclass
@@ -44,6 +46,7 @@ _CONNECT_PROVIDER = "funduq-connect-provider"
 _CONNECT_FUNDUQ = "funduq-connect-funduq"
 _DELEGATE = "funduq-delegate"
 _RESOLVE = "funduq-resolve"
+_CANCEL = "funduq-cancel"
 
 
 def _roster_registration_payload(tag: str, names: list[str], timestamp: int) -> bytes:
@@ -200,8 +203,69 @@ def resolve_signing_payload(run_id: str, timestamp: int) -> bytes:
     return f"{_RESOLVE}:{run_id}:{timestamp}".encode()
 
 
+def cancel_signing_payload(run_id: str, timestamp: int) -> bytes:
+    """The bytes an authority signs to ask that a run be stopped: "I ask this run to stop, now".
+
+    Same family as a resolution, for the same reason: cancelling is a
+    singular act with a 60s freshness window, not a repeated one needing a
+    challenge. A separate tag so a resolution signature can never be
+    replayed as a cancel, or the reverse.
+    """
+    return f"{_CANCEL}:{run_id}:{timestamp}".encode()
+
+
 class InvalidResolution(ValueError):
     pass
+
+
+class InvalidCancel(ValueError):
+    pass
+
+
+def _verify_signed_act(
+    proof: dict,
+    run_id: str,
+    payload_for: Callable[[str, int], bytes],
+    allowed_keys: set[str],
+    delegation: dict | None,
+    invalid: type[ValueError],
+    act: str,
+) -> str:
+    """Verifies one singular signed act against an authority set and returns the
+    effective authority.
+
+    `proof` is `{"publicKey", "timestamp", "signature"}`. With a delegation
+    certificate naming the signer, the certificate's authority is the
+    effective key — rights attach to the durable key and a session key is a
+    glove; otherwise the signer stands for itself. The effective key must be
+    in `allowed_keys`, and the timestamp inside the freshness window.
+
+    One function for resolving an ask and for cancelling a run, because they
+    are the same act with different words: prove you hold a key this run's
+    segment answers to, once, now. What keeps them apart is the payload's
+    own tag, so neither signature is ever the other.
+    """
+    try:
+        signer = proof["publicKey"]
+        timestamp = int(proof["timestamp"])
+        signature = proof["signature"]
+    except (KeyError, TypeError, ValueError) as e:
+        raise invalid(f"malformed {act} proof: {e}") from e
+    effective = signer
+    if delegation is not None:
+        authority = verify_delegation(delegation)
+        if delegation.get("delegatePublicKey") == signer:
+            effective = authority
+    if effective not in allowed_keys:
+        raise invalid(
+            f"the signer is not an authority for this run — neither its "
+            f"segment head nor its provider (cannot {act} it)"
+        )
+    if not is_timestamp_fresh(timestamp):
+        raise invalid(f"{act} timestamp outside the freshness window")
+    if not verify_signature(signer, signature, payload_for(run_id, timestamp)):
+        raise invalid(f"{act} signature does not verify")
+    return effective
 
 
 def verify_resolution(
@@ -212,35 +276,40 @@ def verify_resolution(
 ) -> str:
     """Verifies a resolution proof for a paused run and returns the effective authority.
 
-    `resolution` is `{"publicKey", "timestamp", "signature"}`: the signer
-    signed `resolve_signing_payload(run_id, timestamp)`. With a delegation
-    certificate naming the signer, the certificate's authority is the
-    effective key; otherwise the signer stands for itself. The effective key
-    must be in `allowed_keys` (the ask's authority set: the run's chain head
-    and the agent's own provider key). The timestamp is checked against the
-    60s freshness window. Raises `InvalidResolution` on any failure.
+    The signer signed `resolve_signing_payload(run_id, timestamp)`, and
+    `allowed_keys` is the ask's authority set: the run's chain head and the
+    agent's own provider key. Raises `InvalidResolution` on any failure.
     """
-    try:
-        signer = resolution["publicKey"]
-        timestamp = int(resolution["timestamp"])
-        signature = resolution["signature"]
-    except (KeyError, TypeError, ValueError) as e:
-        raise InvalidResolution(f"malformed resolution proof: {e}") from e
-    effective = signer
-    if delegation is not None:
-        authority = verify_delegation(delegation)
-        if delegation.get("delegatePublicKey") == signer:
-            effective = authority
-    if effective not in allowed_keys:
-        raise InvalidResolution(
-            "the resolver is not an authority for this ask — neither the run's "
-            "segment head nor its provider"
-        )
-    if not is_timestamp_fresh(timestamp):
-        raise InvalidResolution("resolution timestamp outside the freshness window")
-    if not verify_signature(signer, signature, resolve_signing_payload(run_id, timestamp)):
-        raise InvalidResolution("resolution signature does not verify")
-    return effective
+    return _verify_signed_act(
+        resolution, run_id, resolve_signing_payload,
+        allowed_keys, delegation, InvalidResolution, "resolve",
+    )
+
+
+def verify_cancel(
+    cancel: dict,
+    run_id: str,
+    allowed_keys: set[str],
+    delegation: dict | None = None,
+) -> str:
+    """Verifies a cancel proof for a run and returns the effective authority.
+
+    The signer signed `cancel_signing_payload(run_id, timestamp)`, and
+    `allowed_keys` is the run's authority set — the same one an ask on it
+    would have: its chain head and the agent's own provider key. Raises
+    `InvalidCancel` on any failure.
+
+    Stopping someone else's run is a rights question, not an addressing
+    one. A run id is an identifier, and [rule
+    zero](../../docs/design-records.md#rule-zero-identifiers-are-never-credentials)
+    says an identifier is never a credential — so possession of the id buys
+    nothing here, and what counts is a signature from a key the run's
+    segment answers to.
+    """
+    return _verify_signed_act(
+        cancel, run_id, cancel_signing_payload,
+        allowed_keys, delegation, InvalidCancel, "cancel",
+    )
 
 
 ACTOR_CHAIN_TTL_SECONDS = 300

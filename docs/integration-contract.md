@@ -37,9 +37,13 @@ a thread whose first run carries an actor chain binds the chain's head
 at birth — thereafter only the head or the serving provider may write
 to it, and a paused ask on a chained run is answered only with a
 signature from those keys (`metadata.resolution`, the
-`funduq-resolve:{run_id}:{timestamp}` payload; a session delegation
-certificate under `metadata.delegation` lets an ephemeral session key
-act for a durable one). A thread opened without a chain keeps the open
+`funduq-resolve:{run_id}:{timestamp}` payload), and **stopping one of
+its runs takes the same authority** (`metadata.cancel`, the
+`funduq-cancel:{run_id}:{timestamp}` payload — A2A's `CancelTaskRequest`
+carries `metadata` even though it carries no message, so a standard
+client has the slot). A session delegation certificate under
+`metadata.delegation` lets an ephemeral session key act for a durable
+one. A thread opened without a chain keeps the open
 behavior on this page forever — a later chained writer cannot lock it.
 The mechanics are in
 [Responsibility chains](mechanisms/responsibility-chains.md).
@@ -201,7 +205,7 @@ client author needs them.
 
 ## Where the inventions live
 
-What the plumbing actually is — the nine signed payload families, the
+What the plumbing actually is — the ten signed payload families, the
 link-open challenge, actor chains and what they do and do not prove — is
 [Identity is an Ed25519 keypair](mechanisms/identity.md) and
 [Actor chain](mechanisms/actor-chain.md). How to carry all of it over a

@@ -6,6 +6,7 @@ from pathlib import Path
 from funduq.identity import (
     agent_deletion_signing_payload,
     delegation_signing_payload,
+    cancel_signing_payload,
     resolve_signing_payload,
     provider_connect_signing_payload,
     funduq_connect_signing_payload,
@@ -34,6 +35,7 @@ BUILDERS = {
         i["delegate_public_key"], i["expires_at"]
     ),
     "resolution": lambda i: resolve_signing_payload(i["run_id"], i["timestamp"]),
+    "cancel": lambda i: cancel_signing_payload(i["run_id"], i["timestamp"]),
 }
 
 

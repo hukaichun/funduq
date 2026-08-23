@@ -166,7 +166,21 @@ dispatcher = JsonRpcDispatcher(
 agent's, which is what the handler interface means by not-found; the
 dispatcher turns it into the right error for the binding. An id the
 caller sent that names nothing at all raises A2A's own
-`TaskNotFoundError`, for the same reason.
+`TaskNotFoundError`, for the same reason. `cancel_task` on a task that
+has already ended raises `TaskNotCancelableError`, which is what A2A's
+own server does there.
+
+**Pass `CancelTaskRequest.metadata` through.** A run on a thread that
+bound an authority at birth can only be stopped by one of that thread's
+authorities, and the proof — a signature over
+`funduq-cancel:{run_id}:{timestamp}` — rides in that field. A2A's cancel
+carries no message, but it does carry request metadata, so nothing is
+invented and a standard client has somewhere to put it. Drop the field
+and every cancel on a bound thread is refused; forge nothing, because
+funduq verifies the signature, not the envelope. A cancel that carries
+no authority for a bound run raises funduq's own `InvalidCancel` —
+alongside `InvalidResolution` and `InvalidActorChain`, the family A2A
+has no word for at all.
 
 Caller mistakes come back in A2A's words too — an unknown `contextId`,
 one belonging to another agent, a `kyok` opt-in naming an offering that

@@ -153,10 +153,18 @@ thread is never retroactively locked against its own opener.
   unbound thread, today's behavior stands unchanged.
 - **Answering is authority.** A paused ask records, at pause time, its
   authority set from its run's chain: {segment head, the provider's own
-  key}. A resolution is signed over `funduq-resolve:{ask_id}:{sha256 of
-  the answer}` — the ask's funduq-minted, single-use id is the nonce, so
-  no challenge round-trip exists to lose; replay hits an ask already
-  consumed. Who resolved, under whose authority, is recorded.
+  key}. A resolution is signed over
+  `funduq-resolve:{run_id}:{timestamp}` — a singular act, so the
+  timestamp family, checked against the 60s window; the status-guarded
+  reopen consumes the signature with the win. Who resolved, under whose
+  authority, is recorded.
+- **Stopping is the same authority.** Asking a provider to stop one of a
+  bound thread's runs takes a signature from that same set, over
+  `funduq-cancel:{run_id}:{timestamp}` — its own tag, so a resolution
+  can never be spent as a cancel. It is the same question asked twice:
+  who does this run's segment answer to? Left outside at first, which
+  meant a complete stranger holding the run id could stop your run — and
+  a run id is an identifier, never a credential.
 - **Reading a known id stays open at the core.** Locking reads at the
   door would gate confidentiality funduq cannot actually deliver (the
   database is readable by its operator; real secrecy is encryption,
@@ -173,7 +181,7 @@ thread is never retroactively locked against its own opener.
 
 ## The complete invention list
 
-Three signed-payload families and two enforcement points; nothing else.
+Three signed-payload families and three enforcement points; nothing else.
 
 1. **Hop** — `{actorPublicKey, prevHash, iat, exp}`, signed. Exists
    (minus `subject`). The chain's growth is the responsibility
@@ -184,7 +192,8 @@ Three signed-payload families and two enforcement points; nothing else.
    Disclosure's channel.
 
 Enforcement: copy the segment head onto asks and threads at their
-birth; filter discovery by segment. No funduq-authored summary exists
+birth; check a resolution and a stop request against the set that copy
+recorded; filter discovery by segment. No funduq-authored summary exists
 anywhere in the design: the chain reaches the agent as the caller's own
 words, and everything else — who is a user, where break points are, who
 may answer — is derived from where signatures actually reached.

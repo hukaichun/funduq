@@ -23,7 +23,7 @@ Two live rosters, one shared substrate.
 
 ## Contract and identity
 
-Core's side of every signature: verification of the nine payload
+Core's side of every signature: verification of the ten payload
 families, link-open challenges, funduq's own signing identity, the actor
 chain verifier, and the envelope models — each with an independent twin
 in the SDKs and byte vectors pinning both.

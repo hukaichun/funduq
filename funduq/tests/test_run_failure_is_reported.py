@@ -386,7 +386,7 @@ async def test_a_provider_that_is_merely_quiet_keeps_its_run(settings: CoreSetti
         assert (await funduq.get_run(handle.run_id)).status == "running"
         assert funduq.broker.quality()[identity.public_key].abandoned == 0
 
-        assert funduq.cancel_run(handle.run_id) is True
+        assert await funduq.cancel_run(handle.run_id) is True
         await _until(lambda: handle.run_id not in funduq.active_runs())
     finally:
         if runtime is not None:
@@ -437,7 +437,7 @@ async def test_a_provider_that_delivers_nothing_is_counted_not_cut_off(settings:
             "and it is the observed counter, not the certain one"
         )
 
-        funduq.cancel_run(handle.run_id)
+        await funduq.cancel_run(handle.run_id)
         await _until(lambda: handle.run_id not in funduq.active_runs())
     finally:
         if runtime is not None:

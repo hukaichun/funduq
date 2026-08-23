@@ -10,12 +10,15 @@ open behavior — the whole mechanism is opt-in by carrying a chain.
 
 from __future__ import annotations
 
+import asyncio
+
 import pytest
 
 from funduq import repo
 from funduq.errors import ThreadMembershipRequired
-from funduq.identity import InvalidResolution
+from funduq.identity import InvalidCancel, InvalidResolution
 from funduq.protocols.a2a import A2AAdapter
+from funduq.protocols.a2a_translate import CANCEL_REQUESTED_METADATA_KEY
 
 from tests.conftest import EchoAgent
 
@@ -313,3 +316,131 @@ async def test_the_agui_door_guards_a_chained_resume_the_same_way(funduq, serve,
     )
     final = [e async for e in resumed.events]
     assert any(e.get("type") == "RUN_FINISHED" for e in final)
+
+
+class _NeverFinishes:
+    """Starts and then waits, so a cancel meets a run that is genuinely live."""
+
+    async def run_stream(self, agent_name: str, run_input):
+        yield {"type": "RUN_STARTED", "threadId": run_input.thread_id, "runId": run_input.run_id}
+        await asyncio.Event().wait()
+
+
+async def _live_bound_run(funduq, serve, head):
+    """A live run on a thread that bound `head` at birth, plus the provider serving it."""
+    served = await serve(_NeverFinishes(), "bound")
+    agent = served.agents["bound"]
+    stream = await A2AAdapter(funduq).send_task_streaming(
+        agent, _message("go"), actor_chain=[head.sign_chain_hop()]
+    )
+    opening = await stream.__anext__()
+    return agent, opening.id, served.identity
+
+
+def _was_asked_to_stop(task) -> bool:
+    """The cancel landed. Deliberately not a state assertion: what these are
+    about is whether the request was accepted at all, and the state it comes
+    back in depends on how far the run had got."""
+    return CANCEL_REQUESTED_METADATA_KEY in task.metadata
+
+
+def _proof(identity, run_id):
+    signature, timestamp = identity.sign_cancel(run_id)
+    return {
+        "cancel": {
+            "publicKey": identity.public_key,
+            "timestamp": timestamp,
+            "signature": signature,
+        }
+    }
+
+
+async def test_holding_a_run_id_is_not_a_right_to_stop_a_bound_threads_run(
+    funduq, serve, new_identity
+):
+    """Writing a bound thread became a membership act; stopping its run was
+    left outside, so a complete stranger holding the run id could still ask
+    the provider to stop. A run id is an identifier, and identifiers are
+    never credentials."""
+    head, stranger = new_identity(), new_identity()
+    agent, run_id, _provider = await _live_bound_run(funduq, serve, head)
+    a2a = A2AAdapter(funduq)
+
+    with pytest.raises(InvalidCancel):
+        await a2a.cancel_task(agent, run_id)
+
+    with pytest.raises(InvalidCancel):
+        await a2a.cancel_task(agent, run_id, metadata=_proof(stranger, run_id))
+
+    # Being able to speak on the thread is not the same as being its authority.
+    with pytest.raises(InvalidCancel):
+        await a2a.cancel_task(
+            agent, run_id, metadata={"actorChain": [stranger.sign_chain_hop()]}
+        )
+
+
+async def test_a_resolution_signature_is_not_a_cancel_signature(funduq, serve, new_identity):
+    """Separate tags, so a signature collected for one act can never be spent
+    as the other — the head answering its own ask does not thereby hand
+    anyone the power to stop its runs."""
+    head = new_identity()
+    agent, run_id, _provider = await _live_bound_run(funduq, serve, head)
+
+    signature, timestamp = head.sign_resolution(run_id)
+    with pytest.raises(InvalidCancel):
+        await A2AAdapter(funduq).cancel_task(
+            agent,
+            run_id,
+            metadata={
+                "cancel": {
+                    "publicKey": head.public_key,
+                    "timestamp": timestamp,
+                    "signature": signature,
+                }
+            },
+        )
+
+
+async def test_the_runs_own_authorities_may_stop_it(funduq, serve, new_identity):
+    """The same authority set an ask on the run would have — its segment head
+    and the agent's own provider — because it is the same question asked
+    twice: who does this run's segment answer to?"""
+    head = new_identity()
+    agent, run_id, provider = await _live_bound_run(funduq, serve, head)
+
+    by_head = await A2AAdapter(funduq).cancel_task(agent, run_id, metadata=_proof(head, run_id))
+    assert _was_asked_to_stop(by_head)
+
+    other_head = new_identity()
+    agent2, run_2, provider2 = await _live_bound_run(funduq, serve, other_head)
+    by_provider = await A2AAdapter(funduq).cancel_task(
+        agent2, run_2, metadata=_proof(provider2, run_2)
+    )
+    assert _was_asked_to_stop(by_provider)
+
+
+async def test_an_unbound_run_is_still_anyones_to_stop(funduq, serve, new_identity):
+    """The mechanism is opt-in by carrying a chain, same as every other part
+    of it. A thread that named no authority at birth has none to check
+    against, and inventing one here would make funduq the authority instead
+    of the caller."""
+    served = await serve(_NeverFinishes(), "open")
+    agent = served.agents["open"]
+    stream = await A2AAdapter(funduq).send_task_streaming(agent, _message("go"))
+    opening = await stream.__anext__()
+
+    cancelled = await A2AAdapter(funduq).cancel_task(agent, opening.id)
+
+    assert _was_asked_to_stop(cancelled)
+
+
+async def test_the_facade_asks_the_same_question_as_the_door(funduq, serve, new_identity):
+    """One check, wherever the cancel came in. A serving layer reaching past
+    the A2A door for `cancel_run` would otherwise be the bypass."""
+    head = new_identity()
+    _agent, run_id, _provider = await _live_bound_run(funduq, serve, head)
+
+    with pytest.raises(InvalidCancel):
+        await funduq.cancel_run(run_id)
+
+    assert await funduq.cancel_run(run_id, metadata=_proof(head, run_id)) is True

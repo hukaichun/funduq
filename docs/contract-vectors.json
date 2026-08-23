@@ -105,6 +105,16 @@
       },
       "payload_utf8": "funduq-resolve:run_2c26b46b68ffc68ff99b453c:1755500000",
       "signature_hex": "c110a243a4d706870deb428555f6225d7f299088a4f54577b2099eb4bf76fe398b37ebe628671956b77ad6f3d82a7caf8136d5bad743b9b0768b65ed72ee6c08"
+    },
+    {
+      "kind": "cancel",
+      "note": "the bytes an authority signs to ask that a run be stopped. Same family as a resolution \u2014 a singular operation, so the timestamp is checked against the 60s freshness window \u2014 under its own tag, so neither signature is ever the other. Possession of the run id buys nothing: stopping someone else's run is a rights question, and this signature is the right.",
+      "inputs": {
+        "run_id": "run_2c26b46b68ffc68ff99b453c",
+        "timestamp": 1755500000
+      },
+      "payload_utf8": "funduq-cancel:run_2c26b46b68ffc68ff99b453c:1755500000",
+      "signature_hex": "34bf99fe56bcdf2e831258395302608b72fd3e85e76cdb395e5d71e6b213956396758a7b0f6f8260f7cbc2b6b7fb6570c1dab2c71c093c42f273681273d50504"
     }
   ],
   "wire": [

@@ -358,6 +358,42 @@ So the defense now has three layers, each aimed at the verb
 This is a strengthening, not a loosening: the noun scan could never see a
 dependency dialing out on its own, the audit hook can.
 
+### Stopping someone else's run was the one right nobody had to prove
+
+Writing a bound thread became a membership act and answering its ask took
+a signature, and **cancel was left outside both**. The reason it was left
+outside is worth keeping, because it was a good reason applied to the
+wrong question: the two-entrance taxonomy deliberately puts cancel
+outside, since it is neither an utterance nor a deferred result. But
+that is about *entrances to a conversation*, not about rights. A stranger
+stopping your run is the same family as a stranger writing into your
+thread, and the run id — an identifier, and [never a
+credential](#rule-zero-identifiers-are-never-credentials) — was the only
+thing it took.
+
+The authority set is the one an ask on the same run would have: its
+segment head and the agent's own provider. Not a new rule, the same
+question asked twice — who does this run's segment answer to? The proof
+is a signature over `funduq-cancel:{run_id}:{timestamp}`, its own tag so
+a resolution can never be spent as a cancel, and possession of a private
+key rather than a chain hop anyone downstream could replay.
+
+Two things checked rather than assumed. The issue said A2A's cancel had
+nowhere to carry a proof, having no message; the descriptor says
+`CancelTaskRequest` carries `metadata`, so a standard client has the
+slot and nothing is invented. And the guard sits where the resolution
+guard sits — at the door, shared — so `Funduq.cancel_run` asks the same
+question as the A2A adapter rather than being the way around it. That
+made the facade method async, which is the honest cost of it having a
+question to ask.
+
+An unbound run stays anyone's to stop. The mechanism is opt-in by
+carrying a chain, like every other part of it: a thread that named no
+authority at birth has none to check against, and inventing one would
+make funduq the authority instead of the caller.
+
+funduq#151.
+
 ### Saying it in a vocabulary the other side has is not the same as lying
 
 funduq will not record an outcome it has not observed, and A2A has no

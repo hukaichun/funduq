@@ -27,6 +27,7 @@ from funduq.config import CoreSettings
 from funduq.doors import (
     InboundRun,
     PendingAsk,
+    authorize_cancel,
     dispatch,
     offline_events,
     open_run,
@@ -1062,7 +1063,23 @@ class Funduq:
             ),
         )
 
-    def cancel_run(self, run_id: str) -> bool:
+    async def cancel_run(self, run_id: str, *, metadata: dict[str, Any] | None = None) -> bool:
+        """Asks the run's provider to stop, after checking whoever asked may.
+
+        On a thread that bound an authority at birth, `metadata["cancel"]`
+        must carry a signature from one of the run's authorities — see
+        `doors.authorize_cancel`, which is the same check every door makes,
+        and raises `InvalidCancel` otherwise. An unbound run needs nothing,
+        which is the behaviour every run had before.
+
+        Returns False for a run funduq is no longer tracking — it has
+        already ended, and there is nobody left to ask.
+        """
+        async with self.session() as session:
+            stored = await repo.get_run(session, run_id)
+        if stored is None:
+            return False
+        authorize_cancel(stored, metadata or {})
         return self.broker.request_cancel(run_id)
 
 

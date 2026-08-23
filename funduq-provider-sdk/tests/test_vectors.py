@@ -14,7 +14,7 @@ from funduq_provider_sdk import (
     registration_payload,
     verify_signature,
 )
-from funduq_provider_sdk import delegation_payload, resolve_payload
+from funduq_provider_sdk import cancel_payload, delegation_payload, resolve_payload
 
 VECTORS = json.loads((Path(__file__).parent.parent.parent / "docs" / "contract-vectors.json").read_text())
 
@@ -28,6 +28,7 @@ BUILDERS = {
     "funduq-connect": lambda i: funduq_connect_payload(i["funduq_nonce"], i["provider_nonce"]),
     "delegation": lambda i: delegation_payload(i["delegate_public_key"], i["expires_at"]),
     "resolution": lambda i: resolve_payload(i["run_id"], i["timestamp"]),
+    "cancel": lambda i: cancel_payload(i["run_id"], i["timestamp"]),
 }
 
 
