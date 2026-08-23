@@ -78,6 +78,18 @@ take turns can only take them in the order things reach it. Deliver two
 utterances of one conversation at once and its own sequencing locks in
 an order nobody chose, invisibly. So funduq owes sequence, not pacing.
 
+And the only thing that can say "this one came first" is that its answer
+came back first. An offer is an independent call carrying no position,
+and [the transport contract](../writing-a-transport.md) promises no
+ordering — nor could funduq define one to promise, since two offers it
+issues concurrently reach the wire in whatever order their own work
+finishes. **What makes this cheap is that the answer is a receipt.** A
+provider decides accept / full / never from what it already knows when
+the run lands; the provider SDK's runtime does not await at all on that
+path. So the wait is one round-trip, not the agent's work, and it is
+spent only when a second utterance of the same conversation is already
+waiting — which means it arrived faster than a round-trip.
+
 It used to hold up everything, because one loop offered to one agent at
 a time — and then, briefly, one agent's whole roster of conversations,
 which was the same mistake at a smaller size. See [the design

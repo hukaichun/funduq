@@ -49,7 +49,22 @@ class FunduqLink(ABC):
 
     @abstractmethod
     async def offer(self, run: DeliveredRun) -> bool | Refusal:
-        """Accept (`True`), decline transiently (`False` — full right now), or refuse permanently (`Refusal`)."""
+        """Accept (`True`), decline transiently (`False` — full right now), or refuse permanently (`Refusal`).
+
+        **Answer from your own state, never from the agent's.** Whether the
+        run was received, whether there is room for it, and whether its input
+        is valid are all known the moment it arrives; none of them requires
+        asking the agent anything. This answer is a receipt, not a report of
+        progress — `ProviderRuntime.deliver` does not await at all, and a
+        link that waits for the agent to start would turn a round-trip into
+        the agent's startup time.
+
+        That matters because of what funduq does with it: the next utterance
+        of the *same conversation* is held until this answer lands, which is
+        how a thread's delivery order survives a transport that guarantees
+        none. Nothing else waits — other conversations, other agents and
+        other providers hand over meanwhile.
+        """
         pass
 
     @abstractmethod

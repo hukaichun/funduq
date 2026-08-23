@@ -256,3 +256,43 @@ async def test_the_runtime_hands_every_run_to_the_agent_as_it_arrives():
         )
     finally:
         await runtime.aclose()
+
+
+async def test_the_ack_answers_from_the_transports_own_state_never_the_agents():
+    """`offer` is a receipt, and funduq depends on that timing: it holds the
+    next utterance of the same conversation until this answer lands, which is
+    the only thing that can say which of two offers came first. Received,
+    room, valid — all known when the run lands, none of them a question for
+    the agent.
+
+    Asserted by driving the coroutine one step: it must finish on the first
+    one, having awaited nothing. An agent that never yields anything is
+    running underneath, so a runtime that consulted it would hang here rather
+    than answer.
+    """
+    from funduq_provider_sdk import AgentHandle, HandleProvider, ProviderIdentity, ProviderRuntime
+
+    started = asyncio.Event()
+
+    async def never_finishes(run_input: RunAgentInput):
+        started.set()
+        await asyncio.Event().wait()
+        yield  # pragma: no cover - unreachable, and what makes this a generator
+
+    runtime = ProviderRuntime(
+        ProviderIdentity.generate(), HandleProvider([AgentHandle("a", never_finishes)])
+    )
+    runtime.start()
+    try:
+        coro = runtime.deliver(DeliveredRun.from_claimed(
+            _ClaimedRun("r-1", "a", _run_agent_input(), "t-1")
+        ))
+        try:
+            coro.send(None)
+        except StopIteration as answered:
+            assert answered.value is True
+        else:
+            coro.close()
+            pytest.fail("deliver awaited something before answering")
+    finally:
+        await runtime.aclose(cancel_in_flight=True)

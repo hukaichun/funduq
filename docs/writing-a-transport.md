@@ -111,6 +111,23 @@ re-creates a bug funduq already had — runs re-offered forever, reading as
 `queued` from every vantage point while only the provider's log knew the
 truth. Whatever framing you choose, all three values must survive it.
 
+**The answer is a receipt, and it must come from your own state.**
+Whether the run arrived, whether there is room for it, and whether its
+input is valid are all known the moment it lands; none of them requires
+asking the agent anything. Answer then — the provider SDK's own runtime
+does not await at all on this path, and the agent's code is nowhere near
+it.
+
+This is the one timing funduq depends on. It holds the next utterance of
+the *same conversation* until this answer lands, which is how a thread's
+delivery order survives a transport that guarantees none — and there is
+no such guarantee to lean on instead: an offer is an independent call
+with no position in it, so the only thing that can say "this one came
+first" is that its answer came back first. A link that waits for the
+agent to start turns that round-trip into the agent's startup time.
+Nothing wider than the conversation waits: other threads, other agents
+and other providers hand over meanwhile.
+
 Everything else about how the answer travels is yours: framing,
 correlation, backpressure, reconnect policy. funduq asks a question and
 reads an answer; it has no opinion on the envelope.

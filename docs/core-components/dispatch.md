@@ -51,8 +51,11 @@ merged, refused, or dropped.
 ## The translation: A2A becomes AG-UI before dispatch
 
 Both doors converge on one function that builds the AG-UI
-`RunAgentInput` the provider will see: thread id, run id, the folded
-message history, and `forwardedProps` — the caller's free-form slot plus
+`RunAgentInput` the provider will see: thread id, run id, **this run's
+own messages** — what the caller just said, appended to the thread's
+record on the way past, not the thread's accumulated history (an AG-UI
+client sends the conversation it holds; an A2A `message/send` carries
+one message and funduq adds nothing to it) — and `forwardedProps` — the caller's free-form slot plus
 funduq's own two additions (`caller`, `kyok`), built by a single shared
 builder so a run's identity props are byte-identical whichever protocol
 dispatched it. An agent therefore becomes A2A-callable without its
