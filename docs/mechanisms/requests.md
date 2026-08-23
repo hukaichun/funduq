@@ -220,6 +220,16 @@ what A2A's own server does in the same place. Returning the finished
 task as though the request had been accepted is the same unreadable
 answer in a different disguise.
 
+**And a stranger cannot ask at all, on a thread that named an
+authority.** Stopping someone else's run is a rights question, so a run
+on a [bound thread](responsibility-chains.md) takes a signature from the
+same set an ask on it would — its segment head or the agent's own
+provider — over `funduq-cancel:{run_id}:{timestamp}`, carried in
+`metadata.cancel`. A run id is an identifier and identifiers are never
+credentials; holding one used to be enough. An unbound run stays
+anyone's to stop, because a thread that named no authority has none to
+check against.
+
 While a run is cancel-requested, a KYOK completion call naming it is
 refused. funduq stops funding work it has been asked to stop, which is the
 one consequence a cancel has that does not depend on the provider
@@ -245,6 +255,7 @@ would read it is the one who asked.
 
 Why this is shaped the way it is, and what it was shaped like first:
 
+- [Stopping someone else's run was the one right nobody had to prove](../design-records.md#stopping-someone-elses-run-was-the-one-right-nobody-had-to-prove)
 - [Saying it in a vocabulary the other side has is not the same as lying](../design-records.md#saying-it-in-a-vocabulary-the-other-side-has-is-not-the-same-as-lying)
 - [An offer's answer is a receipt, and arrives promptly](../design-records.md#an-offers-answer-is-a-receipt-and-arrives-promptly)
 - [Dispatch was single-file, and the queue it blocked was everyone's](../design-records.md#dispatch-was-single-file-and-the-queue-it-blocked-was-everyones)

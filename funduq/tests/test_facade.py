@@ -119,14 +119,14 @@ async def test_cancel_a_running_agent(funduq, new_identity, attach):
     stream = handle.events()
     assert (await anext(stream))["type"] == "RUN_STARTED"
 
-    assert funduq.cancel_run(handle.run_id) is True
+    assert await funduq.cancel_run(handle.run_id) is True
     assert [e async for e in stream] == []
     await _until(lambda: handle.run_id not in funduq.active_runs())
 
     run = await funduq.get_run(handle.run_id)
     assert run.status == "cancelled"
 
-    assert funduq.cancel_run(handle.run_id) is False
+    assert await funduq.cancel_run(handle.run_id) is False
 
 
 class StubbornProvider:
@@ -156,7 +156,7 @@ async def test_a_worker_that_ignores_the_cancel_still_completes(funduq, new_iden
     handle = await funduq.start_run(agent_id, {"messages": []})
     await _until(lambda: provider.taken == [handle.run_id])
 
-    funduq.cancel_run(handle.run_id)
+    await funduq.cancel_run(handle.run_id)
     assert funduq.broker.get(handle.run_id).cancel_requested is True
     await _until(lambda: provider.asked_to_stop == [handle.run_id])
     funduq.report_event(
@@ -193,7 +193,7 @@ async def test_a_cancel_before_any_provider_takes_the_run(funduq, new_identity, 
     handle = await funduq.start_run(agent_id, {"messages": []})
     assert (await funduq.get_run(handle.run_id)).status == "queued"
 
-    assert funduq.cancel_run(handle.run_id) is True
+    assert await funduq.cancel_run(handle.run_id) is True
     await _until(lambda: handle.run_id not in funduq.active_runs())
 
     cancelled = await funduq.get_run(handle.run_id)

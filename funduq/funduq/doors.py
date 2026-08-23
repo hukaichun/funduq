@@ -9,7 +9,12 @@ from ag_ui.core import RunErrorEvent, RunStartedEvent
 
 from funduq.agui import build_run_agent_input
 from funduq.errors import InvalidRunInput, LlmProviderNotFound
-from funduq.identity import verify_actor_chain, verify_delegation, verify_resolution
+from funduq.identity import (
+    verify_actor_chain,
+    verify_cancel,
+    verify_delegation,
+    verify_resolution,
+)
 from funduq.kyok import KyokBinding, KyokOptIn, parse_kyok_opt_in, strip_kyok_context
 from funduq.models import AgentRef
 from funduq.props import RESERVED_METADATA_KEYS, build_forwarded_props
@@ -23,6 +28,7 @@ __all__ = [
     "InboundRun",
     "Opened",
     "PendingAsk",
+    "authorize_cancel",
     "dispatch",
     "offline_events",
     "open_run",
@@ -215,6 +221,39 @@ class Opened:
     run_id: str
     starting_seq: int
     landed_on_ask: bool
+
+
+def authorize_cancel(run: Any, metadata: dict[str, Any]) -> None:
+    """Refuses a cancel that carries no authority over a run whose thread is bound.
+
+    Stopping someone else's run is a rights question, and it was left
+    outside when writing a bound thread became a membership act: a complete
+    stranger holding the run id could still ask the provider to stop.
+    A run id is an identifier, and identifiers are never credentials.
+
+    The authority set is the one an ask on the same run would have — the
+    run's segment head and the agent's own provider key — because the two
+    are the same question asked twice: who does this run's segment answer
+    to? The proof is a signature over
+    `identity.cancel_signing_payload(run_id, timestamp)`, which is
+    possession of a private key rather than a chain hop anyone downstream
+    could replay.
+
+    **An unbound run stays open**, exactly as it is today. The whole
+    mechanism is opt-in by carrying a chain: a thread that named no
+    authority at birth has none to check against, and inventing one here
+    would make funduq the authority instead of the caller.
+
+    Raises `InvalidCancel`; a no-op for an unbound run.
+    """
+    if run.head_key is None:
+        return
+    verify_cancel(
+        metadata.get("cancel") or {},
+        run.run_id,
+        {run.head_key, run.provider_key},
+        metadata.get("delegation"),
+    )
 
 
 async def open_run(

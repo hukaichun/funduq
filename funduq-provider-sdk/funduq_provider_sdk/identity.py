@@ -121,6 +121,19 @@ def resolve_payload(run_id: str, timestamp: int) -> bytes:
     return f"funduq-resolve:{run_id}:{timestamp}".encode()
 
 
+def cancel_payload(run_id: str, timestamp: int) -> bytes:
+    """The bytes an authority signs to ask that a run be stopped. The independent twin of
+    `funduq.identity.cancel_signing_payload`; `timestamp` is checked against funduq's 60s
+    freshness window.
+
+    Its own tag, not the resolution's, so neither signature is ever the
+    other. On a thread that bound an authority at birth, funduq refuses a
+    cancel without one of these — holding the run id is not a right to stop
+    the run.
+    """
+    return f"funduq-cancel:{run_id}:{timestamp}".encode()
+
+
 def funduq_connect_payload(funduq_nonce: str, provider_nonce: str) -> bytes:
     """Builds the bytes funduq signs to prove itself to a connecting provider.
 
@@ -204,6 +217,17 @@ class ProviderIdentity:
         consumes the signature with the win."""
         timestamp = int(time.time()) if timestamp is None else timestamp
         return self.sign(resolve_payload(run_id, timestamp)), timestamp
+
+    def sign_cancel(self, run_id: str, timestamp: int | None = None) -> tuple[str, int]:
+        """Signs a request that a run be stopped: `(signature, timestamp)` over
+        `cancel_payload(run_id, timestamp)`. Singular operation, timestamp family — funduq
+        checks the timestamp against its 60s freshness window.
+
+        Needed only for a run whose thread bound an authority at birth; an
+        unbound run is cancellable by anyone who can address it, as before.
+        """
+        timestamp = int(time.time()) if timestamp is None else timestamp
+        return self.sign(cancel_payload(run_id, timestamp)), timestamp
 
     def sign_hop(
         self, prev_token: str | None = None, ttl: int = ACTOR_CHAIN_TTL_SECONDS
