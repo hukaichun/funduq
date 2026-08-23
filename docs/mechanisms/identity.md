@@ -12,22 +12,39 @@ fingerprint is an error, not a merge. funduq has a keypair of its own
 pin the funduq it means to serve and detect an imposter before producing
 anything worth stealing.
 
-## Everything that changes the roster is signed
+## What changes the roster is an open link
 
-Seven payload families, each under its own domain tag so a captured
+Three payload families, each under its own domain tag so a captured
 signature for one purpose can never be replayed as another:
 
 | domain tag | signed by | authorizes |
 |---|---|---|
-| `funduq-register` | agent provider | registering agent names |
-| `funduq-register-llm` | LLM provider | registering model offerings |
-| `funduq-delete-agent` | agent provider | deleting one agent record |
-| `funduq-delete-llm` | LLM provider | deleting one offering record |
-| `funduq-kyok-call` | agent provider | one KYOK completion call |
 | `funduq-connect-provider` | connecting provider | opening a link |
 | `funduq-connect-funduq` | funduq | answering a link-open |
+| `funduq-kyok-call` | agent provider | one KYOK completion call |
 
-Registration and deletion sign over a timestamp inside a freshness
+**Registering and deleting are not on that list, and used to be.** Four
+families signed them — one per roster, one per verb — each re-proving
+with a self-chosen timestamp that the caller held a key. But the key was
+already proved, once, when the link opened: the handshake is a session
+in everything but name, and those four were re-proving what it
+established. They are operations on the open link now, and nothing signs
+them.
+
+Two things went with them. The agent card was never in a registration's
+signed bytes, so a captured signature could re-register the same names
+with a different card — there is no detached signature left to splice
+one onto. And `funduq-connect-provider` no longer binds the names to be
+served: they were in there so a captured proof could not be replayed to
+serve a different agent, and a ticket issued to one key cannot be
+replayed at all.
+
+The KYOK call keeps its own signature because it is a different channel
+— the agent provider calling *in*, not riding its own outbound link —
+and it is the one payload that hashes the request body into the
+signature, which is what a paid call deserves.
+
+The KYOK call signs over a timestamp inside a freshness
 window. Link-open does not: a self-chosen timestamp is replayable for its
 whole window by anyone on the path, so opening a link answers a
 **challenge the verifier chose** — funduq mints a single-use nonce, the

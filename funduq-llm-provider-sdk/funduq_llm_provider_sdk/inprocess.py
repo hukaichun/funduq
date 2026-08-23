@@ -33,16 +33,17 @@ class InProcessLLMProvider(FunduqLLMLink):
         return self._identity.public_key
 
     def sign_connect(
-        self, funduq_public_key: str, funduq_nonce: str, provider_nonce: str, names: list[str]
+        self, funduq_public_key: str, funduq_nonce: str, provider_nonce: str
     ) -> str:
-        """Sign the link-open proof, bound to the pinned funduq key — refusing, before any
-        signature leaves, a funduq claiming a different key than the pin."""
+        """Sign the link-open proof against the ticket funduq issued to this key, bound to
+        the pinned funduq key — refusing, before any signature leaves, a funduq claiming a
+        different key than the pin."""
         if self._funduq_public_key is not None and funduq_public_key != self._funduq_public_key:
             raise WrongFunduq(
                 f"this link is pinned to '{self._funduq_public_key}', "
                 f"not the funduq claiming '{funduq_public_key}'"
             )
-        return self._identity.sign_connect(funduq_public_key, funduq_nonce, provider_nonce, names)
+        return self._identity.sign_connect(funduq_public_key, funduq_nonce, provider_nonce)
 
     def confirm_connect(self, funduq_nonce: str, provider_nonce: str, answer: str | None) -> None:
         """Verify funduq's answering signature against `funduq_public_key`, raising `WrongFunduq` on a miss; a no-op when no key was pinned."""

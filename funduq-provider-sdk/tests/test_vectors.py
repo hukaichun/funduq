@@ -9,9 +9,7 @@ from funduq_provider_sdk import (
     ProviderIdentity,
     provider_connect_payload,
     funduq_connect_payload,
-    deletion_payload,
     kyok_call_payload,
-    registration_payload,
     verify_signature,
 )
 from funduq_provider_sdk import cancel_payload, delegation_payload, resolve_payload
@@ -19,11 +17,9 @@ from funduq_provider_sdk import cancel_payload, delegation_payload, resolve_payl
 VECTORS = json.loads((Path(__file__).parent.parent.parent / "docs" / "contract-vectors.json").read_text())
 
 BUILDERS = {
-    "agent-registration": lambda i: registration_payload(i["names"], i["timestamp"]),
-    "agent-deletion": lambda i: deletion_payload(i["agent_name"], i["timestamp"]),
     "kyok-call": lambda i: kyok_call_payload(i["bearer"], i["timestamp"], i["body_sha256_hex"]),
     "provider-connect": lambda i: provider_connect_payload(
-        i["funduq_public_key"], i["funduq_nonce"], i["provider_nonce"], i["names"]
+        i["funduq_public_key"], i["funduq_nonce"], i["provider_nonce"]
     ),
     "funduq-connect": lambda i: funduq_connect_payload(i["funduq_nonce"], i["provider_nonce"]),
     "delegation": lambda i: delegation_payload(i["delegate_public_key"], i["expires_at"]),

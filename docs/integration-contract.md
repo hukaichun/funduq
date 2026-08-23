@@ -205,7 +205,7 @@ client author needs them.
 
 ## Where the inventions live
 
-What the plumbing actually is — the ten signed payload families, the
+What the plumbing actually is — the six signed payload families, the
 link-open challenge, actor chains and what they do and do not prove — is
 [Identity is an Ed25519 keypair](mechanisms/identity.md) and
 [Actor chain](mechanisms/actor-chain.md). How to carry all of it over a

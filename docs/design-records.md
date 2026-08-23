@@ -358,6 +358,63 @@ So the defense now has three layers, each aimed at the verb
 This is a strengthening, not a loosening: the noun scan could never see a
 dependency dialing out on its own, the audit hook can.
 
+### Four signature families were re-proving what the handshake already established
+
+Adding a *tenth* signed payload family prompted an inventory of the nine
+already there, and two of them turned out to sign less than they looked
+like they did: a registration covered the names and **not the agent
+card**, so a captured signature could re-register the same names with a
+card of the attacker's choosing.
+
+But the interesting question was why those families existed. Because
+there was no session — every roster operation re-proved *I hold this
+key* with a self-chosen timestamp, since nothing remembered it was
+already proved. It **was** already proved: `attach` ran a real handshake
+with a funduq-issued, single-use, consumed nonce and then trusted the
+connection object for its whole life. That is a session in everything
+but name, used only for serving runs.
+
+And the two halves were already one act split in two. `attach` refused
+names that were not registered ("register before attaching, in-process
+or not"), so the order was forced; `register` already had a *live* side
+effect, withdrawing names omitted from the batch, so it was already half
+an attach.
+
+What replaced them:
+
+1. **A ticket, over a channel that is not the link, naming the key it
+   admits.** Issuing is the admission decision — a key with no ticket
+   cannot connect at all — which funduq had no equivalent of. It cannot
+   be fetched over the link: that would mean the link existed before
+   anything authorised it, so core keeps the verb off the link's
+   operation set.
+2. **The handshake spends the ticket** — matching the named key
+   *before* destroying it. The old code popped the nonce before checking
+   the signature, so anyone who had merely seen a live challenge could
+   burn it with garbage and leave the provider unable to connect. That
+   needs no key at all.
+3. **funduq answers with its own signature**, unchanged. It is the half
+   that protects the provider, and the reason funduq has a keypair.
+4. **Registering and deleting are operations on the open link**,
+   unsigned. Nothing signs the card because there is no detached
+   signature left to splice one onto.
+5. **Not registered is offline.** A link serves exactly what it last
+   published.
+6. **An agent with a thread behind it cannot be deleted** — one guard
+   where there were three. "A provider is serving it" cannot block when
+   the caller *is* that provider.
+
+Ten families became six; the identity and roster code lost 49
+statements net. The `names` field left the connect payload too: it was
+there so a captured proof could not be replayed to serve a different
+agent, and a single-use ticket naming one key cannot be replayed at all.
+
+The cost is stated rather than hidden: the ticket store and the live
+roster are both one process's memory. That was already true; this makes
+it total and explicit, and sharing it is the horizontal-scaling
+question, not this one.
+
+funduq#170.
 ### Stopping someone else's run was the one right nobody had to prove
 
 Writing a bound thread became a membership act and answering its ask took

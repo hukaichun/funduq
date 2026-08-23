@@ -7,6 +7,8 @@ import time
 from pathlib import Path
 
 import pytest
+
+from tests.conftest import publish_offline
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
 from funduq.changes import RosterChanged, RunStatusChanged
@@ -18,10 +20,7 @@ FUNDUQ_PACKAGE = Path(__file__).resolve().parent.parent / "funduq"
 
 async def _register(funduq: Funduq, name: str = "echo"):
     identity = ProviderIdentity.generate()
-    signature, timestamp = identity.sign_registration([name])
-    registration = await funduq.register_agents(
-        identity.public_key, signature, timestamp, [{"name": name}]
-    )
+    registration = await publish_offline(funduq, identity, [{"name": name}])
     return registration.agents[name], identity
 
 
@@ -37,17 +36,24 @@ async def _until(predicate, timeout: float = 5.0) -> None:
             await asyncio.sleep(0.005)
 
 
-async def test_registering_and_attaching_both_change_the_roster(funduq: Funduq, attach) -> None:
+async def test_publishing_changes_the_roster_and_opening_a_link_does_not(
+    funduq: Funduq, attach
+) -> None:
+    """Opening a link puts nothing on the roster — it proves a key and
+    nothing else. Publishing is the act that changes what anyone can see,
+    and taking the link down is the act that changes it back."""
+    agent, identity = await _register(funduq)
     seen: list = []
     funduq.on_change(seen.append)
 
-    agent, identity = await _register(funduq)
+    runtime, link = await attach(identity, _Provider(), [])
+    assert seen == [], "a link with nothing published changes no roster"
+
+    await funduq.register_agents(link, [{"name": agent.name}])
     assert seen == [RosterChanged()]
 
-    await attach(identity, _Provider(), [agent.name])
     funduq.detach_all_for(agent.provider_key)
-
-    assert seen == [RosterChanged(), RosterChanged(), RosterChanged()]
+    assert seen == [RosterChanged(), RosterChanged()]
 
 
 async def test_a_run_reports_every_status_it_moves_through(funduq: Funduq, attach) -> None:
@@ -105,11 +111,14 @@ async def test_unsubscribing_stops_it(funduq: Funduq) -> None:
     seen: list = []
     unsubscribe = funduq.on_change(seen.append)
 
+    # Two changes per registration: publishing puts it on the roster, and
+    # closing the link takes it off again — which is the only way to reach
+    # registered-but-offline now.
     await _register(funduq, "first")
     unsubscribe()
     await _register(funduq, "second")
 
-    assert seen == [RosterChanged()]
+    assert seen == [RosterChanged(), RosterChanged()]
 
 
 async def test_a_subscriber_that_raises_does_not_break_the_thing_that_notified_it(
@@ -127,7 +136,7 @@ async def test_a_subscriber_that_raises_does_not_break_the_thing_that_notified_i
     agent, _ = await _register(funduq)
 
     assert agent
-    assert survivor == [RosterChanged()]
+    assert survivor == [RosterChanged(), RosterChanged()]
     assert "on_change subscriber raised" in caplog.text
 
 

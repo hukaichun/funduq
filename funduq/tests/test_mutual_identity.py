@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import pytest
+
+from tests.conftest import publish_agents, publish_offline
 from funduq_provider_sdk import ProviderIdentity
 
 from funduq.config import CoreSettings
@@ -144,8 +146,7 @@ def test_a_provider_pinning_one_funduq_rejects_another(settings: CoreSettings):
 
 
 async def _register(funduq: Funduq, identity: ProviderIdentity, name: str) -> None:
-    signature, timestamp = identity.sign_registration([name])
-    await funduq.register_agents(identity.public_key, signature, timestamp, [{"name": name}])
+    await publish_offline(funduq, identity, [{"name": name}])
 
 
 def _link(funduq: Funduq, identity: ProviderIdentity, **kwargs):
@@ -163,14 +164,14 @@ async def test_attach_answers_and_the_in_process_link_verifies_it(settings: Core
         identity = ProviderIdentity.generate()
         await _register(funduq, identity, "mutual")
 
-        challenge = funduq.issue_connect_challenge()
-        proof = identity.sign_connect(funduq.identity_public_key, challenge, "pn", ["mutual"])
+        ticket = funduq.issue_ticket(identity.public_key)
+        proof = identity.sign_connect(funduq.identity_public_key, ticket, "pn")
         answer = await funduq.attach_provider(
-            _link(funduq, identity), ["mutual"], challenge=challenge, provider_nonce="pn", proof=proof
+            _link(funduq, identity), ticket=ticket, provider_nonce="pn", proof=proof
         )
 
         assert answer is not None
-        assert sdk_verify(funduq.identity_public_key, answer, funduq_connect_payload(challenge, "pn"))
+        assert sdk_verify(funduq.identity_public_key, answer, funduq_connect_payload(ticket, "pn"))
     finally:
         await funduq.aclose()
 
@@ -185,7 +186,7 @@ async def test_a_pinning_link_refuses_the_wrong_funduq(settings: CoreSettings):
         elsewhere = ProviderIdentity.generate().public_key
 
         with pytest.raises(WrongFunduq):
-            await funduq.attach_provider(
+            await publish_agents(funduq, 
                 _link(funduq, identity, funduq_public_key=elsewhere), ["wary"]
             )
         from funduq.models import AgentRef
@@ -203,13 +204,13 @@ async def test_an_identityless_funduq_answers_nothing_and_only_a_pin_objects(set
         identity = ProviderIdentity.generate()
         await _register(funduq, identity, "trusting")
 
-        answer = await funduq.attach_provider(_link(funduq, identity), ["trusting"])
+        answer = await funduq.attach_provider(_link(funduq, identity))
         assert answer is None
         funduq.detach_all_for(identity.public_key)
 
         pinned = ProviderIdentity.generate().public_key
         with pytest.raises(WrongFunduq):
-            await funduq.attach_provider(
+            await publish_agents(funduq, 
                 _link(funduq, identity, funduq_public_key=pinned), ["trusting"]
             )
     finally:
@@ -224,15 +225,14 @@ async def test_a_proof_bound_to_another_funduq_is_refused(settings: CoreSettings
         identity = ProviderIdentity.generate()
         await _register(funduq, identity, "relayed")
 
-        challenge = funduq.issue_connect_challenge()
+        ticket = funduq.issue_ticket(identity.public_key)
         the_funduq_it_meant = ProviderIdentity.generate().public_key
-        proof = identity.sign_connect(the_funduq_it_meant, challenge, "pn", ["relayed"])
+        proof = identity.sign_connect(the_funduq_it_meant, ticket, "pn")
 
         with pytest.raises(InvalidRegistration, match="invalid connect proof"):
             await funduq.attach_provider(
                 _link(funduq, identity),
-                ["relayed"],
-                challenge=challenge,
+                ticket=ticket,
                 provider_nonce="pn",
                 proof=proof,
             )

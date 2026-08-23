@@ -37,10 +37,6 @@ def is_timestamp_fresh(timestamp: int) -> bool:
     return abs(time.time() - timestamp) <= SIGNATURE_FRESHNESS_WINDOW_SECONDS
 
 
-_REGISTER = "funduq-register"
-_REGISTER_LLM = "funduq-register-llm"
-_DELETE_AGENT = "funduq-delete-agent"
-_DELETE_LLM = "funduq-delete-llm"
 _KYOK_CALL = "funduq-kyok-call"
 _CONNECT_PROVIDER = "funduq-connect-provider"
 _CONNECT_FUNDUQ = "funduq-connect-funduq"
@@ -49,76 +45,36 @@ _RESOLVE = "funduq-resolve"
 _CANCEL = "funduq-cancel"
 
 
-def _roster_registration_payload(tag: str, names: list[str], timestamp: int) -> bytes:
-    """One payload shape for registering a roster of served names: sorted (order-independent), joined with `timestamp`, under a domain `tag`.
-
-    The tag is what keeps the payload spaces apart — a signature for one
-    roster (or a deletion order) must not be replayable as another.
-    `funduq_provider_sdk.identity.roster_registration_payload` computes this
-    same shape independently on the provider side and both must agree
-    byte-for-byte.
-    """
-    return f"{tag}:{','.join(sorted(names))}:{timestamp}".encode()
-
-
-def registration_signing_payload(agent_names: list[str], timestamp: int) -> bytes:
-    """Builds the canonical bytes a provider must sign to prove it holds the key it registers with: `_roster_registration_payload` under the agent tag."""
-    return _roster_registration_payload(_REGISTER, agent_names, timestamp)
-
-
-def llm_registration_signing_payload(names: list[str], timestamp: int) -> bytes:
-    """Builds the canonical bytes an LLM provider must sign to register `names`: `_roster_registration_payload` under the LLM tag.
-
-    `funduq_llm_provider_sdk` computes this same payload independently on the
-    provider side and both must agree byte-for-byte.
-    """
-    return _roster_registration_payload(_REGISTER_LLM, names, timestamp)
-
-
-def agent_deletion_signing_payload(agent_name: str, timestamp: int) -> bytes:
-    """Builds the canonical bytes a provider must sign to authorize deleting one of its agents.
-
-    Uses a distinct domain tag from `registration_signing_payload` so a
-    captured registration signature can't be replayed to delete the agent.
-    """
-    return f"{_DELETE_AGENT}:{agent_name}:{timestamp}".encode()
-
-
-def llm_deletion_signing_payload(name: str, timestamp: int) -> bytes:
-    """Builds the canonical bytes an LLM provider must sign to authorize deleting one of its offerings.
-
-    The LLM mirror of `agent_deletion_signing_payload`, under its own domain
-    tag for the same reason. `funduq_llm_provider_sdk.llm_deletion_payload`
-    computes this same payload independently on the provider side and both
-    must agree byte-for-byte.
-    """
-    return f"{_DELETE_LLM}:{name}:{timestamp}".encode()
-
-
 def provider_connect_signing_payload(
-    funduq_public_key: str, funduq_nonce: str, provider_nonce: str, names: list[str]
+    funduq_public_key: str, funduq_nonce: str, provider_nonce: str
 ) -> bytes:
     """Builds the canonical bytes a provider signs to authenticate opening a link.
 
-    Freshness is the verifier's: `funduq_nonce` is chosen by the funduq being
-    connected to, so a recorded exchange is worthless to whoever recorded
-    it. `provider_nonce` is the provider's own challenge for funduq's answering
-    proof, and the names the provider intends to serve are bound in (sorted,
-    order-independent) so they cannot be altered in flight.
+    Freshness is the verifier's: `funduq_nonce` is a ticket funduq issued to
+    this provider's key and destroys on use, so a recorded exchange is
+    worthless to whoever recorded it — and a ticket that leaks is worthless
+    too, since only the key it names can sign this. `provider_nonce` is the
+    provider's own challenge for funduq's answering proof.
     `funduq_public_key` names the recipient: the funduq the provider means to
     connect to (its pinned key; empty string for a funduq with no identity),
     so a proof handed to one funduq cannot be relayed to attach at another —
     the verifying funduq builds this payload with its *own* key and a
     mismatch fails the signature. The role in the domain tag keeps this
-    proof and funduq's from ever being the same bytes, and the tag keeps it
-    unmistakable for a registration or deletion.
+    proof and funduq's answering one from ever being the same bytes.
+
+    **What the provider will serve is not in here**, and does not need to
+    be: the names were bound in when the ticket was an anonymous nonce
+    anyone could answer, so that a captured proof could not be replayed to
+    serve a different agent. A single-use ticket naming one key cannot be
+    replayed at all. Opening a link and putting a name live are two acts
+    now, and the second one happens on the open link.
+
     `funduq_provider_sdk.identity.provider_connect_payload` computes this same
     payload independently on the provider side and both must agree
     byte-for-byte.
     """
     return (
-        f"{_CONNECT_PROVIDER}:{funduq_public_key}:{funduq_nonce}:{provider_nonce}:"
-        f"{','.join(sorted(names))}".encode()
+        f"{_CONNECT_PROVIDER}:{funduq_public_key}:{funduq_nonce}:{provider_nonce}".encode()
     )
 
 

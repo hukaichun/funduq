@@ -7,9 +7,8 @@ import pytest
 
 from openai.types.chat import ChatCompletionChunk
 
-from funduq.identity import kyok_call_signing_payload, llm_registration_signing_payload
+from funduq.identity import kyok_call_signing_payload
 from funduq_provider_sdk.identity import kyok_call_payload
-from funduq_llm_provider_sdk import llm_registration_payload
 from funduq.models import AgentRef, LlmRef
 from funduq.protocols.kyok import collapse_stream
 from funduq.kyok import (
@@ -37,12 +36,6 @@ def test_a_kyok_call_signs_what_it_is_for():
 def test_both_sides_state_the_kyok_signing_payload_the_same_way():
     assert kyok_call_payload("tok", 1755300000, "cafe") == kyok_call_signing_payload(
         "tok", 1755300000, "cafe"
-    )
-
-
-def test_both_sides_state_the_llm_registration_payload_the_same_way():
-    assert llm_registration_payload(["smart", "fast"], 1755300000) == (
-        llm_registration_signing_payload(["fast", "smart"], 1755300000)
     )
 
 

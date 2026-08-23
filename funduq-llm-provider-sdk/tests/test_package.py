@@ -10,25 +10,11 @@ from funduq_llm_provider_sdk import (
     DeliveredCompletion,
     InProcessLLMProvider,
     ProviderIdentity,
-    llm_registration_payload,
-    sign_llm_registration,
 )
 
 
 def test_delivered_completion_fields_match_contract():
     assert set(DeliveredCompletion.model_fields) == DELIVERED_COMPLETION_FIELDS
-
-
-def test_llm_registration_payload_states_its_operation_and_sorts_names():
-    payload = llm_registration_payload(["smart", "fast"], 1755300000).decode()
-    assert payload == "funduq-register-llm:fast,smart:1755300000"
-
-
-def test_sign_llm_registration_returns_signature_over_its_own_timestamp():
-    identity = ProviderIdentity.generate()
-    signature, timestamp = sign_llm_registration(identity, ["gpt4"], 1755300000)
-    assert timestamp == 1755300000
-    assert isinstance(signature, str) and len(signature) == 128
 
 
 @dataclass(frozen=True)

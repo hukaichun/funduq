@@ -17,6 +17,8 @@ import asyncio
 
 import pytest
 
+from tests.conftest import publish_agents, publish_offline
+
 from a2a.types import a2a_pb2 as pb
 
 from funduq import repo
@@ -268,17 +270,14 @@ async def tight(settings):
 
     async def _serve(provider, name):
         identity = ProviderIdentity.generate()
-        signature, timestamp = identity.sign_registration([name])
-        registration = await funduq.register_agents(
-            identity.public_key, signature, timestamp, [{"name": name}]
-        )
+        registration = await publish_offline(funduq, identity, [{"name": name}])
         # One run at a time: with the provider's capacity full, further
         # utterances stay in funduq's own buffer — which is what these tests
         # bound. (funduq itself imposes no turn-taking.)
         runtime = ProviderRuntime(identity, provider, max_concurrent_runs=1)
         runtimes.append(runtime)
         runtime.start()
-        await funduq.attach_provider(InProcessLink(funduq, runtime), [name])
+        await publish_agents(funduq, InProcessLink(funduq, runtime), [name])
         return registration.agents[name]
 
     funduq.serve_one = _serve

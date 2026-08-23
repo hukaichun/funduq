@@ -10,13 +10,15 @@ gateway would.
 
 from __future__ import annotations
 
+from tests.conftest import publish_agents, publish_llm, publish_offline
+
 import asyncio
 import json
 
 from ag_ui.core import RunAgentInput, UserMessage
 from openai.types.chat import ChatCompletionChunk
 
-from funduq_llm_provider_sdk import DeliveredCompletion, sign_llm_registration
+from funduq_llm_provider_sdk import DeliveredCompletion
 from funduq_provider_sdk import (
     AgentHandle,
     DeliveredRun,
@@ -42,12 +44,12 @@ class WireLink:
         self.max_concurrent_runs = runtime.max_concurrent_runs
 
     def sign_connect(
-        self, funduq_public_key: str, funduq_nonce: str, provider_nonce: str, names: list[str]
+        self, funduq_public_key: str, funduq_nonce: str, provider_nonce: str
     ) -> str:
         # the claimed funduq key, the challenge and the proof all cross as bytes too
         relayed_key = funduq_public_key.encode().decode()
         relayed = funduq_nonce.encode().decode()
-        return self._runtime.identity.sign_connect(relayed_key, relayed, provider_nonce, names)
+        return self._runtime.identity.sign_connect(relayed_key, relayed, provider_nonce)
 
     async def deliver(self, run) -> bool | Refusal:
         frame = DeliveredRun.from_claimed(run).model_dump_json(by_alias=True).encode()
@@ -84,15 +86,12 @@ async def test_a_run_travels_as_byte_frames_end_to_end(funduq):
         yield {"type": "RUN_FINISHED", **ids}
 
     identity = ProviderIdentity.generate()
-    signature, timestamp = identity.sign_registration(["wired"])
-    registration = await funduq.register_agents(
-        identity.public_key, signature, timestamp, [{"name": "wired"}]
-    )
+    registration = await publish_offline(funduq, identity, [{"name": "wired"}])
     runtime = ProviderRuntime(identity, HandleProvider([AgentHandle("wired", agent)]))
     runtime.start()
     link = WireLink(funduq, runtime)
     try:
-        await funduq.attach_provider(link, ["wired"])
+        await publish_agents(funduq, link, ["wired"])
 
         stream = await AGUIAdapter(funduq).run(
             registration.agents["wired"],
@@ -126,9 +125,9 @@ class WireLLMLink:
         self.public_key = identity.public_key
 
     def sign_connect(
-        self, funduq_public_key: str, funduq_nonce: str, provider_nonce: str, names: list[str]
+        self, funduq_public_key: str, funduq_nonce: str, provider_nonce: str
     ) -> str:
-        return self._identity.sign_connect(funduq_public_key, funduq_nonce, provider_nonce, names)
+        return self._identity.sign_connect(funduq_public_key, funduq_nonce, provider_nonce)
 
     def complete(self, request: CompletionRequest):
         frame = DeliveredCompletion.from_request(request).model_dump_json(by_alias=True).encode()
@@ -158,10 +157,8 @@ class WireLLMLink:
 
 async def test_a_completion_travels_as_byte_frames(funduq):
     identity = ProviderIdentity.generate()
-    signature, timestamp = sign_llm_registration(identity, ["wire-model"])
-    await funduq.register_llm_providers(identity.public_key, signature, timestamp, ["wire-model"])
     link = WireLLMLink(identity)
-    await funduq.attach_llm_provider(link, ["wire-model"])
+    await publish_llm(funduq, link, ["wire-model"])
 
     ref = LlmRef(provider_key=identity.public_key, name="wire-model")
     serving = funduq.kyok_relay.serving(ref)

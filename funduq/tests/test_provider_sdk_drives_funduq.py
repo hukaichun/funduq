@@ -4,6 +4,8 @@ import asyncio
 
 import pytest
 
+from tests.conftest import publish_agents, publish_offline
+
 from funduq_provider_sdk import InProcessLink, AgentHandle, HandleProvider, ProviderIdentity, ProviderRuntime
 
 from funduq import repo
@@ -26,10 +28,7 @@ async def runtimes():
 
 async def _attach(funduq, runtimes, agents: dict, **kwargs) -> ProviderIdentity:
     identity = ProviderIdentity.generate()
-    signature, timestamp = identity.sign_registration(list(agents))
-    await funduq.register_agents(
-        identity.public_key, signature, timestamp, [{"name": n} for n in agents]
-    )
+    await publish_offline(funduq, identity, [{"name": n} for n in agents])
     runtime = ProviderRuntime(
         identity,
         HandleProvider([AgentHandle(name, fn) for name, fn in agents.items()]),
@@ -37,7 +36,7 @@ async def _attach(funduq, runtimes, agents: dict, **kwargs) -> ProviderIdentity:
     )
     runtimes.append(runtime)
     runtime.start()
-    await funduq.attach_provider(InProcessLink(funduq, runtime), list(agents))
+    await publish_agents(funduq, InProcessLink(funduq, runtime), list(agents))
     return identity
 
 

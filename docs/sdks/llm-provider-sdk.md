@@ -11,10 +11,10 @@ is constructed here). No transport, no funduq, same fitness test.
 
 ## Identity and signing
 
-`sign_llm_registration` / `llm_registration_payload` and their deletion
-counterparts — the offering roster's payloads, distinct domain tags from
-the agent family, twins of funduq's builders, vector-pinned. Connect
-authentication reuses the shared `sign_connect`.
+No payloads of its own. The offering roster's registration and deletion
+used to be two signed families here; they are operations on the open
+link now, and the link's own `sign_connect` — shared with the agent SDK
+— is the only thing this package signs.
 
 ## The port and the worker
 

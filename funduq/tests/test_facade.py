@@ -4,6 +4,8 @@ import asyncio
 
 import pytest
 
+from tests.conftest import publish_agents, publish_offline
+
 from funduq import repo
 from funduq.core import Funduq
 from funduq.errors import NoPendingAsk
@@ -58,10 +60,7 @@ async def _register(funduq, name: str, identity) -> str:
 
 
 async def _register_with_token(funduq, name: str, identity):
-    body = identity.register_body([{"name": name}])
-    return await funduq.register_agents(
-        body["public_key"], body["signature"], body["timestamp"], body["agents"]
-    )
+    return await publish_offline(funduq, identity, [{"name": name}])
 
 
 async def _until(predicate, timeout: float = 1.0) -> None:
@@ -151,7 +150,7 @@ async def test_a_worker_that_ignores_the_cancel_still_completes(funduq, new_iden
     registration = await _register_with_token(funduq, "stubborn", identity)
     agent_id = registration.agents["stubborn"]
     provider = StubbornProvider(identity)
-    await funduq.attach_provider(provider, ["stubborn"])
+    await publish_agents(funduq, provider, ["stubborn"])
 
     handle = await funduq.start_run(agent_id, {"messages": []})
     await _until(lambda: provider.taken == [handle.run_id])
