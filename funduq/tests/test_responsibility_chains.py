@@ -23,6 +23,7 @@ from funduq.protocols.a2a_translate import CANCEL_REQUESTED_METADATA_KEY
 from tests.conftest import EchoAgent
 
 from a2a.types import a2a_pb2 as pb
+from a2a.utils.errors import TaskNotCancelableError
 
 COMPLETED = pb.TaskState.TASK_STATE_COMPLETED
 INPUT_REQUIRED = pb.TaskState.TASK_STATE_INPUT_REQUIRED
@@ -377,6 +378,33 @@ async def test_holding_a_run_id_is_not_a_right_to_stop_a_bound_threads_run(
         await a2a.cancel_task(
             agent, run_id, metadata={"actorChain": [stranger.sign_chain_hop()]}
         )
+
+
+async def test_a_stranger_is_refused_before_being_told_a_run_is_uncancellable(
+    funduq, serve, new_identity
+):
+    """A paused run cannot be cancelled, and a caller with no authority over
+    it must not learn that from the refusal.
+
+    `cancel_run` checks authority first and cancellability second, and the
+    order is the point: "not cancellable" names the run's state, and telling
+    a stranger holding nothing but the id which state a bound run is in is
+    the same leak rule zero is about. The head gets the state; the stranger
+    gets the door.
+    """
+    head, stranger = new_identity(), new_identity()
+    agent = (await serve(AskingAgent(), "asker")).agents["asker"]
+    a2a = A2AAdapter(funduq)
+
+    paused = await a2a.send_task(agent, _message("go"), actor_chain=[head.sign_chain_hop()])
+    assert paused.status.state == INPUT_REQUIRED
+
+    with pytest.raises(InvalidCancel):
+        await a2a.cancel_task(agent, paused.id, metadata=_proof(stranger, paused.id))
+
+    # The head holds the authority, so it gets the real answer.
+    with pytest.raises(TaskNotCancelableError):
+        await a2a.cancel_task(agent, paused.id, metadata=_proof(head, paused.id))
 
 
 async def test_a_resolution_signature_is_not_a_cancel_signature(funduq, serve, new_identity):

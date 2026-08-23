@@ -115,6 +115,29 @@ still queued: no provider has it, so there is no outcome funduq could be
 pre-empting. The same rule holds everywhere: statuses are observations,
 not intentions.
 
+**A paused run is refused, not cancelled.** `input-required` means the
+provider's stream ended on a question, so there is no provider working on
+the run and nothing to relay the request to. `Funduq.cancel_run` raises
+`RunNotCancellable` and the A2A door answers `TaskNotCancelableError`,
+A2A's own word for a task that will not reach `CANCELED`. It used to
+answer `False` — the value that means "already ended, nobody left to ask"
+— about a run that had not ended, and A2A handed the task back unchanged
+with no pending-cancel marker, so the caller could not tell its request
+from never having sent one.
+
+Deciding not to answer a pause is a real thing to want, and it is **not
+this verb**: asking a worker to stop and giving up on an answer you owe
+are different acts by different parties. funduq has no verb for the
+second yet, and letting a cancel stand in for it would settle a run
+funduq observed nothing about. Until there is one, the deadline on a
+pause is `paused_timeout_seconds` (off by default), which fails the run
+as `paused_no_resume`.
+
+The authority check runs **before** the refusal, for the same reason
+every other door check is ordered that way: "not cancellable" names the
+run's state, and a stranger holding nothing but the run id does not get
+to learn it.
+
 ## What a run's final status is
 
 One funnel settles every run that reached a provider

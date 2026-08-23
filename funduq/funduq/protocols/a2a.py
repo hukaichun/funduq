@@ -18,6 +18,7 @@ from funduq.errors import (
     AgentNotFound,
     InvalidRunInput,
     LlmProviderNotFound,
+    RunNotCancellable,
     ThreadNotFound,
     ThreadOwnershipMismatch,
 )
@@ -291,6 +292,15 @@ class A2AAdapter:
         though the cancel had been accepted is the same unreadable answer in a
         different disguise.
 
+        So does a run that is **paused**, which is the same refusal reached by
+        the opposite road: `input-required` is not terminal, so it used to
+        fall past the check above and out through a `cancel_run` that answered
+        False, and the caller got its task back unchanged with no marker on
+        it. Not terminal is not the same as cancellable — funduq relays a
+        cancel to whoever is working on the run, and nobody is. `TaskNotCancelableError`
+        is A2A's own word for it: a2a-python raises exactly this when the task
+        did not end up `CANCELED`, so nothing is invented here either.
+
         On a thread that bound an authority at birth, `metadata["cancel"]`
         must carry a signature from one of the run's authorities
         (`doors.authorize_cancel`). A2A has the slot for it —
@@ -305,7 +315,10 @@ class A2AAdapter:
             raise TaskNotCancelableError(
                 f"task {task_id} is already {run.status} and cannot be cancelled"
             )
-        asked = await self._funduq.cancel_run(task_id, metadata=metadata or {})
+        try:
+            asked = await self._funduq.cancel_run(task_id, metadata=metadata or {})
+        except RunNotCancellable as e:
+            raise TaskNotCancelableError(str(e)) from e
         current = await self._funduq.get_run(task_id) or run
         return build_task(
             task_id,

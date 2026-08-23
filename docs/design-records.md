@@ -864,6 +864,42 @@ stopped deciding on the provider's behalf.
 See [Runs and cancels are requests](mechanisms/requests.md) →
 [full record](https://github.com/hukaichun/funduq/blob/d78d0638c0ec2126167240c62471651b5468d35b/design/library-architecture.md#cancelling-a-request-with-the-outcome-decided-later)
 
+### A cancel with nobody to ask answered "too late"
+
+`cancel_run` returned `False` for any run the broker was no longer
+tracking, documented as "it has already ended, and there is nobody left
+to ask". A paused run is not tracked either — the broker forgets a run
+when its stream ends, and a pause *is* the end of the provider's stream —
+so a caller asking to stop a run that was still waiting got the word for
+"too late", with no way to tell the two apart.
+
+Through A2A it was worse. `input-required` is not terminal, so it fell
+past the already-ended branch and out through that `False`, and
+`cancel_task` returned the task unchanged, at the same state, with no
+pending-cancel marker. A cancel that reads exactly like never having
+asked is the failure the terminal branch exists to prevent, reached from
+the other side.
+
+Probed, before the fix: `cancel_run -> False`, status still
+`input-required`, `cancel_task -> TASK_STATE_INPUT_REQUIRED, metadata {}`.
+
+The fix states the fact instead: **not terminal is not the same as
+cancellable.** Cancelling here means relaying the request to whoever is
+working on the run, and a paused run has nobody working on it. Core
+raises `RunNotCancellable`; the A2A door quotes `TaskNotCancelableError`,
+which is what a2a-python raises when a task will not reach `CANCELED`.
+
+What was deliberately *not* built: an abandon verb. Deciding not to
+answer a pause is the answering party giving up, a different act by a
+different party than asking a worker to stop, and folding it into cancel
+would make a cancel settle a run funduq has observed nothing about. The
+same reasoning keeps `cancelling` → `input-required` legal: a provider
+answering a cancel with "are you sure?" has not stopped, and recording
+that it did would be the outcome-invention this repo already threw a
+design away over.
+
+See [Runs and cancels are requests](mechanisms/requests.md).
+
 ### KYOK replaced two designs, both failing for one reason
 
 **Session rendezvous**: the caller minted a session id and the token

@@ -265,3 +265,45 @@ async def test_cancelling_a_task_that_already_ended_is_refused_in_a2as_words(fun
 
     with pytest.raises(TaskNotCancelableError):
         await adapter.cancel_task(callee, done.id)
+
+
+class _Asks:
+
+    async def run_stream(self, agent_name: str, run_input):
+        ids = {"threadId": run_input.thread_id, "runId": run_input.run_id}
+        yield {"type": "RUN_STARTED", **ids}
+        yield {
+            "type": "RUN_FINISHED",
+            **ids,
+            "outcome": {
+                "type": "interrupt",
+                "interrupts": [{"id": "int_1", "reason": "question", "message": "which?"}],
+            },
+        }
+
+
+async def test_cancelling_a_paused_task_is_refused_in_the_same_words(funduq, serve):
+    """`input-required` is not terminal, so it fell past the check above and
+    out through a `cancel_run` that answered False — and the caller got its
+    task back unchanged, at the same state, with no pending-cancel marker on
+    it. A cancel that reads exactly like never having asked is the failure
+    mode the terminal branch exists to prevent, reached by the opposite road.
+
+    Not terminal is not the same as cancellable. funduq's cancel relays the
+    request to whoever is working on the run; a paused run's provider already
+    ended its stream, so there is nobody to relay to and no outcome to
+    observe. `TaskNotCancelableError` is A2A's own word for a task that will
+    not reach `CANCELED`, which is what a2a-python raises in the same place.
+    """
+    agent = (await serve(_Asks(), "asker")).agents["asker"]
+    adapter = A2AAdapter(funduq)
+
+    paused = await adapter.send_task(agent, _message("go"))
+    assert paused.status.state == pb.TaskState.TASK_STATE_INPUT_REQUIRED
+
+    with pytest.raises(TaskNotCancelableError):
+        await adapter.cancel_task(agent, paused.id)
+
+    # And the ask it was still holding is untouched: refusing a cancel must
+    # not be a way to settle a run funduq has observed nothing about.
+    assert (await funduq.get_run(paused.id)).status == "input-required"

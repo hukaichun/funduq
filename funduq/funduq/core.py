@@ -40,6 +40,7 @@ from funduq.errors import (
     AgentNotFound,
     InvalidRegistration,
     NoPendingAsk,
+    RunNotCancellable,
     LlmOfferingInUse,
     LlmProviderNotFound,
 )
@@ -1091,18 +1092,35 @@ class Funduq:
 
         On a thread that bound an authority at birth, `metadata["cancel"]`
         must carry a signature from one of the run's authorities — see
-        `doors.authorize_cancel`, which is the same check every door makes,
-        and raises `InvalidCancel` otherwise. An unbound run needs nothing,
-        which is the behaviour every run had before.
+        `doors.authorize_cancel`, and it raises `InvalidCancel` otherwise. An
+        unbound run needs nothing, which is the behaviour every run had
+        before. (The AG-UI door has no cancel verb of its own; A2A's is
+        `A2AAdapter.cancel_task`, which comes through here.)
 
         Returns False for a run funduq is no longer tracking — it has
-        already ended, and there is nobody left to ask.
+        already ended, and there is nobody left to ask. Raises
+        `RunNotCancellable` for a **paused** run, which is neither: no
+        provider is working on it, so there is nothing to relay the request
+        to, and False would say it had ended when it is still waiting for an
+        answer. That gap used to fall through to False, and through A2A to a
+        task returned unchanged with no marker — a cancel that read exactly
+        like never having asked.
+
+        The order matters and is the same one every other door check uses:
+        authority first, then whether the act is possible at all. Answering
+        "not cancellable" to a caller who holds no authority over the run
+        would tell them the run's state for free.
         """
         async with self.session() as session:
             stored = await repo.get_run(session, run_id)
         if stored is None:
             return False
         authorize_cancel(stored, metadata or {})
+        if stored.status == "input-required":
+            raise RunNotCancellable(
+                f"run '{run_id}' is paused waiting for a result; no provider is "
+                "working on it, so there is nobody to ask to stop"
+            )
         return self.broker.request_cancel(run_id)
 
 

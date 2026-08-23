@@ -8,7 +8,7 @@ from tests.conftest import publish_agents, publish_offline
 
 from funduq import repo
 from funduq.core import Funduq
-from funduq.errors import NoPendingAsk
+from funduq.errors import NoPendingAsk, RunNotCancellable
 from funduq.models import AgentRef
 
 
@@ -393,3 +393,67 @@ async def test_an_exited_chained_run_is_told_it_exited_not_that_it_signed_wrong(
     # ...and specifically not the signature complaint the chain check would
     # have made had it run first.
     assert not issubclass(NoPendingAsk, InvalidResolution)
+
+
+async def test_cancelling_a_paused_run_is_refused_rather_than_answered_false(
+    funduq, new_identity, attach
+):
+    """`cancel_run`'s False means "funduq is no longer tracking it — it has
+    already ended, and there is nobody left to ask". A paused run is not
+    that: it is still waiting, and it was answering False because the broker
+    forgets a run at the end of its stream and a pause *is* the end of the
+    provider's stream.
+
+    So the caller asking to stop a run got back the word for "too late" about
+    a run that had not finished, and no way to tell the two apart. Cancelling
+    means relaying the request to whoever is working on the run, and here
+    nobody is — that is the fact to state.
+
+    Refusing settles nothing: the ask is still there afterwards and still
+    resumable, because a cancel funduq could not relay must not become an
+    outcome funduq never observed.
+    """
+    identity = new_identity()
+    agent_id = await _register(funduq, "asker", identity)
+    provider = PausingProvider()
+    await attach(identity, provider, [agent_id.name])
+
+    handle = await funduq.start_run(agent_id, {"messages": [{"role": "user", "content": "one"}]})
+    [_ async for _ in handle.events()]
+    await _until(lambda: handle.run_id not in funduq.active_runs())
+    assert (await funduq.get_run(handle.run_id)).status == "input-required"
+    settled = await funduq.get_run_events(handle.run_id)
+
+    with pytest.raises(RunNotCancellable):
+        await funduq.cancel_run(handle.run_id)
+
+    assert (await funduq.get_run(handle.run_id)).status == "input-required"
+    assert await funduq.get_run_events(handle.run_id) == settled, "nothing was appended"
+
+    resumed = await funduq.resume_run(
+        handle.run_id,
+        {
+            "messages": [{"role": "user", "content": "two"}],
+            "resume": [{"interruptId": "int_1", "status": "resolved", "payload": {"answer": 42}}],
+        },
+    )
+    [_ async for _ in resumed.events()]
+    await _until(lambda: handle.run_id not in funduq.active_runs())
+    assert (await funduq.get_run(handle.run_id)).status == "completed"
+
+
+async def test_a_run_that_really_has_ended_still_answers_false(funduq, new_identity, attach):
+    """The other side of the same line. A finished run has nobody to ask
+    *because it is over*, and False is the honest answer there — the refusal
+    above is for the state that is neither working nor over, not a general
+    hardening of `cancel_run`."""
+    identity = new_identity()
+    agent_id = await _register(funduq, "echo", identity)
+    await attach(identity, EchoProvider(), [agent_id.name])
+
+    handle = await funduq.start_run(agent_id, {"messages": [{"role": "user", "content": "one"}]})
+    [_ async for _ in handle.events()]
+    await _until(lambda: handle.run_id not in funduq.active_runs())
+    assert (await funduq.get_run(handle.run_id)).status == "completed"
+
+    assert await funduq.cancel_run(handle.run_id) is False
