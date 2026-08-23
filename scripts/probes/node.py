@@ -120,14 +120,6 @@ async def _dispatch(funduq: Funduq, req: dict[str, Any]) -> Any:
     if op == "list_agents":
         return [agent.model_dump(mode="json") for agent in await funduq.list_agents()]
 
-    if op == "sweep_once":
-        # The health sweep on demand, so a probe can provoke it instead of
-        # waiting out health_sweep_interval_seconds.
-        from funduq.health import sweep_once
-
-        await sweep_once(funduq)
-        return True
-
     if op == "touch_agent":
         async with funduq.session() as session:
             await repo.touch_agents(session, req["provider_key"], [req["agent_name"]])

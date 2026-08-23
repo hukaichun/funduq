@@ -84,14 +84,19 @@ async def test_a_database_at_the_wrong_revision_is_not_ready(settings: CoreSetti
         await funduq.aclose()
 
 
-async def test_background_running_reflects_start(settings: CoreSettings) -> None:
+async def test_readiness_reflects_start(settings: CoreSettings) -> None:
+    """`start()` is what makes funduq ready, and dispatch is the whole of what
+    it starts. There used to be a `background_running` flag beside this one,
+    reporting whether the health-sweep loop was alive; the sweep existed only
+    to reap paused runs, that deadline was removed, and a field that can only
+    ever say False is worse than no field."""
     funduq = Funduq(settings)
     try:
-        assert not (await funduq.health()).background_running
+        assert not (await funduq.health()).dispatching
 
         await funduq.start()
         health = await funduq.health()
-        assert health.background_running
+        assert health.dispatching
         assert health.ready
     finally:
         await funduq.aclose()
@@ -100,7 +105,12 @@ async def test_background_running_reflects_start(settings: CoreSettings) -> None
 def test_running_migrations_does_not_disable_funduqs_own_loggers() -> None:
     silenced = [
         name
-        for name in ("funduq.core", "funduq.broker", "funduq.handlers", "funduq.health", "funduq.worker")
+        # Every logger funduq actually creates. A name nothing calls
+        # `getLogger` on would pass for free — a fresh logger is not disabled.
+        for name in (
+            "funduq.core", "funduq.broker", "funduq.handlers", "funduq.repo",
+            "funduq.protocols.a2a",
+        )
         if logging.getLogger(name).disabled
     ]
 

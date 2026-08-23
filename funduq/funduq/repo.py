@@ -856,15 +856,6 @@ async def fail_orphaned_runs(session: AsyncSession) -> list[str]:
     )
 
 
-async def fail_stale_paused_runs(session: AsyncSession, timeout_seconds: int) -> list[str]:
-    cutoff = _utcnow() - timedelta(seconds=timeout_seconds)
-    return await _fail_runs(
-        session,
-        (runs.c.status == "input-required") & (runs.c.last_activity_at < cutoff),
-        "paused_no_resume",
-    )
-
-
 async def get_run(session: AsyncSession, run_id: str) -> RunRecord | None:
     row = (
         await session.execute(select(runs).where(runs.c.run_id == run_id))

@@ -14,11 +14,6 @@ class CoreSettings(BaseSettings):
 
     stale_hidden_window_seconds: int = 60 * 60 * 24 * 7
 
-
-    health_sweep_interval_seconds: int = 15
-
-    paused_timeout_seconds: int | None = None
-
     thread_queue_limit: int | None = 8
 
     # How much abnormality a provider is allowed before funduq stops serving

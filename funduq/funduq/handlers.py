@@ -216,3 +216,27 @@ def make_handlers(funduq: "Funduq") -> HandlerMap:
         RequestCancel: partial(_handle_cancel, funduq),
         Fail: partial(_handle_fail, funduq),
     }
+
+
+async def close_with_terminal_event(funduq: "Funduq", run_id: str, failure_reason: str) -> None:
+    """Give a run funduq has just failed its terminal `RUN_ERROR`, whether or not
+    the broker still tracks it.
+
+    A live run gets a `Fail` pushed into its own lane, which appends the event
+    and relays it to any subscriber. A run the broker has already forgotten —
+    an orphan reaped at startup is the one that reaches this — has no lane
+    and no subscriber left, but the record still owes the verdict: the
+    same event is appended directly, so the event stream ends the way the
+    database says the run did. A run that already carries its own `RUN_ERROR`
+    is left alone, same as everywhere else."""
+    if funduq.broker.push(run_id, Fail(failure_reason)):
+        return
+    async with funduq.session() as session:
+        events = await repo.get_run_events(session, run_id)
+        if any(e.get("type") == EventType.RUN_ERROR for e in events):
+            return
+        seq = await repo.get_last_event_seq(session, run_id) + 1
+        await repo.append_run_event(
+            session, run_id, seq, run_error(failure_reason)
+        )
+        await session.commit()

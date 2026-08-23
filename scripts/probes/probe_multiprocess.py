@@ -251,13 +251,14 @@ async def scenario_owner_dies(cluster: Cluster, findings: Findings) -> None:
         f"       (the row reads {at_death['status']!r} at the moment A dies — "
         "'queued' means the claim never reached the database)"
     )
-    await cluster.call({"op": "sweep_once"}, node="b")
     record = await cluster.call({"op": "get_run", "run_id": run["run_id"]}, node="b")
     findings.record(
         "a dead node's run reaches a verdict promptly",
         record["status"] in ("failed", "cancelled"),
-        f"A is gone; B's sweep leaves the run at {record['status']!r} — no sweep keys off "
-        "a node being dead, only off the provider having gone quiet",
+        f"A is gone; B leaves the run at {record['status']!r} — nothing B runs keys off "
+        "a node being dead. There used to be a `sweep_once` op poked here to provoke a "
+        "verdict; it could not produce one either (the clock it drove only reaped paused "
+        "runs) and it is gone with that deadline.",
     )
 
 

@@ -129,9 +129,14 @@ Deciding not to answer a pause is a real thing to want, and it is **not
 this verb**: asking a worker to stop and giving up on an answer you owe
 are different acts by different parties. funduq has no verb for the
 second yet, and letting a cancel stand in for it would settle a run
-funduq observed nothing about. Until there is one, the deadline on a
-pause is `paused_timeout_seconds` (off by default), which fails the run
-as `paused_no_resume`.
+funduq observed nothing about.
+
+Nor is there a clock standing in for it. **A pause has no deadline of
+funduq's** — it waits until it is answered, across restarts included.
+The two parties with a stake each have their own: AG-UI lets the asking
+provider declare `Interrupt.expires_at`, which funduq stores and relays
+without acting on, and the caller that owes the answer decides when to
+stop owing it. funduq holds the record open and reads neither.
 
 The authority check runs **before** the refusal, for the same reason
 every other door check is ordered that way: "not cancellable" names the

@@ -49,8 +49,6 @@ omission.
 | `database_url` | `sqlite+aiosqlite:///./funduq.db` | which database, and whether the engine is built the SQLite way |
 | `db_schema` | `public` | the Postgres `search_path`; applied only when the backend is not SQLite and the value is not the default |
 | `stale_hidden_window_seconds` | 7 days | how long since last check-in before an agent drops out of the roster listings |
-| `health_sweep_interval_seconds` | 15 | how often the sweep loop ticks |
-| `paused_timeout_seconds` | *none* | how long an `input-required` run may wait; unset skips that sweep entirely |
 | `token_signing_secret` | **required** | signs KYOK tokens |
 | `identity_private_key` | *none* | funduq's own Ed25519 seed; unset means funduq has no identity and `sign()` raises |
 
@@ -59,6 +57,12 @@ the delivery timeout on a single offer (5 s) and the unserved window
 before a queued run is given up on (45 s) are `RunBroker` constructor
 arguments. They describe dispatch, which an embedder can replace by
 passing its own broker to `Funduq(broker=...)`.
+
+A third is not a setting anywhere, because it no longer exists: there is
+**no deadline on a paused run**. `paused_timeout_seconds` and the
+health-sweep loop that read it were removed — [a question funduq did not
+ask is not funduq's to time
+out](../design-records.md#a-question-funduq-did-not-ask-is-not-funduqs-to-time-out).
 
 ## The public URL is content, not configuration
 

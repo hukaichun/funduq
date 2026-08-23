@@ -44,8 +44,7 @@ from funduq.errors import (
     LlmOfferingInUse,
     LlmProviderNotFound,
 )
-from funduq.handlers import make_handlers
-from funduq.health import close_with_terminal_event, run_health_sweeps_forever
+from funduq.handlers import close_with_terminal_event, make_handlers
 from funduq.identity import (
     FunduqIdentity,
     SIGNATURE_FRESHNESS_WINDOW_SECONDS,
@@ -73,7 +72,6 @@ class Health:
     database: bool
     schema_revision: str | None
     expected_schema_revision: str
-    background_running: bool
     dispatching: bool = False
     database_error: str | None = None
 
@@ -508,7 +506,6 @@ class Funduq:
                 orphaned,
             )
         self.broker.start()
-        self.spawn(run_health_sweeps_forever(self), name="health-sweeps")
         return orphaned
 
     async def health(self, timeout: float = 2.0) -> Health:
@@ -530,9 +527,6 @@ class Funduq:
             database=reachable,
             schema_revision=revision,
             expected_schema_revision=EXPECTED_SCHEMA_REVISION,
-            background_running=any(
-                t.get_name() == "health-sweeps" and not t.done() for t in self._tasks
-            ),
             dispatching=self.broker.is_running,
             database_error=error,
         )

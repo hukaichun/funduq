@@ -8,7 +8,7 @@ import pytest
 
 from tests.conftest import publish_agents, publish_offline
 
-from funduq import health, repo
+from funduq import repo
 from funduq.config import CoreSettings
 from funduq.broker import RunBroker
 from funduq.core import Funduq
@@ -370,6 +370,10 @@ async def test_a_provider_that_is_merely_quiet_keeps_its_run(settings: CoreSetti
     doing nothing wrong, and it blamed runs whose silence funduq itself was
     causing by holding their KYOK completion. The party with a stake has a
     lever that funduq does not need: the caller can cancel.
+
+    There is now no clock of funduq's left to run at all — the health sweep
+    that used to tick went with the pause deadline — so this asserts the
+    absence rather than a sweep declining to act.
     """
     funduq = Funduq(settings, broker=RunBroker())
     await funduq.start()
@@ -386,8 +390,7 @@ async def test_a_provider_that_is_merely_quiet_keeps_its_run(settings: CoreSetti
         await asyncio.wait_for(provider.started.wait(), 5)
         await _until_async(lambda: _status_is(funduq, handle.run_id, "running"))
 
-        for _ in range(3):
-            await health.sweep_once(funduq)
+        await asyncio.sleep(0.05)
         assert (await funduq.get_run(handle.run_id)).status == "running"
         assert funduq.broker.quality()[identity.public_key].abandoned == 0
 
