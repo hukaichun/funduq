@@ -114,7 +114,7 @@ async def test_the_pipeline_stays_alive_after_a_cancel_and_waits_for_the_finish(
     assert seen == ["cancel", "finish"]
 
 
-async def test_the_pipeline_forgets_the_run_when_the_health_sweep_gives_up_on_it(broker):
+async def test_the_pipeline_forgets_the_run_when_a_sweep_gives_up_on_it(broker):
     async def on_fail(run, cmd):
         pass
 

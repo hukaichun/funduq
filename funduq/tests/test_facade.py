@@ -339,16 +339,30 @@ async def test_start_runs_once_so_a_second_call_cannot_reap_live_work(own_funduq
     assert (await own_funduq.get_run(fresh)).status == "queued"
 
 
-async def test_start_keeps_exactly_one_sweeper_and_aclose_stops_it(own_funduq):
-    def sweepers():
-        return [t for t in own_funduq._tasks if t.get_name() == "health-sweeps" and not t.done()]
+async def test_start_runs_no_clock_of_its_own(own_funduq):
+    """`start()` used to spawn a `health-sweeps` loop, and its only job was
+    failing `input-required` runs past `paused_timeout_seconds`. That deadline
+    was removed — a question funduq did not ask is not funduq's to time out —
+    and the loop went with it, so funduq now starts dispatch and nothing else.
 
+    The broker's own `broker-sweep` stays, and it is a different kind of
+    thing: its two clocks watch *providers* (accepted-but-undelivered, agent
+    gone unserved) and both only say what they observed into the run's own
+    lane. Neither settles a run, and neither reads a clock on an answer a
+    caller owes.
+
+    Asserted rather than deleted: a loop that reads a clock and settles runs
+    is exactly the kind of thing that comes back by accident, and it would
+    come back invisible, because nothing else in the suite looks at `_tasks`.
+    """
     await own_funduq.start()
     await own_funduq.start()
-    assert len(sweepers()) == 1
+
+    assert [t.get_name() for t in own_funduq._tasks if not t.done()] == ["broker-sweep"]
+    assert own_funduq.broker.is_running
 
     await own_funduq.aclose()
-    await _until(lambda: not sweepers())
+    assert not own_funduq.broker.is_running
 
 
 async def test_aclose_without_start_is_fine(own_funduq):

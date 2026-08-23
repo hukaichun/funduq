@@ -864,6 +864,48 @@ stopped deciding on the provider's behalf.
 See [Runs and cancels are requests](mechanisms/requests.md) →
 [full record](https://github.com/hukaichun/funduq/blob/d78d0638c0ec2126167240c62471651b5468d35b/design/library-architecture.md#cancelling-a-request-with-the-outcome-decided-later)
 
+### A question funduq did not ask is not funduq's to time out
+
+A paused run had a deadline: `paused_timeout_seconds`, swept every
+`health_sweep_interval_seconds`, failing the run as `paused_no_resume`.
+It shipped **off** — the setting defaulted to `None` and the sweep
+skipped itself — so the deployed behaviour was already "wait forever",
+arrived at by leaving a setting unset rather than by deciding anything.
+
+Deciding it: an `input-required` run is waiting on an answer from a
+caller, about a question a provider asked. funduq is neither party. Both
+of them already have the lever — AG-UI lets the asking provider declare
+`Interrupt.expires_at`, and the caller that owes the answer decides when
+to stop owing it — and funduq's clock could only overrule whichever one
+of them was still working. So the deadline is gone, along with the
+setting, `repo.fail_stale_paused_runs`, and the sweep loop.
+
+That loop was the only thing `start()` ever spawned, so removing it took
+the loop, `health_sweep_interval_seconds`, `funduq/health.py` (its one
+surviving function, `close_with_terminal_event`, moved to `handlers.py`
+beside the other things that write a run's ending) and
+`Health.background_running`, which reported whether the sweep was alive
+and could now only ever say False. `Health.ready` never consulted it.
+
+This is the same removal as [silence being read as
+death](#silence-was-read-as-death-and-the-party-that-had-done-nothing-wrong-was-blamed),
+one layer out: that one stopped funduq judging a provider by a clock,
+this one stops it judging a caller by one. What is left of funduq's
+clocks is the broker's own sweep, and both of its windows watch a
+*provider* — accepted-but-undelivered, agent gone unserved — and settle
+nothing themselves: they say what they observed into the run's own lane
+and let the run decide.
+
+Known and accepted: a pause now waits indefinitely, across restarts
+(`fail_orphaned_runs` deliberately excludes `input-required`). It costs
+a row, not a slot — `count_queued_runs_for_thread` counts only runs no
+provider has accepted, so a permanent pause never fills a thread's
+buffer. The verb that should end one is the answering party giving up,
+and [funduq does not have it
+yet](#a-cancel-with-nobody-to-ask-answered-too-late).
+
+See [Runs and cancels are requests](mechanisms/requests.md).
+
 ### A cancel with nobody to ask answered "too late"
 
 `cancel_run` returned `False` for any run the broker was no longer
