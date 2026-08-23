@@ -26,7 +26,9 @@ ordinary next turn. Yields to whatever carrier A2A ships for this."""
 ADDRESSED_RUN_METADATA_KEY = f"{INTERJECTION_EXTENSION_URI}/addressedRunId"
 
 
-RESERVED_METADATA_KEYS = frozenset({"interrupts", "failureReason", "funduq"})
+RESERVED_METADATA_KEYS = frozenset(
+    {"interrupts", "pendingToolCalls", "failureReason", "funduq"}
+)
 """Metadata keys funduq itself writes into a run's record (plus "funduq", held in
 reserve). A caller-supplied value under any of these is stripped at the doors
 before anything reads or stores the metadata — otherwise a caller could plant

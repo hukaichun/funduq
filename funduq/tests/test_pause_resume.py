@@ -151,3 +151,108 @@ async def test_a_result_with_no_pending_ask_is_refused_not_smuggled(funduq, serv
         ),
     )
     assert isinstance(ghost, ThreadSnapshot), "a result with no ask gets the thread's state back"
+
+
+async def test_an_unanswered_tool_call_pauses_a_run_that_reported_success(
+    session, funduq, new_identity
+):
+    """AG-UI's `outcome` names an approval and nothing else. A call the provider
+    deferred for someone else to run ends the stream as `success`, so this is
+    the shape of a paused run that never says it paused."""
+    identity = new_identity()
+    registered = await repo.register_agents(session, identity.public_key, [{"name": "b"}])
+    agent_b = registered["b"]
+    thread_b = await repo.create_thread(session, agent_b)
+    created = await repo.create_run(session, thread_b, agent_b, "ag-ui", {})
+    await repo.mark_run_status(session, created["run_id"], "running")
+    run_id = created["run_id"]
+    await session.commit()
+
+    run = Run(
+        run_id=run_id, agent=agent_b, thread_id=thread_b, input_json={}, protocol="ag-ui"
+    )
+    for event in (
+        {"type": "TOOL_CALL_START", "toolCallId": "c1", "toolCallName": "get_weather"},
+        {"type": "TOOL_CALL_ARGS", "toolCallId": "c1", "delta": '{"city": "Taipei"}'},
+        {"type": "TOOL_CALL_END", "toolCallId": "c1"},
+        {"type": "TOOL_CALL_START", "toolCallId": "c2", "toolCallName": "book_flight"},
+        {"type": "TOOL_CALL_ARGS", "toolCallId": "c2", "delta": '{"to": "Tokyo"}'},
+        {"type": "TOOL_CALL_END", "toolCallId": "c2"},
+        {"type": "TOOL_CALL_RESULT", "messageId": "m1", "toolCallId": "c1",
+         "content": "Taipei: 28C", "role": "tool"},
+        {"type": "RUN_FINISHED", "threadId": thread_b, "runId": run_id,
+         "outcome": {"type": "success"}},
+    ):
+        await _handle_relay(funduq, run, RelayEvent(event))
+    await _handle_finish(funduq, run, FinishStream())
+
+    reread = await repo.get_run(session, run_id)
+    assert reread.status == "input-required"
+    assert reread.metadata["pendingToolCalls"] == ["c2"]
+    assert reread.metadata["interrupts"] == []
+
+
+async def test_a_run_whose_every_tool_call_was_answered_still_completes(
+    session, funduq, new_identity
+):
+    identity = new_identity()
+    registered = await repo.register_agents(session, identity.public_key, [{"name": "b"}])
+    agent_b = registered["b"]
+    thread_b = await repo.create_thread(session, agent_b)
+    created = await repo.create_run(session, thread_b, agent_b, "ag-ui", {})
+    await repo.mark_run_status(session, created["run_id"], "running")
+    run_id = created["run_id"]
+    await session.commit()
+
+    run = Run(
+        run_id=run_id, agent=agent_b, thread_id=thread_b, input_json={}, protocol="ag-ui"
+    )
+    for event in (
+        {"type": "TOOL_CALL_START", "toolCallId": "c1", "toolCallName": "get_weather"},
+        {"type": "TOOL_CALL_END", "toolCallId": "c1"},
+        {"type": "TOOL_CALL_RESULT", "messageId": "m1", "toolCallId": "c1",
+         "content": "Taipei: 28C", "role": "tool"},
+        {"type": "RUN_FINISHED", "threadId": thread_b, "runId": run_id,
+         "outcome": {"type": "success"}},
+    ):
+        await _handle_relay(funduq, run, RelayEvent(event))
+    await _handle_finish(funduq, run, FinishStream())
+
+    reread = await repo.get_run(session, run_id)
+    assert reread.status == "completed"
+
+
+async def test_an_interrupt_and_an_unanswered_call_are_recorded_in_one_pause(
+    session, funduq, new_identity
+):
+    """One turn can ask both ways at once — pydantic-ai returns `approvals` and
+    `calls` as separate lists of the same `DeferredToolRequests`."""
+    identity = new_identity()
+    registered = await repo.register_agents(session, identity.public_key, [{"name": "b"}])
+    agent_b = registered["b"]
+    thread_b = await repo.create_thread(session, agent_b)
+    created = await repo.create_run(session, thread_b, agent_b, "ag-ui", {})
+    await repo.mark_run_status(session, created["run_id"], "running")
+    run_id = created["run_id"]
+    await session.commit()
+
+    run = Run(
+        run_id=run_id, agent=agent_b, thread_id=thread_b, input_json={}, protocol="ag-ui"
+    )
+    interrupt = {"id": "int-c3", "reason": "tool_call", "toolCallId": "c3",
+                 "message": "Approve send_money(500)?"}
+    for event in (
+        {"type": "TOOL_CALL_START", "toolCallId": "c2", "toolCallName": "book_flight"},
+        {"type": "TOOL_CALL_END", "toolCallId": "c2"},
+        {"type": "TOOL_CALL_START", "toolCallId": "c3", "toolCallName": "send_money"},
+        {"type": "TOOL_CALL_END", "toolCallId": "c3"},
+        {"type": "RUN_FINISHED", "threadId": thread_b, "runId": run_id,
+         "outcome": {"type": "interrupt", "interrupts": [interrupt]}},
+    ):
+        await _handle_relay(funduq, run, RelayEvent(event))
+    await _handle_finish(funduq, run, FinishStream())
+
+    reread = await repo.get_run(session, run_id)
+    assert reread.status == "input-required"
+    assert reread.metadata["interrupts"] == [interrupt]
+    assert reread.metadata["pendingToolCalls"] == ["c2", "c3"]
