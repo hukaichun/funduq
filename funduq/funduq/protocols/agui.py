@@ -20,6 +20,7 @@ from funduq.doors import (
 )
 from funduq.errors import AgentNotFound
 from funduq.kyok import strip_kyok_context
+from funduq.pause import answered_asks, outstanding_asks
 
 if TYPE_CHECKING:
     from funduq.core import Funduq
@@ -100,14 +101,35 @@ class AGUIAdapter:
                 head_key=head_key,
             )
 
-            # AG-UI declares its entrance in the body: a `resume` payload is a
-            # deferred call's RESULT, anything else is an utterance. A result
-            # targets the thread's paused (input-required) run specifically —
-            # not "the latest active run", which with queued siblings on the
-            # thread may be a different, merely queued run.
+            # AG-UI declares its entrance in the body, two ways, because it has
+            # two carriers for the one thing. A `resume` payload declares a
+            # result outright. A tool message declares one by naming the call
+            # it answers — the same grammar as A2A's `taskId`, only finer: it
+            # addresses the ask rather than the run. Neither is inferred from
+            # the target's state; both are the caller saying what it sent.
+            #
+            # The difference is what happens when the addressing misses. A
+            # `resume` that finds no ask is a result that lost its race, and
+            # gets the thread as it stands. A tool message that answers
+            # nothing pending is honestly just a message, so it enters as an
+            # utterance — the rule the A2A lane already follows.
+            #
+            # Answering *some* of the asks is not answering: the provider must
+            # hand its model a result for every call in the turn or it cannot
+            # take a step, so a partial reply lands as an utterance and leaves
+            # the ask standing rather than reopening a run that would fail.
+            messages = [m.model_dump(mode="json", by_alias=True) for m in body.messages]
+            answers_a_tool_call = any(m.get("role") == "tool" for m in messages)
             paused = (
-                await repo.get_paused_run_for_thread(session, thread_id) if resume else None
+                await repo.get_paused_run_for_thread(session, thread_id)
+                if resume or answers_a_tool_call
+                else None
             )
+            outstanding = outstanding_asks(paused["metadata"]) if paused else set()
+            completes_the_ask = bool(outstanding) and outstanding <= answered_asks(
+                messages, resume, paused["metadata"]
+            )
+            is_result = bool(resume) or completes_the_ask
 
             input_dump = body.model_dump(mode="json", by_alias=True)
             if isinstance(input_dump.get("metadata"), dict):
@@ -117,10 +139,10 @@ class AGUIAdapter:
                 funduq, session,
                 agent=agent,
                 thread_id=thread_id,
-                entrance="result" if resume else "utterance",
+                entrance="result" if is_result else "utterance",
                 ask=(
                     PendingAsk(run_id=paused["run_id"], head_key=paused.get("head_key"))
-                    if paused is not None
+                    if paused is not None and is_result
                     else None
                 ),
                 run_input=input_dump,
@@ -137,7 +159,7 @@ class AGUIAdapter:
 
             inbound = InboundRun(
                 agent=agent,
-                messages=[m.model_dump(mode="json", by_alias=True) for m in body.messages],
+                messages=messages,
                 metadata=metadata,
                 head_key=head_key,
                 actor_chain=actor_chain,
