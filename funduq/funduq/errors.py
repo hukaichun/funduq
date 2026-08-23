@@ -16,6 +16,7 @@ __all__ = [
     "InvalidRunInput",
     "NoPendingAsk",
     "ProviderFingerprintTaken",
+    "RunNotCancellable",
     "RunNotFound",
     "FunduqError",
     "ThreadNotFound",
@@ -92,6 +93,23 @@ class KyokRejected(FunduqError):
 
 class RunNotFound(FunduqError):
     pass
+
+
+class RunNotCancellable(FunduqError):
+    """Raised when a cancel is asked of a run that has nobody to ask.
+
+    Cancelling means one thing here: relay the request to the provider
+    working on the run. A paused run has no provider working on it — its
+    stream really did end, and what the run is waiting for is the caller's
+    own answer — so there is no request to relay and no outcome to observe.
+    Saying so is the only honest answer; `cancel_run`'s False means "already
+    ended, nobody left to ask", and a run that is still waiting is not that.
+
+    It is deliberately not a way to abandon a pause. Deciding not to answer
+    is the answering party giving up, which is a different act from asking a
+    worker to stop, and funduq has no verb for it yet. Smuggling it in here
+    would make a cancel settle a run funduq has observed nothing about.
+    """
 
 
 class NoPendingAsk(FunduqError):
