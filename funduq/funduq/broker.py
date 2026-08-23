@@ -149,7 +149,6 @@ class Run:
     offered_to: str | None = None
     claimed_by: str | None = None
     claimed_at: datetime | None = None
-    pipeline_started: bool = False
     noted_abnormal: bool = False
     cancel_notify: Callable[[str], None] | None = None
     cancel_requested: bool = False
@@ -208,26 +207,6 @@ async def _no_events() -> AsyncIterator[Any]:
     yield  # pragma: no cover - what makes this an async generator
 
 
-def _put_first(queue: "asyncio.Queue[Command]", command: Command) -> None:
-    """Puts `command` ahead of whatever is already waiting in `queue`.
-
-    The dispatch window is the reason this exists. A cancel that arrives
-    while an offer is unanswered lands in the run's queue before funduq
-    knows the run was claimed; processing it in arrival order would ask a
-    provider to stop a run funduq had not yet recorded as running, and the
-    status write would be refused as an illegal transition. The claim is the
-    older fact — it is what the provider was answering — so it goes first
-    and the cancel follows it. Safe to do without a lock because it does not
-    await: nothing else can touch the queue in between.
-    """
-    waiting = []
-    while not queue.empty():
-        waiting.append(queue.get_nowait())
-    queue.put_nowait(command)
-    for item in waiting:
-        queue.put_nowait(item)
-
-
 # What a provider's answer to an offer comes back as. Three values because a
 # provider has three honest things to say, and collapsing any two of them has
 # cost a defect each time (see docs/mechanisms/requests.md).
@@ -235,25 +214,30 @@ _Outcome = Literal["accepted", "declined", "refused"]
 
 HandlerMap = dict[type, Callable[[Run, Any], Awaitable[None]]]
 
-async def _pipeline(run: Run, handlers: HandlerMap, owner: "RunBroker") -> None:
-    """Drains `run.in_queue`, dispatching each command to its registered handler
-    in order. Stops after a `FinishStream` or `Fail`, or after a `RequestCancel`
-    for a run nobody has claimed; a `RequestCancel` for a claimed run is handled
-    but the pipeline keeps running, waiting for the eventual terminal command.
-    On exit it signals END_OF_STREAM on `run.out_queue` and calls `owner.forget`."""
+async def _pipeline(run: Run, owner: "RunBroker") -> None:
+    """The claimed run's own lane: records the claim, then drains `run.in_queue`
+    in order for the rest of the run's life. It ends on a `FinishStream` or a
+    `Fail` and on nothing else — a cancel is handled and the lane keeps going,
+    because funduq asks a provider to stop and does not decide the outcome on
+    its behalf. On exit it signals END_OF_STREAM on `run.out_queue` and calls
+    `owner.forget`.
+
+    A lane exists only for a run some provider took; a run nobody took is
+    settled by `RunBroker._one_shot` instead, which is why there is no
+    unclaimed case here to stop on.
+
+    **The claim is recorded here rather than queued.** It became true before
+    this lane existed, so queueing it would put it behind anything that arrived
+    while the provider was still answering — a cancel from that window would be
+    recorded against a run funduq had not yet called running. Recorded first, by
+    the lane itself, it is simply the older fact in the same single order
+    everything else about this run goes through.
+    """
+    await owner._record(run, Claim())
     while True:
         cmd = await run.in_queue.get()
-        handler = handlers.get(type(cmd))
-        try:
-            if handler is not None:
-                await handler(run, cmd)
-            else:
-                logger.warning("run %s: no handler registered for %s", run.run_id, type(cmd).__name__)
-        except Exception:
-            logger.exception("run %s: error handling %s", run.run_id, type(cmd).__name__)
+        await owner._record(run, cmd)
         if isinstance(cmd, (FinishStream, Fail)):
-            break
-        if isinstance(cmd, RequestCancel) and run.claimed_by is None:
             break
     run.out_queue.put_nowait(END_OF_STREAM)
     owner.forget(run.run_id)
@@ -519,12 +503,17 @@ class RunBroker:
                 if outcome == "declined":
                     if run.cancel_requested:
                         # A cancel arrived while the offer was out and nobody
-                        # took the run; it is funduq's again, so it is settled
-                        # here rather than put back in the queue.
-                        if not self._start_pipeline(run):
-                            self._spawn(
-                                self._cancel_queued(run), name=f"cancel:{run_id}"
-                            )
+                        # took the run, so it is funduq's again and there is no
+                        # provider to ask. Settled here, the same way any run
+                        # cancelled before a provider had it is settled.
+                        #
+                        # Exactly one settler, always: a cancel that arrived
+                        # while the run was dispatched went into its queue and
+                        # set this flag, and one arriving after the hand-back
+                        # takes `request_cancel`'s own queued path — and there
+                        # is no await between the hand-back and this line for a
+                        # cancel to land in and be counted twice.
+                        await self._one_shot(run, RequestCancel())
                         continue
                     queue.appendleft(run_id)
                     return
@@ -554,26 +543,33 @@ class RunBroker:
         if capacity is not None and capacity.in_flight > 0:
             capacity.in_flight -= 1
 
-    def _start_pipeline(self, run: Run) -> bool:
-        """Starts the run's own lane, once, and reports whether it has one.
-        Everything after dispatch happens there, in the order the commands
-        arrived. A run enqueued without a handler map never gets a lane —
-        there would be nothing for it to do."""
-        if run.pipeline_started:
-            return True
+    def _own_lane(self, run: Run, provider: ConnectedProvider) -> None:
+        """Hands a run that has just been claimed to its own lane, which records
+        the claim and then owns everything that happens to the run afterwards.
+        A run enqueued without a handler map never gets one — there would be
+        nothing for it to do."""
+        run.claimed_by = provider.public_key
+        run.claimed_at = datetime.now(timezone.utc)
+        run.cancel_notify = provider.cancel
+        if self._handlers.get(run.run_id) is not None:
+            self._spawn(_pipeline(run, self), name=f"pipeline:{run.run_id}")
+
+    async def _record(self, run: Run, command: Command) -> None:
+        """Runs one command's handler. **The only place a command about a run is
+        acted on**, whichever owner is holding the run at the time: the
+        dispatcher, while it still has the run and no lane exists (`Offer`,
+        `Requeue`); the run's own lane, for the claim and everything the lane
+        drains; and `_one_shot`, for a run that was never claimed. One step
+        function means one order, and the owner changes hands only where there
+        is nothing in flight to reorder."""
         handlers = self._handlers.get(run.run_id)
         if handlers is None:
-            return False
-        run.pipeline_started = True
-        self._spawn(_pipeline(run, handlers, self), name=f"pipeline:{run.run_id}")
-        return True
-
-    async def _apply(self, run: Run, command: Command) -> None:
-        """Runs one command's handler directly, without a pipeline and without
-        ending the run. Used for the two ends of the dispatch window (`Offer`,
-        `Requeue`), which happen while the run has no lane of its own yet."""
-        handler = (self._handlers.get(run.run_id) or {}).get(type(command))
+            return
+        handler = handlers.get(type(command))
         if handler is None:
+            logger.warning(
+                "run %s: no handler registered for %s", run.run_id, type(command).__name__
+            )
             return
         try:
             await handler(run, command)
@@ -601,7 +597,7 @@ class RunBroker:
         reading the record."""
         capacity = self._capacity.get(provider.public_key)
         self._reserve(run, provider)
-        await self._apply(run, Offer())
+        await self._record(run, Offer())
         try:
             async with asyncio.timeout(self.deliver_timeout_seconds):
                 accepted = await provider.deliver(
@@ -663,11 +659,7 @@ class RunBroker:
                         capacity.declared,
                     )
             return "declined"
-        run.claimed_by = provider.public_key
-        run.claimed_at = datetime.now(timezone.utc)
-        run.cancel_notify = provider.cancel
-        self._start_pipeline(run)
-        _put_first(run.in_queue, Claim())
+        self._own_lane(run, provider)
         current = self._live.serving(run.agent)
         if current is None or current.public_key != provider.public_key:
             # The provider stopped serving this agent while its answer was in
@@ -689,7 +681,7 @@ class RunBroker:
         """Undoes a dispatch nobody accepted: gives the place back and puts the
         record where the run actually is."""
         self._release(run)
-        await self._apply(run, Requeue())
+        await self._record(run, Requeue())
 
     def _spawn_unsupervised(self, coro, *, name: str | None = None) -> asyncio.Task:
         task = asyncio.create_task(coro, name=name)
@@ -843,7 +835,7 @@ class RunBroker:
         a run that was never claimed, then ends the run the same way the
         pipeline would: signals END_OF_STREAM and forgets it. Used for expiring
         queued runs and for cancelling a run before any provider claimed it."""
-        await self._apply(run, command)
+        await self._record(run, command)
         run.out_queue.put_nowait(END_OF_STREAM)
         self.forget(run.run_id)
 
@@ -879,11 +871,7 @@ class RunBroker:
             run_id,
             self._live.count(claimed_by, "answered_late"),
         )
-        run.claimed_by = claimed_by
-        run.claimed_at = datetime.now(timezone.utc)
-        run.cancel_notify = provider.cancel
-        self._start_pipeline(run)
-        _put_first(run.in_queue, Claim())
+        self._own_lane(run, provider)
         return True
 
     def quality(self) -> dict[str, ProviderQuality]:

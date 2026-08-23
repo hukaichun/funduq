@@ -56,6 +56,15 @@ dispatch onwards.**
   any more is both — funduq recording `cancelled` and handing the same
   run over a moment later.
 
+Everything that happens to a run happens in one order, and whoever holds
+the run at the time is the one who applies it. Before any provider has
+taken it that is the dispatcher; afterwards it is the run's own lane,
+and **the lane's first act is to record the claim** rather than find it
+queued. That is what keeps the cancel from the window behind it: the
+claim became true first, so it is applied first, and the handover
+between the two owners happens at the one moment there is nothing in
+flight to reorder.
+
 **Waiting for an answer holds up one agent's queue and nothing else.**
 It has to hold up that one: a declined head must not be overtaken by its
 own sibling, and nothing knows the head is declined until the provider

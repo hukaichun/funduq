@@ -93,14 +93,23 @@ agent; the sweep itself never waits for a provider:
 2. **Claim.** An accepted run is marked claimed by that provider's key.
    Its place was already taken at step 1; claiming is when funduq starts
    calling it `running`.
-3. **Pipeline.** Each claimed run gets its own consumer task draining a
-   per-run command queue **in order**: the provider reporting an event
-   becomes a relay command (persist the event row, forward it to the
-   caller's live stream); finishing the stream folds the run's outcome
-   and writes the terminal status; a cancel request is forwarded to the
-   provider's `cancel` and the pipeline keeps running until a terminal
-   command actually arrives. Ordering per run is guaranteed by the queue;
-   runs are independent of each other.
+3. **Its own lane.** Each claimed run gets its own consumer task, whose
+   first act is to record the claim and which then drains a per-run
+   command queue **in order** for the rest of the run's life. Recording
+   rather than queueing the claim is what makes the window above safe:
+   anything that arrived while the provider was still answering — a
+   cancel, typically — is drained after it, so funduq never asks a
+   provider to stop a run it has not yet called running. The two owners
+   (the dispatch lane, then the run's own) hand over at the one moment
+   there is nothing in flight to reorder.
+
+   What the lane then drains: the provider reporting an event becomes a
+   relay command (persist the event row, forward it to the caller's live
+   stream); finishing the stream folds the run's outcome and writes the
+   terminal status; a cancel request is forwarded to the provider's
+   `cancel` and the lane keeps running until a terminal command actually
+   arrives. Ordering per run is guaranteed by the queue; runs are
+   independent of each other.
 
 When a run ends — however it ends — one funnel (`forget`) releases its
 state: capacity is freed, the sweep wakes, KYOK bindings die, listeners

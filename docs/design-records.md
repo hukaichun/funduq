@@ -834,6 +834,19 @@ decided in funduq's favour; and the waiting itself moved out of the
 shared loop into one lane per agent. The sweep starts lanes and goes back
 to sleep.
 
+The first version of that fix carried a patch worth recording, because
+rejecting it is what produced the shape above. It queued the claim like
+any other command and then had to *reorder the queue* to put it in
+front, since the cancel from the window had arrived first in wall-clock
+time and second in truth. Reordering a queue is a sign that the order
+was never the queue's to fix. The claim became true before the run's
+lane existed, so it is not a queued command at all: **the lane's first
+act is to record it.** Ownership passes from the dispatcher to the lane
+at the one moment there is nothing in flight to reorder, and one step
+function applies every command about a run whichever owner is holding
+it. The reordering, and the flag tracking whether a lane had been
+started, both disappeared with it.
+
 One thing deliberately stayed serial: **a declined head must not be
 overtaken by its own sibling**, and nothing knows the head is declined
 until the provider says so. That is why the lane is per agent rather than
