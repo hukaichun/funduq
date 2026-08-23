@@ -320,6 +320,10 @@ async def test_a_full_thread_buffer_refuses_the_next_message_loudly(tight):
             return await repo.count_queued_runs_for_thread(session, thread_id) == 1
 
     await _until(_buffer_full)
+    # Deliberately funduq's own error, not an A2A one: this is backpressure,
+    # and A2A has no word for "slow down" because pacing is a transport
+    # concern. The gateway answers 429. See `_in_a2as_words` for the two
+    # errors the A2A door leaves untranslated and why.
     with pytest.raises(ThreadQueueFull, match="not accepted"):
         await A2AAdapter(tight).send_task(
             agent, {**_message("one too many"), "contextId": thread_id}

@@ -329,10 +329,15 @@ async def test_an_a2a_caller_opts_in_with_metadata(funduq, serve, llm):
 
 
 async def test_an_a2a_opt_in_naming_an_unknown_offering_is_refused(funduq, serve, llm):
+    """And refused in A2A's own words. An opt-in naming an offering funduq does not have is a
+    bad parameter, and the A2A door says so with `InvalidParamsError` — funduq's own message
+    rides along, so the caller still learns which name was wrong."""
+    from a2a.utils.errors import InvalidParamsError
+
     _, identity, _ = llm
     agent = KyokTokenAgent()
     served = await serve(agent, "kyok-agent")
-    with pytest.raises(LlmProviderNotFound, match="no-such-model"):
+    with pytest.raises(InvalidParamsError, match="no-such-model"):
         await A2AAdapter(funduq).send_task(
             served.agents["kyok-agent"],
             {"role": "user", "parts": [{"type": "text", "text": "hi"}]},

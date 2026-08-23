@@ -178,13 +178,18 @@ client author needs them.
 - **An offline agent looks like a failed task, not an error.** The run
   is recorded `failed` with `agent_offline`, and the task comes back
   `FAILED` with no message part.
-- **No error becomes a JSON-RPC error in core**, and core writes no
-  JSON-RPC at all — not the envelopes, not the method names, not the
-  codes. A task id that names nothing raises A2A's own
-  `TaskNotFoundError`; a task that is not this agent's comes back as
-  `None`, which is what A2A's request-handler interface means by
-  not-found. Unknown thread, thread-ownership mismatch, unknown agent,
-  invalid actor chain and invalid run input escape as Python exceptions.
+- **Core writes no JSON-RPC at all** — not the envelopes, not the method
+  names, not the codes. What it does write is A2A's own error *types*, so
+  a transport needs no translation table of funduq's: a task id naming
+  nothing raises `TaskNotFoundError`, a task that is not this agent's
+  comes back as `None` (what A2A's request-handler interface means by
+  not-found), and an unknown `contextId`, one belonging to another agent,
+  a `kyok` opt-in naming an unregistered offering, or a message that will
+  not build a run input all raise `InvalidParamsError` carrying funduq's
+  own message. Two stay funduq's on purpose, because A2A has no word for
+  either: `AgentNotFound` (the agent is the endpoint, so an unknown one
+  is a routing answer) and `ThreadQueueFull` (backpressure, which is the
+  gateway's 429). An invalid actor chain escapes as a Python exception.
   Which code or HTTP status a caller sees is the gateway's choice, and
   it has to be: **the protocol version a caller speaks rides an
   `A2A-Version` header**, so the gateway is the only party holding the
