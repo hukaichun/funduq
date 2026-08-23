@@ -4,6 +4,8 @@ import asyncio
 import time
 
 import pytest
+
+from tests.conftest import publish_offline
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
 from funduq.core import Funduq
@@ -13,14 +15,7 @@ from funduq.models import AgentRef, AgentRecord, AgentSummary, RunRecord
 
 async def _register(funduq: Funduq, name: str = "translator", provider_name: str | None = "Demo"):
     identity = ProviderIdentity.generate()
-    signature, timestamp = identity.sign_registration([name])
-    registration = await funduq.register_agents(
-        identity.public_key,
-        signature,
-        timestamp,
-        [{"name": name, "description": "d"}],
-        provider_name=provider_name,
-    )
+    registration = await publish_offline(funduq, identity, [{"name": name, "description": "d"}], provider_name=provider_name)
     return registration.agents[name]
 
 

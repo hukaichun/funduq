@@ -60,11 +60,16 @@ class Agent:
         yield {"type": "RUN_FINISHED", **ids}
 
 
-async def register(funduq: Funduq, identity: ProviderIdentity, *names: str):
-    signature, timestamp = identity.sign_registration(list(names))
-    return await funduq.register_agents(
-        identity.public_key, signature, timestamp, [{"name": n} for n in names]
-    )
+async def serve(funduq: Funduq, identity: ProviderIdentity, *names: str):
+    """Open a link and publish `names` on it — the two acts, in order. Returns
+    the runtime and the link, since the link is the credential for anything
+    else this provider does to its roster."""
+    runtime = ProviderRuntime(identity, Agent())
+    runtime.start()
+    link = InProcessLink(funduq, runtime)
+    await funduq.attach_provider(link)
+    await funduq.register_agents(link, [{"name": n} for n in names])
+    return runtime, link
 
 
 class Findings:
@@ -107,24 +112,24 @@ async def main() -> int:
     await funduq.start()
 
     # --- 1. a name this key never registered (a typo, a wrong config)
-    print("\n[1] a provider attaches for a name it never registered")
+    print("\n[1] a provider publishes a name that is a typo")
     identity = ProviderIdentity(Ed25519PrivateKey.generate())
-    await register(funduq, identity, "translator")
-    runtime = ProviderRuntime(identity, Agent())
-    runtime.start()
+    runtime, _link = await serve(funduq, identity, "translatr")
     try:
-        await funduq.attach_provider(InProcessLink(funduq, runtime), ["translatr"])
-        outcome = "attached, and will now be offered nothing, forever"
-        silent = True
-    except Exception as exc:
-        outcome = f"{type(exc).__name__}: {exc}"
-        silent = False
-    findings.record(
-        "a name never registered",
-        silent,
-        f"attach_provider {outcome} — the question the old `claim_work` answered "
-        "on every call is asked once here, before any run exists",
-    )
+        served = funduq.is_serving(
+            AgentRef(provider_key=identity.public_key, name="translatr")
+        )
+        findings.record(
+            "a name never registered",
+            False,
+            "cannot happen any more: publishing *is* registering, so there is no "
+            "second place for the roster to disagree with. Whatever the provider "
+            f"says is what it serves (serving 'translatr': {served}). funduq used to "
+            "refuse an attach for a name the key had not registered — a mismatch "
+            "between two places that now has only one",
+        )
+    finally:
+        await runtime.aclose(cancel_in_flight=True)
 
     # --- 2. a caller's run for an agent nobody is serving
     print("[2] a run is started for an agent no provider is attached to")
@@ -134,8 +139,14 @@ async def main() -> int:
     )
     await quick.start()
     lonely = ProviderIdentity(Ed25519PrivateKey.generate())
-    registered = await register(quick, lonely, "unserved")
-    handle = await quick.start_run(registered.agents["unserved"], {"messages": []})
+    # Registered and then gone: a run is only ever born with a provider
+    # online, so being nobody's takes losing one rather than never having had
+    # one.
+    lonely_runtime, lonely_link = await serve(quick, lonely, "unserved")
+    agent = AgentRef(provider_key=lonely.public_key, name="unserved")
+    handle = await quick.start_run(agent, {"messages": []})
+    quick.detach_provider(lonely.public_key, lonely_link)
+    await lonely_runtime.aclose(cancel_in_flight=True)
     [_ async for _ in handle.events()]
     async with asyncio.timeout(5):
         while handle.run_id in quick.active_runs():
@@ -153,10 +164,7 @@ async def main() -> int:
     # --- 3. the database is replaced under an attached provider
     print("[3] funduq's database is replaced while a provider stays attached")
     identity = ProviderIdentity(Ed25519PrivateKey.generate())
-    await register(funduq, identity, "steady")
-    runtime = ProviderRuntime(identity, Agent())
-    runtime.start()
-    await funduq.attach_provider(InProcessLink(funduq, runtime), ["steady"])
+    runtime, _link = await serve(funduq, identity, "steady")
     async with funduq.session() as session:
         for table in (run_events, thread_messages, runs, threads, agents, providers):
             await session.execute(delete(table))
@@ -170,7 +178,8 @@ async def main() -> int:
         still_registered,
         f"broker still routes 'steady' to it: {still_registered}; roster now {roster} "
         "— funduq has no row for this agent and no way to say so, because nothing "
-        "asks. The provider finds out by re-attaching, which is scenario 1",
+        "asks. The provider finds out by publishing again, which is what "
+        "probe_registration_survives_a_new_database walks through",
         must_answer=False,
     )
 

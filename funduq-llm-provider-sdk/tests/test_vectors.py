@@ -5,37 +5,20 @@ from pathlib import Path
 
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
-from funduq_llm_provider_sdk import ProviderIdentity, llm_deletion_payload, llm_registration_payload
+from funduq_llm_provider_sdk import ProviderIdentity
 
 VECTORS = json.loads((Path(__file__).parent.parent.parent / "docs" / "contract-vectors.json").read_text())
 
 
-def test_this_side_reproduces_the_llm_registration_vector():
-    identity = ProviderIdentity(
-        Ed25519PrivateKey.from_private_bytes(
-            bytes.fromhex(VECTORS["test_key"]["private_key_hex"])
-        )
-    )
-    (vector,) = [v for v in VECTORS["vectors"] if v["kind"] == "llm-registration"]
+def test_this_side_publishes_no_payload_of_its_own_any_more():
+    """An LLM provider's roster acts used to be two signed families of their
+    own. They are operations on its open link now — the link proved the key,
+    and re-proving it per operation is what those families were doing — so
+    there is nothing left here to reproduce a vector for. Registration and
+    deletion are exercised through funduq itself, in the core suite."""
+    import funduq_llm_provider_sdk as sdk
 
-    payload = llm_registration_payload(vector["inputs"]["names"], vector["inputs"]["timestamp"])
-
-    assert payload == vector["payload_utf8"].encode()
-    assert identity.sign(payload) == vector["signature_hex"]
-
-
-def test_this_side_reproduces_the_llm_deletion_vector():
-    identity = ProviderIdentity(
-        Ed25519PrivateKey.from_private_bytes(
-            bytes.fromhex(VECTORS["test_key"]["private_key_hex"])
-        )
-    )
-    (vector,) = [v for v in VECTORS["vectors"] if v["kind"] == "llm-deletion"]
-
-    payload = llm_deletion_payload(vector["inputs"]["name"], vector["inputs"]["timestamp"])
-
-    assert payload == vector["payload_utf8"].encode()
-    assert identity.sign(payload) == vector["signature_hex"]
+    assert not [name for name in dir(sdk) if name.endswith("_payload")]
 
 
 def test_the_delivered_completion_frame_round_trips_through_the_declared_model():

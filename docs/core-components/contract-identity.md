@@ -10,34 +10,51 @@ This page describes how each verifying piece works.
 Every signed operation reduces to the same primitive: build a canonical
 byte string, verify an Ed25519 signature over exactly those bytes. The
 payloads are colon-joined text under a **domain tag** —
-`funduq-register:{sorted names}:{timestamp}`,
-`funduq-delete-agent:{name}:{timestamp}`,
-`funduq-kyok-call:{token}:{timestamp}:{sha256 of body}`, and so on for the
-seven families — names sorted so order can't change the bytes, the tag
-first so a signature captured for one purpose is meaningless for
-another. Timestamped families are accepted within a ±60s freshness
-window of funduq's clock.
+`funduq-kyok-call:{token}:{timestamp}:{sha256 of body}`,
+`funduq-connect-provider:{pinned funduq key}:{ticket}:{provider nonce}`,
+and so on for the three families — the tag first, so a signature captured
+for one purpose is meaningless for another. Timestamped families are
+accepted within a ±60s freshness window of funduq's clock.
 
-## Link-open challenges
+**A provider's roster acts are not among them.** Registering and deleting
+were four families once, one per roster and verb, each re-proving with a
+self-chosen timestamp that the caller held a key that had already been
+proved when its link opened. They are operations on the open link now
+(see [the handshake](../writing-a-transport.md)), and nothing signs
+them.
+
+## Link-open tickets
 
 Connect authentication cannot ride a timestamp (self-chosen freshness is
-replayable for its whole window), so it answers a challenge funduq chose:
-funduq mints a random single-use nonce and remembers it with its issue
-time; the connecting provider signs
-`funduq-connect-provider:{pinned funduq key}:{funduq nonce}:{provider nonce}:{sorted names}`
+replayable for its whole window), so it answers a ticket funduq issued.
+`issue_ticket(public_key)` mints a random single-use value and remembers
+it **with the key it admits** and its issue time; the connecting provider
+signs
+`funduq-connect-provider:{pinned funduq key}:{ticket}:{provider nonce}`
 — the first field names the recipient, so a proof one funduq coaxes out
-cannot be relayed to attach at another; verification **consumes** the
-nonce (a second use fails), checks it was issued recently, and builds
-the payload with this funduq's *own* key, so a proof bound elsewhere
-fails the signature. funduq answers in kind: `attach` returns its own
-signature — the `FunduqIdentity` keypair over
-`funduq-connect-funduq:{both nonces}` — for the transport to relay, and
-hands it to any connection exposing `confirm_connect` before the attach
-commits, which is where a provider checks it against the funduq key it
-pinned and refuses an imposter. In-process connections go through the
-identical ceremony automatically: challenged, verified, and answered at
-attach. A funduq with no identity configured answers nothing — it cannot
-prove itself, and only a pinning provider treats that as a failure.
+cannot be relayed to attach at another.
+
+Verification matches the ticket's key against the connecting key
+**first**, then destroys it, then checks the signature against a payload
+built with this funduq's *own* key. That order is load-bearing twice
+over: a leaked ticket is useless to anyone but the key it names, and a
+stranger cannot spend someone else's admission with a garbage proof —
+which a version that destroyed first allowed, as a denial needing no key
+at all.
+
+funduq answers in kind: `attach` returns its own signature — the
+`FunduqIdentity` keypair over `funduq-connect-funduq:{ticket}:{provider
+nonce}` — for the transport to relay, and hands it to any connection
+exposing `confirm_connect` before the link is recorded open, which is
+where a provider checks it against the funduq key it pinned and refuses
+an imposter. In-process connections go through the identical ceremony
+automatically: ticketed, verified, and answered. A funduq with no
+identity configured answers nothing — it cannot prove itself, and only a
+pinning provider treats that as a failure.
+
+Issuing a ticket is **not** an operation on a connection and cannot
+become one: one fetched over the link would mean the link existed before
+anything authorised it.
 
 ## Actor chain verification
 

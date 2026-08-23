@@ -3,6 +3,8 @@ from __future__ import annotations
 import time
 
 import pytest
+
+from tests.conftest import publish_offline
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
 from funduq.errors import AgentNotFound
@@ -25,10 +27,7 @@ class TwoAgentProvider:
 
 async def _register(funduq, *names: str):
     identity = ProviderIdentity.generate()
-    signature, timestamp = identity.sign_registration(list(names))
-    registration = await funduq.register_agents(
-        identity.public_key, signature, timestamp, [{"name": n} for n in names]
-    )
+    registration = await publish_offline(funduq, identity, [{"name": n} for n in names])
     return registration, identity
 
 
@@ -74,9 +73,14 @@ async def test_the_run_input_itself_still_carries_no_agent_id(funduq, attach):
     assert not {"agentId", "agent_id"} & seen["keys"]
 
 
-async def test_a_provider_cannot_attach_an_agent_it_did_not_register(funduq, attach):
-    _mine, identity = await _register(funduq, "mine")
-    await _register(funduq, "theirs")
+async def test_a_provider_serves_what_it_published_and_nothing_else(funduq, attach):
+    """Attaching names nothing any more — publishing is what puts a name live,
+    and a provider can only publish under its own key. There is no longer a
+    way to ask for someone else's agent: the request has nowhere to say it."""
+    mine, identity = await _register(funduq, "mine")
+    theirs, _other = await _register(funduq, "theirs")
 
-    with pytest.raises(AgentNotFound):
-        await attach(identity, TwoAgentProvider(), ["mine", "theirs"])
+    await attach(identity, TwoAgentProvider(), ["mine"])
+
+    assert funduq.is_serving(mine.agents["mine"])
+    assert not funduq.is_serving(theirs.agents["theirs"])

@@ -4,28 +4,20 @@ import json
 from pathlib import Path
 
 from funduq.identity import (
-    agent_deletion_signing_payload,
     delegation_signing_payload,
     cancel_signing_payload,
     resolve_signing_payload,
     provider_connect_signing_payload,
     funduq_connect_signing_payload,
-    llm_deletion_signing_payload,
     kyok_call_signing_payload,
-    llm_registration_signing_payload,
-    registration_signing_payload,
     verify_signature,
 )
 
 VECTORS = json.loads((Path(__file__).parent.parent.parent / "docs" / "contract-vectors.json").read_text())
 
 BUILDERS = {
-    "agent-registration": lambda i: registration_signing_payload(i["names"], i["timestamp"]),
-    "llm-registration": lambda i: llm_registration_signing_payload(i["names"], i["timestamp"]),
-    "agent-deletion": lambda i: agent_deletion_signing_payload(i["agent_name"], i["timestamp"]),
-    "llm-deletion": lambda i: llm_deletion_signing_payload(i["name"], i["timestamp"]),
     "provider-connect": lambda i: provider_connect_signing_payload(
-        i["funduq_public_key"], i["funduq_nonce"], i["provider_nonce"], i["names"]
+        i["funduq_public_key"], i["funduq_nonce"], i["provider_nonce"]
     ),
     "funduq-connect": lambda i: funduq_connect_signing_payload(i["funduq_nonce"], i["provider_nonce"]),
     "kyok-call": lambda i: kyok_call_signing_payload(

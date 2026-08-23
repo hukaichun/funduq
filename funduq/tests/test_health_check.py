@@ -12,6 +12,8 @@ from funduq.core import Funduq
 from funduq.db_schema import EXPECTED_SCHEMA_REVISION
 from funduq_provider_sdk import ProviderIdentity
 
+from tests.conftest import publish_offline
+
 
 
 def test_the_expected_revision_matches_the_migrations_actual_head() -> None:
@@ -121,8 +123,7 @@ async def test_the_database_accepts_every_status_the_code_can_write(funduq) -> N
     from funduq.schema import RUN_STATUSES, runs
 
     identity = ProviderIdentity.generate()
-    signature, timestamp = identity.sign_registration(["statuses"])
-    await funduq.register_agents(identity.public_key, signature, timestamp, [{"name": "statuses"}])
+    await publish_offline(funduq, identity, [{"name": "statuses"}])
     agent = AgentRef(provider_key=identity.public_key, name="statuses")
 
     async with funduq.session() as session:

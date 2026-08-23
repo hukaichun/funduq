@@ -6,8 +6,11 @@ import pytest
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
 from funduq.errors import AgentNotFound, InvalidRegistration
-from funduq.identity import registration_signing_payload
-from funduq_provider_sdk import ProviderIdentity
+from funduq_provider_sdk import InProcessLink, ProviderIdentity, ProviderRuntime
+
+from funduq.models import AgentRef
+
+from tests.conftest import publish_offline
 
 
 class LocalProvider:
@@ -16,45 +19,48 @@ class LocalProvider:
         yield {"type": "RUN_FINISHED", "threadId": run_input.thread_id, "runId": run_input.run_id}
 
 
-def _signed(identity: ProviderIdentity, names: list[str]) -> tuple[str, str, int]:
-    signature, timestamp = identity.sign_registration(names)
-    return identity.public_key, signature, timestamp
-
-
 async def _register(funduq, name: str = "local"):
     identity = ProviderIdentity.generate()
-    public_key, signature, timestamp = _signed(identity, [name])
-    registration = await funduq.register_agents(
-        public_key, signature, timestamp, [{"name": name}]
-    )
+    registration = await publish_offline(funduq, identity, [{"name": name}])
     return registration, identity, registration.agents[name]
 
 
-async def test_registration_must_prove_it_holds_the_key(funduq):
+async def test_in_process_still_answers_a_ticket_like_anyone_else(funduq):
+    """Sharing a process is not a reason to skip the ceremony. The link mints
+    a ticket for its own key, signs it, and has the signature verified — and
+    it is the same code path a link across a wire takes."""
     identity = ProviderIdentity.generate()
-    public_key, _signature, timestamp = _signed(identity, ["a"])
+    runtime = ProviderRuntime(identity, LocalProvider())
+    runtime.start()
+    try:
+        link = InProcessLink(funduq, runtime)
+        await funduq.attach_provider(link)
+        await funduq.register_agents(link, [{"name": "local"}])
 
-    with pytest.raises(InvalidRegistration):
-        await funduq.register_agents(public_key, "00" * 64, timestamp, [{"name": "a"}])
-
-
-async def test_registration_refuses_a_stale_timestamp(funduq):
-    key = Ed25519PrivateKey.generate()
-    stale = int(time.time()) - 3600
-    payload = registration_signing_payload(["a"], stale)
-
-    with pytest.raises(InvalidRegistration):
-        await funduq.register_agents(
-            key.public_key().public_bytes_raw().hex(),
-            key.sign(payload).hex(),
-            stale,
-            [{"name": "a"}],
-        )
+        assert funduq.is_serving(AgentRef(provider_key=identity.public_key, name="local"))
+    finally:
+        await runtime.aclose()
 
 
-async def test_attaching_an_unregistered_agent_is_refused(funduq, attach):
-    with pytest.raises(AgentNotFound):
-        await attach(ProviderIdentity.generate(), LocalProvider(), ["agent_never_registered"])
+async def test_publishing_less_than_last_time_takes_the_rest_offline(funduq):
+    """Not registered is offline. The names a link serves are exactly the ones
+    it last published, so a shorter roster is how a provider stops offering
+    something — the record stays."""
+    identity = ProviderIdentity.generate()
+    runtime = ProviderRuntime(identity, LocalProvider())
+    runtime.start()
+    try:
+        link = InProcessLink(funduq, runtime)
+        await funduq.attach_provider(link)
+        await funduq.register_agents(link, [{"name": "kept"}, {"name": "dropped"}])
+        assert {a.name for a in await funduq.list_agents() if a.online} == {"kept", "dropped"}
+
+        await funduq.register_agents(link, [{"name": "kept"}])
+
+        roster = {a.name: a.online for a in await funduq.list_agents()}
+        assert roster == {"kept": True, "dropped": False}
+    finally:
+        await runtime.aclose()
 
 
 async def test_an_attached_provider_is_actually_online_and_reachable(funduq, attach):

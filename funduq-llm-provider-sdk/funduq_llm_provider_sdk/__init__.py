@@ -6,12 +6,6 @@ from funduq_llm_provider_sdk.contract import (
     DELIVERED_COMPLETION_FIELDS,
     KYOK_FORWARDED_PROPS_KEY,
 )
-from funduq_llm_provider_sdk.identity import (
-    llm_deletion_payload,
-    llm_registration_payload,
-    sign_llm_deletion,
-    sign_llm_registration,
-)
 from funduq_llm_provider_sdk.inprocess import InProcessLLMProvider
 from funduq_llm_provider_sdk.link import FunduqLLMLink
 from funduq_llm_provider_sdk.provider import (
@@ -31,8 +25,4 @@ __all__ = [
     "InProcessLLMProvider",
     "FunduqLLMLink",
     "ProviderIdentity",
-    "llm_deletion_payload",
-    "llm_registration_payload",
-    "sign_llm_deletion",
-    "sign_llm_registration",
 ]

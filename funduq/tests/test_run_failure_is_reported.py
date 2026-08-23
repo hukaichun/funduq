@@ -6,6 +6,8 @@ from funduq_provider_sdk import InProcessLink, ProviderIdentity, ProviderRuntime
 
 import pytest
 
+from tests.conftest import publish_agents, publish_offline
+
 from funduq import health, repo
 from funduq.config import CoreSettings
 from funduq.broker import RunBroker
@@ -39,10 +41,7 @@ async def _until(predicate, timeout: float = 5.0) -> None:
 
 async def _register(funduq, *names: str):
     identity = ProviderIdentity.generate()
-    signature, timestamp = identity.sign_registration(list(names))
-    registration = await funduq.register_agents(
-        identity.public_key, signature, timestamp, [{"name": n} for n in names]
-    )
+    registration = await publish_offline(funduq, identity, [{"name": n} for n in names])
     return registration, identity
 
 
@@ -56,7 +55,7 @@ async def brisk(settings: CoreSettings):
         runtime = ProviderRuntime(identity, provider)
         runtimes.append(runtime)
         runtime.start()
-        await funduq.attach_provider(InProcessLink(funduq, runtime), list(names))
+        await publish_agents(funduq, InProcessLink(funduq, runtime), list(names))
         return runtime
 
     funduq.attach = _attach
@@ -115,7 +114,8 @@ async def test_a_permanent_refusal_fails_the_run_with_the_providers_reason(brisk
             pass
 
     link = Refuses()
-    await brisk.attach_provider(link, [agent_id.name])
+    await brisk.attach_provider(link)
+    await brisk.register_agents(link, [{"name": agent_id.name}])
     handle = await brisk.start_run(agent_id, {"messages": []})
 
     events = [e async for e in handle.events()]
@@ -226,7 +226,7 @@ async def test_a_run_nobody_ever_comes_for_is_given_up_on(settings: CoreSettings
         )
         runtime.start()
         link = InProcessLink(funduq, runtime)
-        await funduq.attach_provider(link, ["unserved"])
+        await publish_agents(funduq, link, ["unserved"])
 
         # Fills the declared capacity and never finishes, so the next run is
         # declined and sits queued rather than being offered.
@@ -234,8 +234,13 @@ async def test_a_run_nobody_ever_comes_for_is_given_up_on(settings: CoreSettings
         await _until(lambda: busy.run_id in funduq.active_runs())
         handle = await funduq.start_run(agent, {"messages": []})
 
+        # No provider has accepted it — which is either of the two pending
+        # statuses, depending on whether the offer that will be declined has
+        # gone out yet. Asserting the exact one makes this a race with the
+        # database's own speed, not a statement about the run.
         async with funduq.session() as session:
-            assert (await repo.get_run(session, handle.run_id)).status == "queued"
+            status = (await repo.get_run(session, handle.run_id)).status
+        assert status in repo.PENDING_RUN_STATUSES
 
         funduq.detach_provider(identity.public_key, link)
         assert not funduq.is_serving(agent)
@@ -333,7 +338,7 @@ async def test_a_provider_that_leaves_holding_a_run_fails_it_at_once(settings: C
         runtime = ProviderRuntime(identity, provider)
         runtime.start()
         link = InProcessLink(funduq, runtime)
-        await funduq.attach_provider(link, ["held"])
+        await publish_agents(funduq, link, ["held"])
 
         handle = await funduq.start_run(agent, {"messages": []})
         await asyncio.wait_for(provider.started.wait(), 5)
@@ -375,7 +380,7 @@ async def test_a_provider_that_is_merely_quiet_keeps_its_run(settings: CoreSetti
         provider = BlockedProvider()
         runtime = ProviderRuntime(identity, provider)
         runtime.start()
-        await funduq.attach_provider(InProcessLink(funduq, runtime), ["thinking"])
+        await publish_agents(funduq, InProcessLink(funduq, runtime), ["thinking"])
 
         handle = await funduq.start_run(agent, {"messages": []})
         await asyncio.wait_for(provider.started.wait(), 5)
@@ -414,7 +419,7 @@ async def test_a_provider_that_delivers_nothing_is_counted_not_cut_off(settings:
         provider = BlockedProvider()          # emits RUN_STARTED, then nothing, forever
         runtime = ProviderRuntime(identity, provider)
         runtime.start()
-        await funduq.attach_provider(InProcessLink(funduq, runtime), ["squatter"])
+        await publish_agents(funduq, InProcessLink(funduq, runtime), ["squatter"])
 
         handle = await funduq.start_run(agent, {"messages": []})
         await asyncio.wait_for(provider.started.wait(), 5)
@@ -461,7 +466,7 @@ async def test_one_run_never_counts_twice_against_its_provider(settings: CoreSet
         runtime = ProviderRuntime(identity, provider)
         runtime.start()
         link = InProcessLink(funduq, runtime)
-        await funduq.attach_provider(link, ["slow-then-gone"])
+        await publish_agents(funduq, link, ["slow-then-gone"])
 
         handle = await funduq.start_run(agent, {"messages": []})
         await asyncio.wait_for(provider.started.wait(), 5)

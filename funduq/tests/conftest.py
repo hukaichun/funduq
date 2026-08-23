@@ -15,6 +15,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from funduq.config import CoreSettings
 from funduq.core import Funduq
+from funduq.models import AgentRef
 from funduq.migrate import migrate as funduq_migrate
 from funduq_provider_sdk import InProcessLink, ProviderIdentity, ProviderRuntime
 
@@ -94,14 +95,36 @@ class Identity(ProviderIdentity):
     def sign_chain_hop(self, prev_token: str | None = None, exp_offset: int = 300) -> str:
         return self.sign_hop(prev_token, ttl=exp_offset)
 
-    def register_body(self, agents: list[dict]) -> dict:
-        signature, timestamp = self.sign_registration([a["name"] for a in agents])
-        return {
-            "public_key": self.public_key,
-            "signature": signature,
-            "timestamp": timestamp,
-            "agents": agents,
-        }
+
+
+async def publish_agents(funduq: Funduq, link, names: list[str]):
+    """Open `link` and publish `names` on it — the two acts the handshake now
+    separates, in the order it requires."""
+    await funduq.attach_provider(link)
+    return await funduq.register_agents(link, [{"name": n} for n in names])
+
+
+async def publish_llm(funduq: Funduq, link, names: list[str], metadata=None):
+    """The LLM-offering mirror of `publish_agents`."""
+    await funduq.attach_llm_provider(link)
+    return await funduq.register_llm_providers(link, names, metadata)
+
+
+async def publish_offline(funduq: Funduq, identity, agents: list[dict], provider_name=None):
+    """Register `agents` under `identity` and leave them registered-but-offline.
+
+    That state has one road to it now: open a link, publish on it, close the
+    link. Nothing can be published without one, which is the point — you
+    cannot advertise an agent you were never able to serve.
+    """
+    runtime = ProviderRuntime(identity, EchoAgent())
+    runtime.start()
+    link = InProcessLink(funduq, runtime)
+    await funduq.attach_provider(link)
+    registration = await funduq.register_agents(link, agents, provider_name=provider_name)
+    funduq.detach_provider(identity.public_key, link)
+    await runtime.aclose()
+    return registration
 
 
 @pytest.fixture
@@ -111,14 +134,23 @@ def new_identity() -> type[Identity]:
 
 @pytest.fixture
 async def attach(funduq: Funduq):
+    """Open a link and publish `names` on it — the order the handshake now has.
+
+    Returns `(runtime, link)`: the link is the credential for anything else
+    this provider does to its roster, so tests that register more or delete
+    need it.
+    """
     started: list[ProviderRuntime] = []
 
-    async def _attach(identity: ProviderIdentity, provider, names, **kwargs) -> ProviderRuntime:
+    async def _attach(identity: ProviderIdentity, provider, names, **kwargs):
         runtime = ProviderRuntime(identity, provider, **kwargs)
         started.append(runtime)
         runtime.start()
-        await funduq.attach_provider(InProcessLink(funduq, runtime), list(names))
-        return runtime
+        link = InProcessLink(funduq, runtime)
+        await funduq.attach_provider(link)
+        if names:
+            await funduq.register_agents(link, [{"name": n} for n in names])
+        return runtime, link
 
     yield _attach
     for runtime in started:
@@ -147,6 +179,7 @@ class Served:
     provider: Any
     runtime: ProviderRuntime
     agents: dict
+    link: Any = None
 
 
 @pytest.fixture
@@ -156,12 +189,11 @@ async def serve(funduq: Funduq, attach):
         provider = EchoAgent() if provider is None else provider
         names = names or ("agent",)
         identity = Identity()
-        signature, timestamp = identity.sign_registration(list(names))
-        registration = await funduq.register_agents(
-            identity.public_key, signature, timestamp, [{"name": n} for n in names]
-        )
-        runtime = await attach(identity, provider, names, **kwargs)
-        return Served(identity, provider, runtime, registration.agents)
+        runtime, link = await attach(identity, provider, names, **kwargs)
+        agents = {
+            name: AgentRef(provider_key=identity.public_key, name=name) for name in names
+        }
+        return Served(identity, provider, runtime, agents, link)
 
     return _serve
 
@@ -170,11 +202,20 @@ async def serve(funduq: Funduq, attach):
 async def register(funduq: Funduq):
 
     async def _register(*names: str) -> Served:
+        """Registered and then offline — which is now reached the only way it can
+        be: publish on an open link, then close the link. Nothing can be
+        published without one."""
         identity = Identity()
-        signature, timestamp = identity.sign_registration(list(names))
-        registration = await funduq.register_agents(
-            identity.public_key, signature, timestamp, [{"name": n} for n in names]
-        )
-        return Served(identity, None, None, registration.agents)
+        runtime = ProviderRuntime(identity, EchoAgent())
+        runtime.start()
+        link = InProcessLink(funduq, runtime)
+        await funduq.attach_provider(link)
+        await funduq.register_agents(link, [{"name": n} for n in names])
+        funduq.detach_provider(identity.public_key, link)
+        await runtime.aclose()
+        agents = {
+            name: AgentRef(provider_key=identity.public_key, name=name) for name in names
+        }
+        return Served(identity, None, None, agents)
 
     return _register

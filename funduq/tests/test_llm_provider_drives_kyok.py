@@ -25,10 +25,9 @@ from funduq_llm_provider_sdk import (
     DeliveredCompletion,
     InProcessLLMProvider,
     ProviderIdentity,
-    sign_llm_registration,
 )
 
-from tests.conftest import Identity
+from tests.conftest import Identity, publish_llm
 
 
 def _chunk(text: str, *, role: bool = False, finish: str | None = None) -> ChatCompletionChunk:
@@ -66,10 +65,8 @@ class StubLLM:
 @pytest.fixture
 async def llm(funduq):
     identity = ProviderIdentity.generate()
-    signature, timestamp = sign_llm_registration(identity, ["gpt4"])
-    await funduq.register_llm_providers(identity.public_key, signature, timestamp, ["gpt4"])
     stub = StubLLM()
-    await funduq.attach_llm_provider(InProcessLLMProvider(identity, stub), ["gpt4"])
+    await publish_llm(funduq, InProcessLLMProvider(identity, stub), ["gpt4"])
     ref = LlmRef(provider_key=identity.public_key, name="gpt4")
     yield stub, identity, ref
     funduq.detach_all_for(identity.public_key)
@@ -512,10 +509,8 @@ async def test_a_run_without_the_opt_in_gets_no_token(funduq, serve):
 async def test_two_providers_may_both_offer_gpt4(funduq, serve, llm):
     stub_a, _, ref_a = llm
     other = ProviderIdentity.generate()
-    signature, timestamp = sign_llm_registration(other, ["gpt4"])
-    await funduq.register_llm_providers(other.public_key, signature, timestamp, ["gpt4"])
     stub_b = StubLLM(answer="other answer")
-    await funduq.attach_llm_provider(InProcessLLMProvider(other, stub_b), ["gpt4"])
+    await publish_llm(funduq, InProcessLLMProvider(other, stub_b), ["gpt4"])
     try:
         agent = KyokTokenAgent()
         served, stream = await _run_with_token(
@@ -542,14 +537,14 @@ async def test_attach_touches_and_announces_like_attach_provider(funduq):
     unsubscribe = funduq.on_change(events.append)
     try:
         identity = ProviderIdentity.generate()
-        signature, timestamp = sign_llm_registration(identity, ["m"])
-        await funduq.register_llm_providers(identity.public_key, signature, timestamp, ["m"])
+        link = InProcessLLMProvider(identity, StubLLM())
+        await publish_llm(funduq, link, ["m"])
         async with funduq.session() as session:
             before = (await repo.get_llm_provider(
                 session, LlmRef(provider_key=identity.public_key, name="m")
             ))["last_seen_at"]
 
-        await funduq.attach_llm_provider(InProcessLLMProvider(identity, StubLLM()), ["m"])
+        await funduq.register_llm_providers(link, ["m"])
         async with funduq.session() as session:
             after = (await repo.get_llm_provider(
                 session, LlmRef(provider_key=identity.public_key, name="m")
@@ -558,6 +553,8 @@ async def test_attach_touches_and_announces_like_attach_provider(funduq):
 
         funduq.detach_all_for(identity.public_key)
         funduq.detach_all_for(identity.public_key)
+        # Two publishes and one detach; opening the link announced nothing,
+        # because opening a link puts no offering on the roster.
         assert [type(e) for e in events].count(LlmRosterChanged) == 3
     finally:
         unsubscribe()
@@ -565,11 +562,9 @@ async def test_attach_touches_and_announces_like_attach_provider(funduq):
 
 async def test_list_llm_providers_mirrors_list_agents(funduq):
     identity = ProviderIdentity.generate()
-    signature, timestamp = sign_llm_registration(identity, ["served", "idle"])
-    await funduq.register_llm_providers(
-        identity.public_key, signature, timestamp, ["served", "idle"], {"tier": "gold"}
-    )
-    await funduq.attach_llm_provider(InProcessLLMProvider(identity, StubLLM()), ["served"])
+    link = InProcessLLMProvider(identity, StubLLM())
+    await publish_llm(funduq, link, ["served", "idle"], {"tier": "gold"})
+    await funduq.register_llm_providers(link, ["served"], {"tier": "gold"})
 
     roster = {s.name: s for s in await funduq.list_llm_providers()}
 
@@ -581,16 +576,10 @@ async def test_list_llm_providers_mirrors_list_agents(funduq):
 
 async def test_reregistering_a_subset_withdraws_the_omitted_offering(funduq):
     identity = ProviderIdentity.generate()
-    signature, timestamp = sign_llm_registration(identity, ["gpt4", "gpt5"])
-    await funduq.register_llm_providers(
-        identity.public_key, signature, timestamp, ["gpt4", "gpt5"]
-    )
-    await funduq.attach_llm_provider(
-        InProcessLLMProvider(identity, StubLLM()), ["gpt4", "gpt5"]
-    )
+    link = InProcessLLMProvider(identity, StubLLM())
+    await publish_llm(funduq, link, ["gpt4", "gpt5"])
 
-    signature, timestamp = sign_llm_registration(identity, ["gpt4"])
-    await funduq.register_llm_providers(identity.public_key, signature, timestamp, ["gpt4"])
+    await funduq.register_llm_providers(link, ["gpt4"])
 
     kept = LlmRef(provider_key=identity.public_key, name="gpt4")
     dropped = LlmRef(provider_key=identity.public_key, name="gpt5")
@@ -600,45 +589,44 @@ async def test_reregistering_a_subset_withdraws_the_omitted_offering(funduq):
         assert await repo.get_llm_provider(session, dropped) is not None
 
 
-async def test_an_unregistered_llm_provider_cannot_attach(funduq):
+async def test_an_offering_is_live_only_where_it_was_published(funduq):
+    """Opening a link names nothing, so there is no longer an unregistered
+    offering to refuse at the door: a lurker that opens a link serves nothing
+    until it publishes, and it can only publish under its own key."""
     lurker = InProcessLLMProvider(ProviderIdentity.generate(), StubLLM())
-    with pytest.raises(LlmProviderNotFound):
-        await funduq.attach_llm_provider(lurker, ["gpt4"])
+    await funduq.attach_llm_provider(lurker)
+
+    assert await funduq.list_llm_providers() == []
 
 
 async def test_deleting_an_offering_mirrors_delete_agent(funduq):
-    from funduq_llm_provider_sdk import sign_llm_deletion
-
     from funduq.errors import InvalidRegistration, LlmOfferingInUse
     from funduq.kyok import KyokBinding
 
     identity = ProviderIdentity.generate()
-    signature, timestamp = sign_llm_registration(identity, ["gone"])
-    await funduq.register_llm_providers(identity.public_key, signature, timestamp, ["gone"])
     ref = LlmRef(provider_key=identity.public_key, name="gone")
+    link = InProcessLLMProvider(identity, StubLLM())
 
-    signature, timestamp = sign_llm_deletion(identity, "never-registered")
-    with pytest.raises(LlmProviderNotFound):
-        await funduq.delete_llm_offering(identity.public_key, "never-registered", signature, timestamp)
-
-    signature, timestamp = sign_llm_deletion(identity, "something-else")
+    # Nothing may be deleted from a closed link — there is no signature to
+    # present instead.
     with pytest.raises(InvalidRegistration):
-        await funduq.delete_llm_offering(identity.public_key, "gone", signature, timestamp)
+        await funduq.delete_llm_offering(link, "gone")
 
-    await funduq.attach_llm_provider(InProcessLLMProvider(identity, StubLLM()), ["gone"])
-    signature, timestamp = sign_llm_deletion(identity, "gone")
-    with pytest.raises(LlmOfferingInUse) as exc:
-        await funduq.delete_llm_offering(identity.public_key, "gone", signature, timestamp)
-    assert exc.value.reason == "connected"
+    await publish_llm(funduq, link, ["gone"])
+    with pytest.raises(LlmProviderNotFound):
+        await funduq.delete_llm_offering(link, "never-registered")
 
-    funduq.detach_all_for(identity.public_key)
+    # Serving it is no longer a refusal: the caller *is* what serves it, and
+    # deleting takes it offline on the way. A run bound to it still refuses —
+    # that is work in flight, not a connection.
     funduq.kyok_relay.bind_run("run-x", KyokBinding(llm_provider=ref))
     with pytest.raises(LlmOfferingInUse) as exc:
-        await funduq.delete_llm_offering(identity.public_key, "gone", signature, timestamp)
+        await funduq.delete_llm_offering(link, "gone")
     assert exc.value.reason == "active_run"
 
     funduq.kyok_relay.discard("run-x")
-    await funduq.delete_llm_offering(identity.public_key, "gone", signature, timestamp)
+    await funduq.delete_llm_offering(link, "gone")
+    assert funduq.kyok_relay.serving(ref) is None
     async with funduq.session() as session:
         assert await repo.get_llm_provider(session, ref) is None
 

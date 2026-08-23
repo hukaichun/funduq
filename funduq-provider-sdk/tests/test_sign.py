@@ -51,14 +51,13 @@ def test_two_identities_do_not_verify_for_each_other():
     assert not _verify(theirs, mine.sign(payload), payload)
 
 
-def test_the_named_signers_still_agree_with_the_general_one():
-    from funduq_provider_sdk import registration_payload
+def test_the_named_signer_still_agrees_with_the_general_one():
+    from funduq_provider_sdk import provider_connect_payload
 
     identity = ProviderIdentity.generate()
-    timestamp = 1755300000
 
-    named, _ = identity.sign_registration(["translator"], timestamp)
-    general = identity.sign(registration_payload(["translator"], timestamp))
+    named = identity.sign_connect("f0", "ticket", "mine")
+    general = identity.sign(provider_connect_payload("f0", "ticket", "mine"))
 
     assert named == general
 
@@ -105,8 +104,8 @@ def test_a_link_open_round_trip_and_neither_proof_reflects_as_the_other():
     funduq_nonce, provider_nonce = new_nonce(), new_nonce()
     assert funduq_nonce != provider_nonce and len(funduq_nonce) == 32
 
-    proof = provider.sign_connect(funduq_key.public_key, funduq_nonce, provider_nonce, ["b", "a"])
-    payload = provider_connect_payload(funduq_key.public_key, funduq_nonce, provider_nonce, ["a", "b"])
+    proof = provider.sign_connect(funduq_key.public_key, funduq_nonce, provider_nonce)
+    payload = provider_connect_payload(funduq_key.public_key, funduq_nonce, provider_nonce)
     assert verify_signature(provider.public_key, proof, payload)
 
     answer = funduq_key.sign(funduq_connect_payload(funduq_nonce, provider_nonce))
@@ -120,17 +119,17 @@ def test_a_link_open_round_trip_and_neither_proof_reflects_as_the_other():
     assert not verify_signature(
         provider.public_key,
         proof,
-        provider_connect_payload(funduq_key.public_key, funduq_nonce, provider_nonce, ["a", "b", "c"]),
+        provider_connect_payload(funduq_key.public_key, "a different ticket", provider_nonce),
     )
     assert not verify_signature(
         provider.public_key,
         proof,
-        provider_connect_payload(funduq_key.public_key, new_nonce(), provider_nonce, ["a", "b"]),
+        provider_connect_payload(funduq_key.public_key, new_nonce(), provider_nonce),
     )
     assert not verify_signature(
         provider.public_key,
         proof,
         provider_connect_payload(
-            ProviderIdentity.generate().public_key, funduq_nonce, provider_nonce, ["a", "b"]
+            ProviderIdentity.generate().public_key, funduq_nonce, provider_nonce
         ),
     ), "a proof bound to one funduq must not verify as a proof for another"

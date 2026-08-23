@@ -12,8 +12,6 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey,
 
 ACTOR_CHAIN_TTL_SECONDS = 300
 
-_REGISTER = "funduq-register"
-_DELETE_AGENT = "funduq-delete-agent"
 _KYOK_CALL = "funduq-kyok-call"
 
 
@@ -31,38 +29,6 @@ def verify_signature(public_key_hex: str, signature_hex: str, payload: bytes) ->
         return False
 
 
-def roster_registration_payload(tag: str, names: list[str], timestamp: int) -> bytes:
-    """One payload shape for registering any roster of served names: sorted (order-independent), joined with `timestamp`, under a domain `tag`.
-
-    Both rosters sign these bytes — agents under `funduq-register`, LLM
-    offerings under `funduq-register-llm` — and the tag is what keeps a
-    signature for one roster unreplayable as the other.
-    """
-    return f"{tag}:{','.join(sorted(names))}:{timestamp}".encode()
-
-
-def sign_roster_registration(
-    identity: "ProviderIdentity", tag: str, names: list[str], timestamp: int | None = None
-) -> tuple[str, int]:
-    """Signs a roster registration payload, defaulting the timestamp to now.
-
-    Returns the `(signature, timestamp)` pair actually signed over, so callers
-    can send both to the verifier.
-    """
-    timestamp = int(time.time()) if timestamp is None else timestamp
-    return identity.sign(roster_registration_payload(tag, names, timestamp)), timestamp
-
-
-def registration_payload(agent_names: list[str], timestamp: int) -> bytes:
-    """Builds the canonical bytes signed for registering agents: `roster_registration_payload` under the agent tag."""
-    return roster_registration_payload(_REGISTER, agent_names, timestamp)
-
-
-def deletion_payload(agent_name: str, timestamp: int) -> bytes:
-    """Builds the canonical bytes signed to delete a single agent, distinct from a registration payload."""
-    return f"{_DELETE_AGENT}:{agent_name}:{timestamp}".encode()
-
-
 def kyok_call_payload(bearer: str, timestamp: int, body_hash: str) -> bytes:
     return f"{_KYOK_CALL}:{bearer}:{timestamp}:{body_hash}".encode()
 
@@ -77,13 +43,13 @@ def new_nonce() -> str:
 
 
 def provider_connect_payload(
-    funduq_public_key: str, funduq_nonce: str, provider_nonce: str, names: list[str]
+    funduq_public_key: str, funduq_nonce: str, provider_nonce: str
 ) -> bytes:
     """Builds the bytes a provider signs to authenticate opening a link.
 
-    `funduq_nonce` is the challenge the funduq being connected to chose — that is
-    what makes a recorded exchange worthless — and the names to be served are
-    bound in (sorted) so they cannot be altered in flight.
+    `funduq_nonce` is a ticket the funduq being connected to issued **to this
+    key** and destroys on use — that is what makes a recorded exchange
+    worthless, and a leaked ticket useless to anyone else.
     `funduq_public_key` is the recipient: the funduq key you pinned (empty
     string for a funduq with no identity). It is what stops a funduq you
     connect to from relaying your proof to attach elsewhere as you — the
@@ -91,13 +57,14 @@ def provider_connect_payload(
     to the wrong funduq fails there. Do not substitute a timestamp for the
     nonce: a self-chosen freshness is replayable for its whole window,
     which is the hole this family exists to close.
+
+    What the link will serve is not in here. Opening a link and putting a
+    name live are two acts: the second happens on the open link, unsigned,
+    because the link already proved the key.
     `funduq.identity.provider_connect_signing_payload` computes this same
     payload independently on funduq's side and both must agree byte-for-byte.
     """
-    return (
-        f"{_CONNECT_PROVIDER}:{funduq_public_key}:{funduq_nonce}:{provider_nonce}:"
-        f"{','.join(sorted(names))}".encode()
-    )
+    return f"{_CONNECT_PROVIDER}:{funduq_public_key}:{funduq_nonce}:{provider_nonce}".encode()
 
 
 class WrongFunduq(Exception):
@@ -179,20 +146,18 @@ class ProviderIdentity:
         """Signs arbitrary bytes and returns the hex-encoded Ed25519 signature."""
         return self._private_key.sign(payload).hex()
 
-    def sign_registration(self, agent_names: list[str], timestamp: int | None = None) -> tuple[str, int]:
-        """Signs `registration_payload(agent_names, timestamp)` (current time if `timestamp` is None) and returns (signature_hex, timestamp)."""
-        return sign_roster_registration(self, _REGISTER, agent_names, timestamp)
-
-    def sign_deletion(self, agent_name: str, timestamp: int | None = None) -> tuple[str, int]:
-        timestamp = int(time.time()) if timestamp is None else timestamp
-        return self._private_key.sign(deletion_payload(agent_name, timestamp)).hex(), timestamp
-
     def sign_connect(
-        self, funduq_public_key: str, funduq_nonce: str, provider_nonce: str, names: list[str]
+        self, funduq_public_key: str, funduq_nonce: str, provider_nonce: str
     ) -> str:
-        """Signs `provider_connect_payload(...)`: this provider's answer to a funduq's link-open challenge, bound to the funduq key it means to connect to."""
+        """Signs `provider_connect_payload(...)`: this provider's answer to the ticket
+        funduq issued to this key, bound to the funduq key it means to connect to.
+
+        What this link will serve is not in here. Opening the link proves the
+        key; publishing an agent and putting it live is a separate act, on the
+        open link (`ProviderRuntime` does it for you).
+        """
         return self.sign(
-            provider_connect_payload(funduq_public_key, funduq_nonce, provider_nonce, names)
+            provider_connect_payload(funduq_public_key, funduq_nonce, provider_nonce)
         )
 
 

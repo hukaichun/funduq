@@ -47,7 +47,7 @@ from sqlalchemy import delete
 from funduq import repo
 from funduq.config import CoreSettings
 from funduq.core import Funduq
-from funduq.identity import provider_connect_signing_payload, registration_signing_payload
+from funduq.identity import provider_connect_signing_payload
 from funduq.schema import agents, run_events, runs, thread_messages, threads
 
 DB = Path(tempfile.gettempdir()) / "funduq_probe_vanish.db"
@@ -83,10 +83,10 @@ class _Taker:
         pass
 
     def sign_connect(
-        self, funduq_public_key: str, funduq_nonce: str, provider_nonce: str, names: list[str]
+        self, funduq_public_key: str, funduq_nonce: str, provider_nonce: str
     ) -> str:
         return self._key.sign(
-            provider_connect_signing_payload(funduq_public_key, funduq_nonce, provider_nonce, names)
+            provider_connect_signing_payload(funduq_public_key, funduq_nonce, provider_nonce)
         ).hex()
 
 
@@ -96,16 +96,11 @@ async def main() -> int:
     await funduq.start()
     key = Ed25519PrivateKey.generate()
     public_key = key.public_key().public_bytes_raw().hex()
-    timestamp = int(time.time())
-    registration = await funduq.register_agents(
-        public_key,
-        key.sign(registration_signing_payload(["a"], timestamp)).hex(),
-        timestamp,
-        [{"name": "a"}],
-    )
+    link = _Taker(key, public_key)
+    await funduq.attach_provider(link)
+    registration = await funduq.register_agents(link, [{"name": "a"}])
     agent = registration.agents["a"]
 
-    await funduq.attach_provider(_Taker(key, public_key), ["a"])
     handle = await funduq.start_run(agent, {"messages": []})
     async with asyncio.timeout(5):
         while funduq.broker.get(handle.run_id).claimed_by is None:

@@ -7,50 +7,6 @@
   },
   "vectors": [
     {
-      "kind": "agent-registration",
-      "inputs": {
-        "names": [
-          "translator",
-          "summarizer"
-        ],
-        "timestamp": 1755500000,
-        "note": "names are sorted before joining; order in this list must not matter"
-      },
-      "payload_utf8": "funduq-register:summarizer,translator:1755500000",
-      "signature_hex": "60ee9ce2bac96827c83622628d2096fe1e0d2727490647f10ec8c9efce232703907beb7d211fc87710bb3226dd356d5c97eeb6817e76d8ef3db5022026d6350e"
-    },
-    {
-      "kind": "llm-registration",
-      "inputs": {
-        "names": [
-          "gpt-4",
-          "claude"
-        ],
-        "timestamp": 1755500000,
-        "note": "names are sorted before joining; order in this list must not matter"
-      },
-      "payload_utf8": "funduq-register-llm:claude,gpt-4:1755500000",
-      "signature_hex": "84fe54f7324a4deed03ad9410fde8b8580bfbdbadb604e3d7ea8e649de153b58989baac73d1f15970dd9f893fc9da808a1ad09a272f0d4037c692f7dee671700"
-    },
-    {
-      "kind": "agent-deletion",
-      "inputs": {
-        "agent_name": "translator",
-        "timestamp": 1755500000
-      },
-      "payload_utf8": "funduq-delete-agent:translator:1755500000",
-      "signature_hex": "fa0305367b9302c4b00fcc52d76f6ad62614bdbfd1b5620a8e0db84e75404f616c19e3219bc182bd2bef2b17d26e7ca19e03b306618b2d53da8c079e92bb8209"
-    },
-    {
-      "kind": "llm-deletion",
-      "inputs": {
-        "name": "gpt-4",
-        "timestamp": 1755500000
-      },
-      "payload_utf8": "funduq-delete-llm:gpt-4:1755500000",
-      "signature_hex": "afc362ed6e38e59bc50eac5535738d8da223790531afac27e0f3f77571d7cce81641be0d16a5770759735418612925b162d79c9cdd87795157ff2b45d2183503"
-    },
-    {
       "kind": "kyok-call",
       "inputs": {
         "bearer": "bearer-token-abc",
@@ -67,14 +23,11 @@
         "funduq_public_key": "d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0",
         "funduq_nonce": "b7b7b7b7b7b7b7b7b7b7b7b7b7b7b7b7",
         "provider_nonce": "c9c9c9c9c9c9c9c9c9c9c9c9c9c9c9c9",
-        "names": [
-          "translator",
-          "summarizer"
-        ],
         "note": "funduq_public_key is the recipient \u2014 the funduq key the provider pinned (empty string for a funduq with no identity), so a proof cannot be relayed to a different funduq; funduq_nonce is chosen by the funduq being connected to; names are sorted before joining"
       },
-      "payload_utf8": "funduq-connect-provider:d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0:b7b7b7b7b7b7b7b7b7b7b7b7b7b7b7b7:c9c9c9c9c9c9c9c9c9c9c9c9c9c9c9c9:summarizer,translator",
-      "signature_hex": "4df787e86206fecc663c4de418b302990c60bca9b907162147aa905052810a7274297517f92a3f6ca9cef8a683061aead166788383773a7582f6c5aae3c3370e"
+      "payload_utf8": "funduq-connect-provider:d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0:b7b7b7b7b7b7b7b7b7b7b7b7b7b7b7b7:c9c9c9c9c9c9c9c9c9c9c9c9c9c9c9c9",
+      "signature_hex": "65ee172b793324af83ca988249f92d52f4b58ed4e4a80b3090b0985c0012033805af304e7a5252c9b1b7d1c1957e49f8611825d7829e6f3a39886ae0f518cf0f",
+      "note": "the bytes a provider signs to open a link. `funduq_nonce` is a ticket funduq issued to this key and destroys on use, so a recording is worthless and a leaked ticket is useless to anyone else; `funduq_public_key` names the recipient so a proof cannot be relayed to attach elsewhere. What the link will serve is not in here \u2014 publishing a name happens on the open link."
     },
     {
       "kind": "funduq-connect",

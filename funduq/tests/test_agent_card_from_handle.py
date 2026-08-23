@@ -14,10 +14,9 @@ async def _run_stream(run_input: dict):
 
 
 async def _register(funduq, identity, *handles: AgentHandle):
-    signature, timestamp = identity.sign_registration([h.name for h in handles])
-    return await funduq.register_agents(
-        identity.public_key, signature, timestamp, [h.as_registration() for h in handles]
-    )
+    from tests.conftest import publish_offline
+
+    return await publish_offline(funduq, identity, [h.as_registration() for h in handles])
 
 
 async def test_skills_declared_on_a_handle_reach_the_roster(funduq, new_identity):

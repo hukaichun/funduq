@@ -47,13 +47,9 @@ from funduq.handlers import make_handlers
 from funduq.health import close_with_terminal_event, run_health_sweeps_forever
 from funduq.identity import (
     FunduqIdentity,
-    agent_deletion_signing_payload,
     SIGNATURE_FRESHNESS_WINDOW_SECONDS,
     is_timestamp_fresh,
-    llm_deletion_signing_payload,
-    llm_registration_signing_payload,
     provider_connect_signing_payload,
-    registration_signing_payload,
     funduq_connect_signing_payload,
     verify_signature,
 )
@@ -128,12 +124,9 @@ class _Roster(abc.ABC):
 
     def __init__(self, funduq: "Funduq") -> None:
         self._funduq = funduq
-
-    @abc.abstractmethod
-    def signing_payload(self, names: list[str], timestamp: int) -> bytes: ...
-
-    @abc.abstractmethod
-    async def registered_names(self, session: AsyncSession, public_key: str) -> set[str]: ...
+        # public key -> the links it has open. Registering and deleting are
+        # operations on one of these; nothing else is.
+        self._open: dict[str, list[Any]] = {}
 
     @abc.abstractmethod
     async def touch(self, session: AsyncSession, public_key: str, names: list[str]) -> None: ...
@@ -156,114 +149,141 @@ class _Roster(abc.ABC):
     @abc.abstractmethod
     def changed(self) -> ChangeEvent: ...
 
-    async def register(
-        self,
-        public_key: str,
-        signature: str,
-        timestamp: int,
-        names: list[str],
-        store: Callable[[AsyncSession], Any],
-    ) -> Any:
-        """Verify the signed registration, run `store`, withdraw omitted live names, announce."""
-        if not is_timestamp_fresh(timestamp):
-            raise InvalidRegistration("registration timestamp too far from funduq's clock")
-        if not verify_signature(public_key, signature, self.signing_payload(names, timestamp)):
-            raise InvalidRegistration(f"invalid {self.party} registration signature")
-        async with self._funduq.session() as session:
-            registered = await store(session)
-        withdrawn = [r for r in self.served_by(public_key) if r.name not in registered]
-        if withdrawn:
-            self.withdraw(withdrawn)
-        self._funduq._notify_change(self.changed())
-        return registered
+    def open_links(self, public_key: str) -> list[Any]:
+        return self._open.get(public_key, [])
 
-    async def attach(
+    def require_open(self, connection: Any) -> None:
+        """Raises unless `connection` completed a handshake and has not detached.
+
+        **The link is the credential.** Registering and deleting carry no
+        signature of their own because the key was proved once, when the link
+        opened, and re-proving it per operation is what the four retired
+        payload families were doing. What this asks of a transport in return
+        is the ordinary thing: an open link stays the party that opened it.
+        """
+        if connection not in self._open.get(connection.public_key, []):
+            raise InvalidRegistration(
+                f"{self.party} '{connection.public_key}' is not on an open link — "
+                "open one with a ticket first; registering and deleting happen on it"
+            )
+
+    async def open(
         self,
         connection: Any,
-        names: list[str],
         *,
-        challenge: str | None = None,
+        ticket: str | None = None,
         provider_nonce: str | None = None,
         proof: str | None = None,
     ) -> str | None:
-        """Connect `connection` as the live server for its already-registered `names`.
+        """Authenticate and open a link. **No names**: registering is what puts one live.
 
-        Attaching is where runs change hands, so it authenticates like
-        everything else: `proof` is a signature over
-        `provider_connect_signing_payload(this funduq's public key, challenge,
-        provider_nonce, names)` where `challenge` came from
-        `Funduq.issue_connect_challenge` — funduq chose the freshness, so a
-        recording is worthless, and the payload names this funduq as the
-        recipient, so a proof coaxed out by one funduq cannot be relayed to
-        attach at another. A connection that
-        can sign (it exposes `sign_connect`, as the in-process links do) is
-        challenged and verified automatically; in-process is not trusted
-        either. A connection that offers a proof has it verified; one that
-        offers none is rejected. There is deliberately no way to switch
-        this off — one handshake everywhere is what lets a provider in any
-        language implement it once against the published vectors.
+        `proof` is a signature over `provider_connect_signing_payload(this
+        funduq's public key, ticket, provider_nonce)`, where `ticket` came
+        from `Funduq.issue_ticket` **and names this key**. funduq chose it and
+        destroys it here, so a recording is worthless; the payload names this
+        funduq as the recipient, so a proof coaxed out by one funduq cannot be
+        relayed to attach at another. A connection that can sign (it exposes
+        `sign_connect`, as the in-process links do) is ticketed and verified
+        automatically; in-process is not trusted either. A connection that
+        offers no proof is rejected, and there is deliberately no way to
+        switch this off — one handshake everywhere is what lets a provider in
+        any language implement it once against the published vectors.
 
         funduq answers in kind: the return value is its own signature over
-        `funduq_connect_signing_payload(challenge, provider_nonce)` — the
-        proof a provider checks against the funduq key it pinned — or None
-        if this funduq has no identity configured and so cannot prove
-        itself. A transport relays the answer to the far side; a
-        connection exposing `confirm_connect` (as the in-process links do)
-        is handed it before the attach is committed, so a provider that
-        pins can refuse the wrong funduq by raising there.
+        `funduq_connect_signing_payload(ticket, provider_nonce)` — the proof a
+        provider checks against the funduq key it pinned — or None if this
+        funduq has no identity configured and so cannot prove itself. A
+        transport relays the answer to the far side; a connection exposing
+        `confirm_connect` (as the in-process links do) is handed it before the
+        link is recorded open, so a provider that pins can refuse the wrong
+        funduq by raising there.
         """
-        if not names:
-            raise ValueError(
-                f"{self.party} '{connection.public_key}' attached with no {self.served} — "
-                "there would be nothing to serve"
-            )
         signer = getattr(connection, "sign_connect", None)
         if proof is None and callable(signer):
-            challenge = self._funduq.issue_connect_challenge()
+            ticket = self._funduq.issue_ticket(connection.public_key)
             provider_nonce = secrets.token_hex(16)
-            proof = signer(
-                self._funduq.identity_public_key or "", challenge, provider_nonce, names
-            )
-        if proof is not None:
-            if challenge is None or not self._funduq._consume_connect_challenge(challenge):
-                raise InvalidRegistration(
-                    f"connect proof for {self.party} '{connection.public_key}' does not "
-                    "answer a live challenge funduq issued"
-                )
-            payload = provider_connect_signing_payload(
-                self._funduq.identity_public_key or "", challenge, provider_nonce or "", names
-            )
-            if not verify_signature(connection.public_key, proof, payload):
-                raise InvalidRegistration(
-                    f"invalid connect proof for {self.party} '{connection.public_key}'"
-                )
-        else:
+            proof = signer(self._funduq.identity_public_key or "", ticket, provider_nonce)
+        if proof is None:
             raise InvalidRegistration(
-                f"{self.party} '{connection.public_key}' attached without a connect proof — "
-                "sign the challenge from issue_connect_challenge, or expose sign_connect"
+                f"{self.party} '{connection.public_key}' tried to open a link without a "
+                "connect proof — sign the ticket from issue_ticket, or expose sign_connect"
             )
-        async with self._funduq.session() as session:
-            registered = await self.registered_names(session, connection.public_key)
-        unknown = sorted(set(names) - registered)
-        if unknown:
-            raise self.not_found(
-                f"{self.party} '{connection.public_key}' has not registered {unknown} — "
-                "register before attaching, in-process or not"
+        if ticket is None or not self._funduq._claim_ticket(ticket, connection.public_key):
+            raise InvalidRegistration(
+                f"connect proof for {self.party} '{connection.public_key}' does not answer "
+                "a live ticket funduq issued to that key"
+            )
+        payload = provider_connect_signing_payload(
+            self._funduq.identity_public_key or "", ticket, provider_nonce or ""
+        )
+        if not verify_signature(connection.public_key, proof, payload):
+            raise InvalidRegistration(
+                f"invalid connect proof for {self.party} '{connection.public_key}'"
             )
         answer = (
-            self._funduq.sign(funduq_connect_signing_payload(challenge, provider_nonce or ""))
+            self._funduq.sign(funduq_connect_signing_payload(ticket, provider_nonce or ""))
             if self._funduq.identity is not None
             else None
         )
         confirm = getattr(connection, "confirm_connect", None)
         if callable(confirm):
-            confirm(challenge, provider_nonce or "", answer)
-        self.write_live({self.ref(connection.public_key, n): connection for n in names})
+            confirm(ticket, provider_nonce or "", answer)
+        self._open.setdefault(connection.public_key, []).append(connection)
+        return answer
+
+    async def register(
+        self,
+        connection: Any,
+        names: list[str],
+        store: Callable[[AsyncSession], Any],
+    ) -> Any:
+        """Publish `names` on an open link and serve them from it.
+
+        One act, because it was always one act: what a name *is* and who is
+        answering for it right now are decided together, by the party that
+        holds the key, on the link that proved it. Nothing here is signed —
+        the link is.
+
+        **Not registered is offline.** The names this connection serves are
+        exactly the ones it last registered, so a smaller batch takes the
+        omitted ones off the roster. Names the same key serves on a
+        *different* link are untouched: a provider may split its agents
+        across processes, and each link answers for what it registered.
+        """
+        self.require_open(connection)
+        if not names:
+            raise ValueError(
+                f"{self.party} '{connection.public_key}' registered no {self.served} — "
+                "there would be nothing to serve"
+            )
         async with self._funduq.session() as session:
-            await self.touch(session, connection.public_key, names)
+            registered = await store(session)
+        keep = {self.ref(connection.public_key, name) for name in registered}
+        withdrawn = [
+            ref
+            for ref in self.served_by(connection.public_key)
+            if self.live(ref) is connection and ref not in keep
+        ]
+        if withdrawn:
+            self.withdraw(withdrawn)
+        self.write_live({ref: connection for ref in keep})
+        async with self._funduq.session() as session:
+            await self.touch(session, connection.public_key, list(registered))
             await session.commit()
         self._funduq._notify_change(self.changed())
-        return answer
+        return registered
+
+    def take_offline(self, connection: Any, name: str) -> None:
+        """Withdraw one name this connection serves, ahead of deleting its record.
+
+        Deleting happens on the link that serves the name, so "something is
+        serving it" cannot be the guard it used to be — the caller is that
+        something. What still guards a deletion is what the record means:
+        a name with a conversation behind it stays.
+        """
+        ref = self.ref(connection.public_key, name)
+        if self.live(ref) is connection:
+            self.withdraw([ref])
 
     @abc.abstractmethod
     def live(self, ref: Any) -> Any: ...
@@ -283,6 +303,11 @@ class _Roster(abc.ABC):
         connection serves it is a different, deliberately louder verb:
         `detach_all`.
         """
+        links = self._open.get(public_key, [])
+        if connection in links:
+            links.remove(connection)
+            if not links:
+                self._open.pop(public_key, None)
         attached = [r for r in self.served_by(public_key) if self.live(r) is connection]
         if not attached:
             return
@@ -294,6 +319,7 @@ class _Roster(abc.ABC):
         serves it; a no-op (no change event) if nothing is. The eviction form —
         cleanup after one closed link belongs to `detach`, which cannot take
         down a replacement."""
+        self._open.pop(public_key, None)
         attached = self.served_by(public_key)
         if not attached:
             return
@@ -305,12 +331,6 @@ class _AgentRoster(_Roster):
 
     party = "provider"
     served = "agent names"
-
-    def signing_payload(self, names: list[str], timestamp: int) -> bytes:
-        return registration_signing_payload(names, timestamp)
-
-    async def registered_names(self, session: AsyncSession, public_key: str) -> set[str]:
-        return await repo.get_agent_names_for_provider(session, public_key)
 
     async def touch(self, session: AsyncSession, public_key: str, names: list[str]) -> None:
         await repo.touch_agents(session, public_key, names)
@@ -341,12 +361,6 @@ class _LlmRoster(_Roster):
 
     party = "LLM provider"
     served = "model names"
-
-    def signing_payload(self, names: list[str], timestamp: int) -> bytes:
-        return llm_registration_signing_payload(names, timestamp)
-
-    async def registered_names(self, session: AsyncSession, public_key: str) -> set[str]:
-        return await repo.get_llm_names_for_key(session, public_key)
 
     async def touch(self, session: AsyncSession, public_key: str, names: list[str]) -> None:
         await repo.touch_llm_providers(session, public_key, names)
@@ -393,7 +407,9 @@ class Funduq:
         self.broker.add_forget_listener(self.kyok_relay.discard)
         self._agent_roster = _AgentRoster(self)
         self._llm_roster = _LlmRoster(self)
-        self._connect_challenges: dict[str, float] = {}
+        # ticket -> (the key it admits, when it was issued). Node-local, like
+        # everything else about a connection.
+        self._tickets: dict[str, tuple[str, float]] = {}
         self._tasks: set[asyncio.Task] = set()
         self._started = False
         self._change_subscribers: set[Callable[[ChangeEvent], None]] = set()
@@ -408,27 +424,57 @@ class Funduq:
     def identity_public_key(self) -> str | None:
         return self.identity.public_key if self.identity is not None else None
 
-    def issue_connect_challenge(self) -> str:
-        """Mint a single-use nonce a connecting provider must sign over to attach.
+    def issue_ticket(self, public_key: str) -> str:
+        """Mint a single-use ticket admitting `public_key` to open a link, and
+        return it.
 
-        funduq chose it, so a recorded proof is worthless; it expires with the
-        signature freshness window and is consumed by the attach that answers
-        it. A serving layer relays it to the far side of its transport before
-        calling attach with the returned proof.
+        **Issuing is the admission decision.** A key with no ticket cannot
+        connect at all, so whoever calls this — over whatever channel the
+        deployment gives it — is the party that decides who may serve here.
+
+        The ticket names the key it admits, and that is what makes it safe to
+        hand across a channel funduq does not control: a leaked ticket is
+        worthless, because only the named key can produce the signature that
+        answers it, and a stranger cannot burn it (the name is matched before
+        it is destroyed — see `_claim_ticket`).
+
+        **This is deliberately not an operation on a connection**, and must
+        not become one. A ticket fetched over the link would mean the link
+        existed before anything authorised it. Core keeps the verb here and
+        out of the link's operation set; whether a deployment really uses a
+        separate channel is the transport's to answer, and its guide says so.
+
+        Valid for the signature freshness window, and destroyed by the
+        handshake that answers it.
         """
         now = time.time()
-        self._connect_challenges = {
-            nonce: issued
-            for nonce, issued in self._connect_challenges.items()
-            if now - issued <= SIGNATURE_FRESHNESS_WINDOW_SECONDS
+        self._tickets = {
+            ticket: issued
+            for ticket, issued in self._tickets.items()
+            if now - issued[1] <= SIGNATURE_FRESHNESS_WINDOW_SECONDS
         }
-        nonce = secrets.token_hex(16)
-        self._connect_challenges[nonce] = now
-        return nonce
+        ticket = secrets.token_hex(16)
+        self._tickets[ticket] = (public_key, now)
+        return ticket
 
-    def _consume_connect_challenge(self, nonce: str) -> bool:
-        issued = self._connect_challenges.pop(nonce, None)
-        return issued is not None and time.time() - issued <= SIGNATURE_FRESHNESS_WINDOW_SECONDS
+    def _claim_ticket(self, ticket: str, public_key: str) -> bool:
+        """Spends `ticket` if it exists, is fresh, and was issued to `public_key`.
+
+        **Matched before it is destroyed, and destroyed only for the key it
+        names.** The order is the point: a version that popped first let
+        anyone who had merely *seen* a live ticket burn it with a garbage
+        proof, and the provider it was minted for could not connect. That
+        needs no key at all, so it was a denial available to anyone on the
+        path the ticket travelled.
+        """
+        issued = self._tickets.get(ticket)
+        if issued is None or issued[0] != public_key:
+            return False
+        if time.time() - issued[1] > SIGNATURE_FRESHNESS_WINDOW_SECONDS:
+            self._tickets.pop(ticket, None)
+            return False
+        self._tickets.pop(ticket, None)
+        return True
 
     def sign(self, payload: bytes) -> str:
         """Sign `payload` with this funduq's identity key, or raise if none is configured."""
@@ -511,108 +557,88 @@ class Funduq:
 
     async def register_agents(
         self,
-        public_key: str,
-        signature: str,
-        timestamp: int,
+        connection: Any,
         agents: list[dict[str, Any]],
         provider_name: str | None = None,
     ) -> Registration:
-        """Verify the signed registration, store the agents, and withdraw any attached agent omitted from this batch.
+        """Publish `agents` on `connection`'s open link and serve them from it.
 
-        Withdrawal is from the broker only: an omitted agent stays registered
-        in the database (see `repo.register_agents`) but goes offline until it
-        is registered again, so re-register the full roster while attached.
+        Nothing here is signed: the key was proved when the link opened, and
+        this is that link speaking. Raises `InvalidRegistration` if the
+        connection has no open link.
 
-        Raises `InvalidRegistration` if the timestamp is stale or the signature doesn't verify.
+        The names this link serves are exactly the ones it last registered,
+        so registering a smaller roster takes the omitted ones offline —
+        their records stay, readable as `online: false`.
         """
+        public_key = connection.public_key
         registered = await self._agent_roster.register(
-            public_key,
-            signature,
-            timestamp,
+            connection,
             [a["name"] for a in agents],
             store=lambda session: repo.register_agents(
                 session, public_key, agents, provider_name=provider_name
             ),
         )
-        return Registration(agents=registered)
+        return Registration(
+            agents={
+                name: AgentRef(provider_key=public_key, name=name) for name in registered
+            }
+        )
 
-    async def delete_agent(
-        self, public_key: str, name: str, signature: str, timestamp: int
-    ) -> None:
-        """Delete an agent record after verifying the signature and that it's safe to remove.
+    async def delete_agent(self, connection: Any, name: str) -> None:
+        """Remove an agent's record, on the link that serves it.
 
-        Raises `AgentNotFound` if unregistered, or `AgentInUse` if a provider is currently
-        serving it, it has active runs, or it has any thread/run history (which must be
-        removed by taking the agent offline instead, not by deleting the record).
+        Nothing is signed: this is the open link speaking, and the link
+        proved the key. The name is taken offline first — "a provider is
+        serving it" cannot be a guard when the caller *is* that provider.
+
+        What still guards a deletion is what the record means: **an agent
+        with a conversation behind it stays.** Stop offering it instead and
+        it goes offline and off the roster with its record intact. Raises
+        `AgentNotFound` if unregistered, `AgentInUse` if it has any thread or
+        run history, and `InvalidRegistration` if the connection has no open
+        link.
         """
-        if not is_timestamp_fresh(timestamp):
-            raise InvalidRegistration("deletion timestamp too far from funduq's clock")
-        if not verify_signature(
-            public_key, signature, agent_deletion_signing_payload(name, timestamp)
-        ):
-            raise InvalidRegistration("invalid deletion signature")
-
-        agent = AgentRef(provider_key=public_key, name=name)
+        self._agent_roster.require_open(connection)
+        agent = AgentRef(provider_key=connection.public_key, name=name)
         async with self.session() as session:
             record = await repo.get_agent(session, agent)
             if record is None:
                 raise AgentNotFound(f"agent '{agent}' is not registered")
-            if self.broker.serving(agent) is not None:
-                raise AgentInUse(
-                    f"agent '{agent}' has a provider serving it", reason="connected"
-                )
-
-            active = await repo.count_runs_for_agent(
-                session, agent, repo.ACTIVE_RUN_STATUSES
-            )
-            if active:
-                raise AgentInUse(
-                    f"agent '{agent}' has {active} active run(s)", reason="active_run"
-                )
-            if await repo.count_threads_for_agent(session, agent) or await repo.count_runs_for_agent(
+            if await repo.count_threads_for_agent(
                 session, agent
-            ):
+            ) or await repo.count_runs_for_agent(session, agent):
                 raise AgentInUse(
                     f"agent '{agent}' has a conversation behind it and cannot be removed — "
                     "stop offering it instead, and it goes offline and off the roster with "
                     "its record intact",
                     reason="has_history",
                 )
-
+            self._agent_roster.take_offline(connection, name)
             await repo.delete_agent(session, agent)
         self._notify_change(RosterChanged())
 
-    async def delete_llm_offering(
-        self, public_key: str, name: str, signature: str, timestamp: int
-    ) -> None:
-        """Delete an LLM offering's record after verifying the signature and that it's safe to remove — the mirror of `delete_agent`.
+    async def delete_llm_offering(self, connection: Any, name: str) -> None:
+        """Remove an LLM offering's record, on the link that serves it — the mirror of `delete_agent`.
 
-        Raises `LlmProviderNotFound` if unregistered, or `LlmOfferingInUse` if a
-        provider is currently serving it or a live run is bound to it. Offerings
-        carry no conversation history, so there is no `has_history` refusal.
+        The offering is taken offline first, so "a provider is serving it"
+        cannot be the guard. A live run bound to it still refuses: that is
+        work in flight, not a connection. Offerings carry no conversation
+        history, so there is no `has_history` refusal.
         """
-        if not is_timestamp_fresh(timestamp):
-            raise InvalidRegistration("deletion timestamp too far from funduq's clock")
-        if not verify_signature(
-            public_key, signature, llm_deletion_signing_payload(name, timestamp)
-        ):
-            raise InvalidRegistration("invalid deletion signature")
-
-        ref = LlmRef(provider_key=public_key, name=name)
+        self._llm_roster.require_open(connection)
+        ref = LlmRef(provider_key=connection.public_key, name=name)
         async with self.session() as session:
             record = await repo.get_llm_provider(session, ref)
             if record is None:
                 raise LlmProviderNotFound(f"LLM offering '{ref}' is not registered")
-            if self.kyok_relay.serving(ref) is not None:
-                raise LlmOfferingInUse(
-                    f"LLM offering '{ref}' has a provider serving it", reason="connected"
-                )
             bound = self.kyok_relay.bound_runs(ref)
             if bound:
                 raise LlmOfferingInUse(
                     f"LLM offering '{ref}' has {bound} live run(s) bound to it",
                     reason="active_run",
                 )
+            self._llm_roster.take_offline(connection, name)
             await repo.delete_llm_provider(session, ref)
         self._notify_change(LlmRosterChanged())
 
@@ -660,66 +686,63 @@ class Funduq:
     async def attach_provider(
         self,
         provider: ConnectedProvider,
-        agent_names: list[str],
         *,
-        challenge: str | None = None,
+        ticket: str | None = None,
         provider_nonce: str | None = None,
         proof: str | None = None,
     ) -> str | None:
-        """Connect `provider` as the live server for its already-registered `agent_names`.
+        """Open an authenticated link for `provider`. **No names** — registering is
+        what puts one live, and it happens on this link (`register_agents`).
 
-        Raises `ValueError` for an empty list and `AgentNotFound` if any name was never
-        registered under this provider's key — attaching does not implicitly register.
-        A connection exposing `sign_connect` is challenged and verified automatically;
-        a transport passes the `challenge` it relayed (from `issue_connect_challenge`),
-        the provider's `provider_nonce`, and the returned `proof`, and relays the
-        returned answer — funduq's own signature for the provider to check against its
-        pinned funduq key. See `_Roster.attach`.
+        A transport passes the `ticket` it relayed (from `issue_ticket`, minted
+        for this provider's key), the provider's `provider_nonce`, and the
+        returned `proof`, then relays the returned answer — funduq's own
+        signature, for the provider to check against its pinned funduq key. A
+        connection exposing `sign_connect` does all of that itself. See
+        `_Roster.open`.
         """
-        return await self._agent_roster.attach(
-            provider, agent_names, challenge=challenge, provider_nonce=provider_nonce, proof=proof
+        return await self._agent_roster.open(
+            provider, ticket=ticket, provider_nonce=provider_nonce, proof=proof
         )
 
     async def register_llm_providers(
         self,
-        public_key: str,
-        signature: str,
-        timestamp: int,
+        connection: Any,
         names: list[str],
         metadata: dict[str, Any] | None = None,
     ) -> dict[str, LlmRef]:
-        """Verify the signed registration and store `names` as LLM offerings for this key.
+        """Publish `names` as LLM offerings on `connection`'s open link and serve
+        them from it — the mirror of `register_agents`.
 
-        An attached offering omitted from this batch is withdrawn from live
-        serving (it stays registered in the database), same as agents.
+        An offering this link served and omitted from this batch goes offline;
+        its record stays.
         """
-        return await self._llm_roster.register(
-            public_key,
-            signature,
-            timestamp,
+        public_key = connection.public_key
+        registered = await self._llm_roster.register(
+            connection,
             names,
             store=lambda session: repo.register_llm_providers(
                 session, public_key, names, metadata
             ),
         )
+        return {
+            name: LlmRef(provider_key=public_key, name=name) for name in registered
+        }
 
     async def attach_llm_provider(
         self,
         link: ConnectedLLMProvider,
-        model_names: list[str],
         *,
-        challenge: str | None = None,
+        ticket: str | None = None,
         provider_nonce: str | None = None,
         proof: str | None = None,
     ) -> str | None:
-        """Connect `link` as the live server for its already-registered `model_names`.
-
-        Raises `ValueError` for an empty list and `LlmProviderNotFound` if any name was
-        never registered under this key. Connect authentication — funduq's answering
-        signature included — works exactly as in `attach_provider`.
+        """Open an authenticated link for `link`. Connect authentication — funduq's
+        answering signature included — works exactly as in `attach_provider`, and
+        offerings are published on the open link with `register_llm_providers`.
         """
-        return await self._llm_roster.attach(
-            link, model_names, challenge=challenge, provider_nonce=provider_nonce, proof=proof
+        return await self._llm_roster.open(
+            link, ticket=ticket, provider_nonce=provider_nonce, proof=proof
         )
 
     def detach_llm_provider(self, public_key: str, connection: Any) -> None:
