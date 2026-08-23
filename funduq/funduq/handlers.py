@@ -21,7 +21,7 @@ from funduq.broker import (
     RequestCancel,
     Run,
 )
-from funduq.pause import interrupt_outcome_of
+from funduq.pause import interrupt_outcome_of, unanswered_tool_calls
 
 if TYPE_CHECKING:
     from funduq.core import Funduq
@@ -126,27 +126,45 @@ async def _handle_finish(funduq: "Funduq", run: Run, cmd: FinishStream) -> None:
     Status is "input-required" if the run paused, "completed" if it saw `RUN_FINISHED`,
     "cancelled" if a cancel was requested, else "failed". A run that ends failed without
     ever having reported its own `RUN_ERROR` gets one synthesized and appended.
+
+    A run pauses two ways, and the provider's stream ends identically for both.
+    An interrupt outcome is the provider saying so. An unanswered tool call is
+    the provider *not* saying so — `RUN_FINISHED` with `outcome: success`, a
+    call announced and never resulted (see `unanswered_tool_calls`). Both are
+    the same event, and the second is why a run's end cannot be read off
+    `RUN_FINISHED` alone: the provider's **stream** ended, which is all it
+    ever claimed. Whether the **run** ended is funduq's to settle, because
+    funduq is what holds the run's identity across a gap the provider's stream
+    cannot span — the same reason `resume_run` keeps the run id.
     """
-    if run.pause_payload is not None:
-        status, metadata = "input-required", run.pause_payload
-    elif run.saw_run_finished:
-        status, metadata = "completed", None
-    elif run.cancel_requested:
-        status, metadata = "cancelled", None
-    else:
-        status, metadata = "failed", {"failureReason": "provider_stream_ended_without_finishing"}
-
-    failure_event = (
-        run_error("the agent's stream ended without finishing",
-                  code="provider_stream_ended_without_finishing")
-        if status == "failed" and not run.saw_run_error
-        else None
-    )
-
     async with funduq.session() as session:
+        round_events = await repo.get_run_events(
+            session, run.run_id, since_seq=run.round_starting_seq
+        )
+        pending_tool_calls = unanswered_tool_calls(round_events)
+
+        if run.pause_payload is not None or (run.saw_run_finished and pending_tool_calls):
+            status = "input-required"
+            metadata = {
+                "interrupts": (run.pause_payload or {}).get("interrupts", []),
+                "pendingToolCalls": pending_tool_calls,
+            }
+        elif run.saw_run_finished:
+            status, metadata = "completed", None
+        elif run.cancel_requested:
+            status, metadata = "cancelled", None
+        else:
+            status, metadata = "failed", {"failureReason": "provider_stream_ended_without_finishing"}
+
+        failure_event = (
+            run_error("the agent's stream ended without finishing",
+                      code="provider_stream_ended_without_finishing")
+            if status == "failed" and not run.saw_run_error
+            else None
+        )
+
         settled = await funduq.mark_run_status(session, run.run_id, status, metadata=metadata)
         if settled and status in ("completed", "input-required"):
-            round_events = await repo.get_run_events(session, run.run_id, since_seq=run.round_starting_seq)
             reply_messages = reduce_events_to_messages(round_events)
             if reply_messages:
                 await repo.append_thread_messages(session, run.thread_id, run.run_id, reply_messages)

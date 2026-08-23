@@ -1,7 +1,7 @@
 """Caller metadata cannot wear funduq's handwriting.
 
 funduq writes a small set of keys into a run's metadata record
-(`verifiedActorChain`, `interrupts`, `failureReason`). A caller-supplied
+(`interrupts`, `pendingToolCalls`, `failureReason`). A caller-supplied
 value under any of them is stripped at the doors — otherwise a caller could
 plant a forged verification summary, or a fake failure reason, that later
 readers would take for funduq's own record. Keys funduq does not write are
@@ -68,12 +68,20 @@ async def test_only_funduq_written_keys_are_stripped(funduq, serve):
     sent = await A2AAdapter(funduq).send_task(
         agent,
         _message("hi"),
-        metadata={"addressedRunId": "run_i_made_up", "failureReason": "not yours to say"},
+        metadata={
+            "addressedRunId": "run_i_made_up",
+            "failureReason": "not yours to say",
+            "pendingToolCalls": ["a call nobody made"],
+        },
     )
 
     async with funduq.session() as session:
         stored = await repo.get_run(session, sent.id)
     assert "failureReason" not in stored.metadata, "funduq writes this key; forgery is stripped"
+    assert "pendingToolCalls" not in stored.metadata, (
+        "funduq writes this key when a run pauses on an unanswered call; a caller "
+        "planting it would make a finished run look like it was still waiting"
+    )
     assert stored.metadata.get("addressedRunId") == "run_i_made_up", (
         "funduq does not write this key into run records, so it is plain caller data"
     )
