@@ -12,16 +12,20 @@ fingerprint is an error, not a merge. funduq has a keypair of its own
 pin the funduq it means to serve and detect an imposter before producing
 anything worth stealing.
 
-## What changes the roster is an open link
+## What a provider signs, and what an open link makes unnecessary
 
-Three payload families, each under its own domain tag so a captured
-signature for one purpose can never be replayed as another:
+Three payload families on this side, each under its own domain tag so a
+captured signature for one purpose can never be replayed as another:
 
 | domain tag | signed by | authorizes |
 |---|---|---|
 | `funduq-connect-provider` | connecting provider | opening a link |
 | `funduq-connect-funduq` | funduq | answering a link-open |
 | `funduq-kyok-call` | agent provider | one KYOK completion call |
+
+(Three more belong to callers rather than providers —
+`funduq-delegate`, `funduq-resolve` and `funduq-cancel` — and are in
+[responsibility chains](responsibility-chains.md). Six in all.)
 
 **Registering and deleting are not on that list, and used to be.** Four
 families signed them — one per roster, one per verb — each re-proving
