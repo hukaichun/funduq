@@ -7,7 +7,7 @@ from collections import defaultdict, deque
 from collections.abc import Awaitable, Callable, AsyncIterator
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
-from typing import Any, Protocol
+from typing import Any, Literal, Protocol
 
 from funduq.live_roster import LiveRoster
 from funduq.models import AgentRef, ClaimedRun
@@ -15,6 +15,18 @@ from funduq.models import AgentRef, ClaimedRun
 logger = logging.getLogger("funduq.broker")
 
 END_OF_STREAM = object()
+
+
+@dataclass
+class Offer:
+    """The run has been handed to a provider and funduq is waiting for an answer."""
+    pass
+
+
+@dataclass
+class Requeue:
+    """The offer was not accepted, so the run goes back where it came from."""
+    pass
 
 
 @dataclass
@@ -44,7 +56,7 @@ class Fail:
     reason: str
 
 
-Command = Claim | RelayEvent | FinishStream | RequestCancel | Fail
+Command = Offer | Requeue | Claim | RelayEvent | FinishStream | RequestCancel | Fail
 
 
 @dataclass(frozen=True)
@@ -130,6 +142,11 @@ class Run:
     seq: int = 0
     round_starting_seq: int = 0
     pause_payload: dict[str, Any] | None = None
+    # The provider this run is reserved on — set the moment the offer leaves,
+    # cleared if it comes back unaccepted. Ownership is assigned at dispatch,
+    # not at acceptance, which is what makes the capacity slot and the cancel
+    # path agree about who holds the run during the window in between.
+    offered_to: str | None = None
     claimed_by: str | None = None
     claimed_at: datetime | None = None
     noted_abnormal: bool = False
@@ -148,12 +165,18 @@ class RunSnapshot:
     agent: AgentRef
     thread_id: str
     protocol: str
+    offered_to: str | None
     claimed_by: str | None
     cancel_requested: bool
 
     @property
     def is_claimed(self) -> bool:
         return self.claimed_by is not None
+
+    @property
+    def is_offered(self) -> bool:
+        """Handed to a provider — reserved on it, whether or not it has answered."""
+        return self.offered_to is not None
 
 
 def _snapshot(run: Run) -> RunSnapshot:
@@ -162,6 +185,7 @@ def _snapshot(run: Run) -> RunSnapshot:
         agent=run.agent,
         thread_id=run.thread_id,
         protocol=run.protocol,
+        offered_to=run.offered_to,
         claimed_by=run.claimed_by,
         cancel_requested=run.cancel_requested,
     )
@@ -183,27 +207,37 @@ async def _no_events() -> AsyncIterator[Any]:
     yield  # pragma: no cover - what makes this an async generator
 
 
+# What a provider's answer to an offer comes back as. Three values because a
+# provider has three honest things to say, and collapsing any two of them has
+# cost a defect each time (see docs/mechanisms/requests.md).
+_Outcome = Literal["accepted", "declined", "refused"]
+
 HandlerMap = dict[type, Callable[[Run, Any], Awaitable[None]]]
 
-async def _pipeline(run: Run, handlers: HandlerMap, owner: "RunBroker") -> None:
-    """Drains `run.in_queue`, dispatching each command to its registered handler
-    in order. Stops after a `FinishStream` or `Fail`, or after a `RequestCancel`
-    for a run nobody has claimed; a `RequestCancel` for a claimed run is handled
-    but the pipeline keeps running, waiting for the eventual terminal command.
-    On exit it signals END_OF_STREAM on `run.out_queue` and calls `owner.forget`."""
+async def _pipeline(run: Run, owner: "RunBroker") -> None:
+    """The claimed run's own lane: records the claim, then drains `run.in_queue`
+    in order for the rest of the run's life. It ends on a `FinishStream` or a
+    `Fail` and on nothing else — a cancel is handled and the lane keeps going,
+    because funduq asks a provider to stop and does not decide the outcome on
+    its behalf. On exit it signals END_OF_STREAM on `run.out_queue` and calls
+    `owner.forget`.
+
+    A lane exists only for a run some provider took; a run nobody took is
+    settled by `RunBroker._one_shot` instead, which is why there is no
+    unclaimed case here to stop on.
+
+    **The claim is recorded here rather than queued.** It became true before
+    this lane existed, so queueing it would put it behind anything that arrived
+    while the provider was still answering — a cancel from that window would be
+    recorded against a run funduq had not yet called running. Recorded first, by
+    the lane itself, it is simply the older fact in the same single order
+    everything else about this run goes through.
+    """
+    await owner._record(run, Claim())
     while True:
         cmd = await run.in_queue.get()
-        handler = handlers.get(type(cmd))
-        try:
-            if handler is not None:
-                await handler(run, cmd)
-            else:
-                logger.warning("run %s: no handler registered for %s", run.run_id, type(cmd).__name__)
-        except Exception:
-            logger.exception("run %s: error handling %s", run.run_id, type(cmd).__name__)
+        await owner._record(run, cmd)
         if isinstance(cmd, (FinishStream, Fail)):
-            break
-        if isinstance(cmd, RequestCancel) and run.claimed_by is None:
             break
     run.out_queue.put_nowait(END_OF_STREAM)
     owner.forget(run.run_id)
@@ -228,13 +262,18 @@ class RunBroker:
     ) -> None:
         self._spawn = spawn or self._spawn_unsupervised
         self._runs: dict[str, Run] = {}
-        self._pending_by_agent: dict[AgentRef, deque[str]] = defaultdict(deque)
+        # Keyed by thread, because a thread is the pipe whose delivery order
+        # funduq guarantees. An agent is not a pipe: two of its conversations
+        # have no order between them, and making them share a queue only
+        # made one wait for the other.
+        self._pending_by_thread: dict[str, deque[str]] = defaultdict(deque)
         self._live = LiveRoster(
             ("misdeclared", "abandoned", "undelivered", "unanswered", "answered_late")
         )
         self._unserved_since: dict[AgentRef, datetime] = {}
         self._capacity: dict[str, _Capacity] = {}
         self._handlers: dict[str, HandlerMap] = {}
+        self._draining: dict[str, asyncio.Task] = {}
         self._pipeline_tasks: set[asyncio.Task] = set()
         self.sweep_interval_seconds = sweep_interval_seconds
         self.undelivered_window_seconds = undelivered_window_seconds
@@ -294,22 +333,25 @@ class RunBroker:
 
     async def run_forever(self) -> None:
         """Repeatedly notes providers that have not delivered what they accepted, gives up on
-        queued runs whose agent has gone unserved for too long, and offers pending runs to
-        their providers — sleeping until new work arrives (`enqueue_run`,
+        queued runs whose agent has gone unserved for too long, and makes sure every agent with
+        pending runs has a lane draining it — sleeping until new work arrives (`enqueue_run`,
         `register_provider`) or the shortest window it observes elapses. Swallows and logs any exception other than
-        cancellation so one bad sweep doesn't stop future ones."""
+        cancellation so one bad sweep doesn't stop future ones.
+
+        **This loop never waits for a provider's answer.** It starts lanes and
+        goes back to sleep; the waiting happens in `_drain_thread`, one lane per
+        thread. It used to offer inline, and one provider slow to answer then
+        held up the handover of every other agent, provider and caller —
+        measured at 3.1s for a trivial run that shared nothing with the one
+        ahead of it but this loop (funduq#164).
+        """
         while True:
             try:
                 self.note_undelivered(self.undelivered_window_seconds)
                 self.expire_queued(self.unserved_timeout_seconds)
                 self._work_to_do.clear()
-                placed = False
-                for agent in list(self._pending_by_agent):
-                    if await self._offer_pending(agent):
-                        placed = True
-                if placed:
-                    await asyncio.sleep(0)
-                    continue
+                for thread_id in list(self._pending_by_thread):
+                    self._start_draining(thread_id)
                 with contextlib.suppress(TimeoutError):
                     # Sleep no longer than the shortest window this loop is
                     # responsible for observing, or the observation misses it.
@@ -351,7 +393,7 @@ class RunBroker:
             round_starting_seq=seq,
         )
         self._runs[run_id] = run
-        self._pending_by_agent[agent].append(run_id)
+        self._pending_by_thread[thread_id].append(run_id)
         self._work_to_do.set()
         if handlers is not None:
             self._handlers[run_id] = handlers
@@ -409,52 +451,159 @@ class RunBroker:
                     )
                     self.push(run.run_id, Fail("provider_left_holding_it"))
 
-    async def _offer_pending(self, agent: AgentRef) -> bool:
-        """Offers `agent`'s queued runs, head first, to its provider until the
-        queue is empty, the provider has no room, or an offer isn't accepted.
-        The queue's own FIFO order is the only sequencing funduq imposes: a
-        thread's utterances are offered in arrival order, and a sibling is
-        offered as soon as it reaches the head — whether the provider runs it,
-        holds it, or absorbs it into a turn already in flight is the
-        provider's decision, not funduq's (funduq never paces a provider's
-        conversation; see the queueing design record). Skips (and drops) runs
-        that were cancelled while still queued. Returns whether at least one
-        run was placed."""
-        placed = False
-        while True:
-            provider = self._live.serving(agent)
-            queue = self._pending_by_agent.get(agent)
-            if provider is None or not queue:
-                return placed
-            run_id = queue[0]
-            run = self._runs.get(run_id)
-            if run is None or run.cancel_requested:
-                queue.remove(run_id)
-                continue
-            capacity = self._capacity.get(provider.public_key)
-            if capacity is not None and not capacity.has_room:
-                return placed
-            outcome = await self._offer(run, provider)
-            if outcome == "refused":
-                with contextlib.suppress(ValueError):
-                    queue.remove(run_id)
-                continue
-            if not outcome:
-                return placed
-            with contextlib.suppress(ValueError):
-                queue.remove(run_id)
-            placed = True
+    def _start_draining(self, thread_id: str) -> None:
+        """Ensures the thread has a lane handing its utterances over. One lane
+        per thread, because a thread is the one pipe whose delivery order
+        funduq guarantees (see `_drain_thread`)."""
+        existing = self._draining.get(thread_id)
+        if existing is not None and not existing.done():
+            return
+        self._draining[thread_id] = self._spawn(
+            self._drain_thread(thread_id), name=f"dispatch:{thread_id}"
+        )
 
-    async def _offer(self, run: Run, provider: ConnectedProvider) -> bool | str:
-        """Delivers `run` to `provider` within `deliver_timeout_seconds` and, if
-        accepted, claims it and starts its pipeline task. A timeout, an
-        exception, or a declined offer all count against the provider's
-        quality counters (unanswered or misdeclared) and return False without
-        claiming the run. A permanent refusal (a result carrying a `reason`)
-        fails the run with the provider's reason recorded verbatim and
-        returns "refused" so the caller drops it from the queue instead of
-        re-offering forever."""
+    async def _drain_thread(self, thread_id: str) -> None:
+        """Hands the thread's queued runs to its agent's provider, head first,
+        until the queue is empty, the provider has no room, or an offer is not
+        accepted.
+
+        **What funduq guarantees is the delivery order of one thread**, and
+        that is the whole reason this is serial. A conversation's utterances
+        reach the provider in the order they arrived, because a provider that
+        wants to take turns can only take them in the order things arrive —
+        deliver two of them at once and its own sequencing would lock in an
+        order nobody chose, invisibly. What the provider then *does* with that
+        order — run the new turn at once, hold it, fold it into the turn in
+        flight — is its decision and not funduq's (see the queueing design
+        record); funduq imposes no turn-taking, only sequence.
+
+        Nothing wider than a thread is serialized. Two conversations have no
+        order between them, so they hand over side by side even when they
+        share an agent, a provider and a caller.
+
+        Exits with no work left to do; the sweep loop starts it again when
+        anything changes (`enqueue_run`, `register_provider`, a freed
+        capacity slot in `forget`). It removes itself from `_draining` on the
+        way out, with no await between its last look at the queue and that
+        removal, so a run enqueued at any moment is either seen by this lane
+        or seen by the next one.
+        """
+        try:
+            while True:
+                queue = self._pending_by_thread.get(thread_id)
+                if not queue:
+                    return
+                run_id = queue[0]
+                run = self._runs.get(run_id)
+                if run is None or run.cancel_requested:
+                    queue.remove(run_id)
+                    continue
+                provider = self._live.serving(run.agent)
+                if provider is None:
+                    return
+                capacity = self._capacity.get(provider.public_key)
+                if capacity is not None and not capacity.has_room:
+                    return
+                queue.popleft()
+                outcome = await self._offer(run, provider)
+                if outcome == "declined":
+                    if run.cancel_requested:
+                        # A cancel arrived while the offer was out and nobody
+                        # took the run, so it is funduq's again and there is no
+                        # provider to ask. Settled here, the same way any run
+                        # cancelled before a provider had it is settled.
+                        #
+                        # Exactly one settler, always: a cancel that arrived
+                        # while the run was dispatched went into its queue and
+                        # set this flag, and one arriving after the hand-back
+                        # takes `request_cancel`'s own queued path — and there
+                        # is no await between the hand-back and this line for a
+                        # cancel to land in and be counted twice.
+                        await self._one_shot(run, RequestCancel())
+                        continue
+                    queue.appendleft(run_id)
+                    return
+        finally:
+            self._draining.pop(thread_id, None)
+
+    def _reserve(self, run: Run, provider: ConnectedProvider) -> None:
+        """Takes `run`'s place on `provider` as the offer leaves.
+
+        The slot is spent at dispatch, not at acceptance. With handovers
+        running in parallel lanes, a provider that is slow to answer would
+        otherwise be sent more runs than it declared — every lane would read
+        the same unchanged in-flight count and conclude there was room.
+        """
+        run.offered_to = provider.public_key
         capacity = self._capacity.get(provider.public_key)
+        if capacity is not None:
+            capacity.in_flight += 1
+
+    def _release(self, run: Run) -> None:
+        """Gives back the place `_reserve` took. Deliberately does not wake the
+        sweep loop: a declined offer freeing its own slot would have the loop
+        re-offer the same run immediately, over and over. `forget` does the
+        waking, because a slot freed by a finished run is news."""
+        key, run.offered_to = run.offered_to, None
+        capacity = self._capacity.get(key) if key is not None else None
+        if capacity is not None and capacity.in_flight > 0:
+            capacity.in_flight -= 1
+
+    def _own_lane(self, run: Run, provider: ConnectedProvider) -> None:
+        """Hands a run that has just been claimed to its own lane, which records
+        the claim and then owns everything that happens to the run afterwards.
+        A run enqueued without a handler map never gets one — there would be
+        nothing for it to do."""
+        run.claimed_by = provider.public_key
+        run.claimed_at = datetime.now(timezone.utc)
+        run.cancel_notify = provider.cancel
+        if self._handlers.get(run.run_id) is not None:
+            self._spawn(_pipeline(run, self), name=f"pipeline:{run.run_id}")
+
+    async def _record(self, run: Run, command: Command) -> None:
+        """Runs one command's handler. **The only place a command about a run is
+        acted on**, whichever owner is holding the run at the time: the
+        dispatcher, while it still has the run and no lane exists (`Offer`,
+        `Requeue`); the run's own lane, for the claim and everything the lane
+        drains; and `_one_shot`, for a run that was never claimed. One step
+        function means one order, and the owner changes hands only where there
+        is nothing in flight to reorder."""
+        handlers = self._handlers.get(run.run_id)
+        if handlers is None:
+            return
+        handler = handlers.get(type(command))
+        if handler is None:
+            logger.warning(
+                "run %s: no handler registered for %s", run.run_id, type(command).__name__
+            )
+            return
+        try:
+            await handler(run, command)
+        except Exception:
+            logger.exception(
+                "run %s: recording %s failed", run.run_id, type(command).__name__
+            )
+
+    async def _offer(self, run: Run, provider: ConnectedProvider) -> _Outcome:
+        """Delivers `run` to `provider` within `deliver_timeout_seconds` and
+        reports what came back, in the provider's own three values.
+
+        - **"accepted"** — the run is claimed and its lane is running.
+        - **"declined"** — nobody has it; a timeout, an exception and a
+          "full right now" are all this, and each counts against the
+          provider's quality counters (`unanswered` or `misdeclared`). The
+          run's place and its recorded status are both handed back, and
+          `_drain_thread` puts it at the head of the queue again.
+        - **"refused"** — permanent. The run is failed with the provider's
+          own reason recorded verbatim and never re-offered.
+
+        The run is reserved on the provider and recorded "offering" before
+        the offer leaves: for the length of this await the run is neither
+        queued nor running, and both answers would be untrue to anyone
+        reading the record."""
+        capacity = self._capacity.get(provider.public_key)
+        self._reserve(run, provider)
+        await self._record(run, Offer())
         try:
             async with asyncio.timeout(self.deliver_timeout_seconds):
                 accepted = await provider.deliver(
@@ -466,6 +615,7 @@ class RunBroker:
                     )
                 )
         except TimeoutError:
+            await self._hand_back(run)
             self._note_abnormal(provider.public_key, "unanswered")
             logger.warning(
                 "provider %s did not answer an offer of run %s within %ss (%d so far)",
@@ -474,11 +624,12 @@ class RunBroker:
                 self.deliver_timeout_seconds,
                 self._live.count(provider.public_key, "unanswered"),
             )
-            return False
+            return "declined"
         except Exception:
+            await self._hand_back(run)
             self._note_abnormal(provider.public_key, "unanswered")
             logger.exception("run %s: delivering to its provider failed", run.run_id)
-            return False
+            return "declined"
         reason = getattr(accepted, "reason", None)
         if isinstance(reason, str):
             logger.warning(
@@ -487,9 +638,13 @@ class RunBroker:
                 run.run_id,
                 reason,
             )
+            # The reservation stands until the run is forgotten, which is what
+            # _one_shot ends with — a refused run occupies its place for as
+            # long as funduq is still settling it.
             self._spawn(self._one_shot(run, Fail(reason)), name=f"refused:{run.run_id}")
             return "refused"
         if not accepted:
+            await self._hand_back(run)
             if capacity is not None and capacity.has_room:
                 # Declining while claiming room is one abnormal event,
                 # whatever the declaration was — the tolerance in
@@ -509,17 +664,30 @@ class RunBroker:
                         capacity.in_flight,
                         capacity.declared,
                     )
-            return False
-        run.claimed_by = provider.public_key
-        run.claimed_at = datetime.now(timezone.utc)
-        run.cancel_notify = provider.cancel
-        if capacity is not None:
-            capacity.in_flight += 1
-        handlers = self._handlers.get(run.run_id)
-        if handlers is not None:
-            self._spawn(_pipeline(run, handlers, self), name=f"pipeline:{run.run_id}")
-        run.in_queue.put_nowait(Claim())
-        return True
+            return "declined"
+        self._own_lane(run, provider)
+        current = self._live.serving(run.agent)
+        if current is None or current.public_key != provider.public_key:
+            # The provider stopped serving this agent while its answer was in
+            # flight. It believes it took the run, so this is the same fact
+            # `unregister_provider` records for a run it was already holding:
+            # took work, will never end it. Compared by key, not by object,
+            # because a provider that merely re-attached is still the one that
+            # accepted this run.
+            logger.warning(
+                "provider %s accepted run %s after it stopped serving %s; failing it",
+                provider.public_key[:16],
+                run.run_id,
+                run.agent,
+            )
+            self.push(run.run_id, Fail("provider_left_holding_it"))
+        return "accepted"
+
+    async def _hand_back(self, run: Run) -> None:
+        """Undoes a dispatch nobody accepted: gives the place back and puts the
+        record where the run actually is."""
+        self._release(run)
+        await self._record(run, Requeue())
 
     def _spawn_unsupervised(self, coro, *, name: str | None = None) -> asyncio.Task:
         task = asyncio.create_task(coro, name=name)
@@ -560,15 +728,26 @@ class RunBroker:
 
     def request_cancel(self, run_id: str) -> bool:
         """Marks the run cancel-requested immediately, then either forwards a
-        `RequestCancel` into its pipeline (if a provider has claimed it) or, if
-        it is still only queued, runs the `RequestCancel` handler once directly
-        so it still gets recorded and the run ends without ever being offered.
-        Returns False if `run_id` is unknown."""
+        `RequestCancel` into the run's own lane (if it has been dispatched) or,
+        if it is still sitting in the queue, runs the `RequestCancel` handler
+        once directly so it still gets recorded and the run ends without ever
+        being offered. Returns False if `run_id` is unknown.
+
+        **Dispatched, not claimed, is the test.** A run whose offer is out has
+        an owner already, even though no provider has answered for it yet. This
+        used to read `claimed_by`, so a cancel arriving inside that window took
+        the queued path: funduq recorded the run cancelled and handed it to the
+        provider a moment later, which then worked on something nobody would
+        collect and lost its capacity slot for good (funduq#164). Queued behind
+        the pending answer, the same cancel is merely late rather than
+        contradictory — if the provider took the run it is asked to stop, and
+        if it did not the run ends here.
+        """
         run = self._runs.get(run_id)
         if run is None:
             return False
         run.cancel_requested = True
-        if run.claimed_by is not None:
+        if run.offered_to is not None or run.claimed_by is not None:
             run.in_queue.put_nowait(RequestCancel())
             return True
         self._spawn(self._cancel_queued(run), name=f"cancel:{run_id}")
@@ -633,14 +812,16 @@ class RunBroker:
         unserved when it arrived."""
         cutoff = datetime.now(timezone.utc) - timedelta(seconds=timeout_seconds)
         expired: list[str] = []
-        for agent, queue in list(self._pending_by_agent.items()):
-            if self._live.serving(agent) is not None:
-                continue
-            unserved_since = self._unserved_since.get(agent)
+        for queue in list(self._pending_by_thread.values()):
             for run_id in list(queue):
                 run = self._runs.get(run_id)
                 if run is None:
                     continue
+                # Read off the run rather than the queue's key: the clock this
+                # gives up on is the agent's, and the queue is now the thread's.
+                if self._live.serving(run.agent) is not None:
+                    continue
+                unserved_since = self._unserved_since.get(run.agent)
                 reference = (
                     max(run.queued_at, unserved_since) if unserved_since else run.queued_at
                 )
@@ -662,14 +843,7 @@ class RunBroker:
         a run that was never claimed, then ends the run the same way the
         pipeline would: signals END_OF_STREAM and forgets it. Used for expiring
         queued runs and for cancelling a run before any provider claimed it."""
-        handler = (self._handlers.get(run.run_id) or {}).get(type(command))
-        if handler is not None:
-            try:
-                await handler(run, command)
-            except Exception:
-                logger.exception(
-                    "run %s: recording %s failed", run.run_id, type(command).__name__
-                )
+        await self._record(run, command)
         run.out_queue.put_nowait(END_OF_STREAM)
         self.forget(run.run_id)
 
@@ -678,27 +852,25 @@ class RunBroker:
 
     def accept_late_ack(self, run_id: str, claimed_by: str) -> bool:
         """Lets a provider claim a run after funduq already gave up waiting for
-        its answer (e.g. an unanswered offer timed out), as long as the run
-        hasn't already been claimed and `claimed_by` matches the provider
-        currently registered for that agent. On success, removes the run from
-        the pending queue if it's still sitting there, records an
-        `answered_late` quality event, and starts its pipeline. Returns False
-        (without changing anything) if the run is already claimed or
-        `claimed_by` doesn't match."""
+        its answer (e.g. an unanswered offer timed out), as long as the run is
+        not already dispatched — neither claimed nor out on a fresh offer — and
+        `claimed_by` matches the provider currently registered for that agent.
+        On success, removes the run from the pending queue if it's still
+        sitting there, records an `answered_late` quality event, and starts
+        its pipeline. Returns False (without changing anything) if the run is
+        already dispatched or `claimed_by` doesn't match."""
         run = self._runs.get(run_id)
-        if run is None or run.claimed_by is not None:
+        if run is None or run.claimed_by is not None or run.offered_to is not None:
             return False
         provider = self._live.serving(run.agent)
         if provider is None or provider.public_key != claimed_by:
             return False
 
-        queue = self._pending_by_agent.get(run.agent)
+        queue = self._pending_by_thread.get(run.thread_id)
         if queue is not None and run_id in queue:
             queue.remove(run_id)
 
-        capacity = self._capacity.get(claimed_by)
-        if capacity is not None:
-            capacity.in_flight += 1
+        self._reserve(run, provider)
         self._note_abnormal(claimed_by, "answered_late")
         logger.warning(
             "provider %s answered late for run %s (%d so far): already producing for "
@@ -707,13 +879,7 @@ class RunBroker:
             run_id,
             self._live.count(claimed_by, "answered_late"),
         )
-        run.claimed_by = claimed_by
-        run.claimed_at = datetime.now(timezone.utc)
-        run.cancel_notify = provider.cancel
-        handlers = self._handlers.get(run_id)
-        if handlers is not None:
-            self._spawn(_pipeline(run, handlers, self), name=f"pipeline:{run_id}")
-        run.in_queue.put_nowait(Claim())
+        self._own_lane(run, provider)
         return True
 
     def quality(self) -> dict[str, ProviderQuality]:
@@ -737,17 +903,15 @@ class RunBroker:
         }
 
     def forget(self, run_id: str) -> None:
-        """Drops a run's tracked state and handlers, frees the claimed
-        provider's in-flight capacity (if any, waking the sweep loop so its
+        """Drops a run's tracked state and handlers, gives back the place it
+        was holding on its provider (if any, waking the sweep loop so the
         freed place can be offered again), and notifies forget listeners.
         Safe to call for a run that isn't tracked."""
         run = self._runs.pop(run_id, None)
         self._handlers.pop(run_id, None)
-        if run is not None and run.claimed_by is not None:
-            capacity = self._capacity.get(run.claimed_by)
-            if capacity is not None and capacity.in_flight > 0:
-                capacity.in_flight -= 1
-                self._work_to_do.set()
+        if run is not None and run.offered_to is not None:
+            self._release(run)
+            self._work_to_do.set()
         for listener in self._forget_listeners:
             listener(run_id)
 

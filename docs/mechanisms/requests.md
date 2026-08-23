@@ -8,11 +8,12 @@ only ask, watch what happens, and record exactly that.
 
 ## Offering a run
 
-A queued run is *offered* to its agent's provider — in order, one turn
-per thread at a time: a run whose thread already has a run in flight
-(claimed, or paused waiting for an answer) stays queued until that turn
-ends, without holding up runs on other threads — and the provider
-answers with one of three values:
+A queued run is *offered* to its agent's provider in arrival order, head
+of the queue first — arrival order is the one sequencing funduq owns, and
+[the thread gate is retired](../design-records.md#the-thread-gate-is-retired-funduq-does-not-pace-a-providers-conversation),
+so a sibling utterance is offered as soon as it reaches the head whether
+or not the previous turn is still running. The provider answers with one
+of three values:
 
 - **accepted** — the run is claimed and its events start flowing;
 - **declined** — "full right now"; funduq keeps the run queued and offers
@@ -30,6 +31,79 @@ answers with one of three values:
 The three-valued answer exists because collapsing decline and refusal
 into one bit left runs re-offered forever, reading as `queued` from every
 vantage point while the provider's log alone knew the truth.
+
+## The wait for that answer is a state, and it belongs to one agent
+
+Between the offer leaving and the answer arriving, the run is
+**`offering`**: funduq no longer has it and no provider has accepted it,
+so neither `queued` nor `running` is true, and a caller reading the
+record during that window has to be told something. (To A2A it is still
+`submitted` — nothing is being worked on yet.) A declined offer puts it
+back to `queued`, which is the only transition that does not go through
+the status machine, because a run is otherwise never *moved* to queued —
+it is born there.
+
+Two things happen the moment the offer leaves rather than when it is
+accepted, and both are the same idea: **the run has an owner from
+dispatch onwards.**
+
+- **Its place on the provider is spent.** A provider that declared room
+  for one gets one offer, not one *accepted* run plus however many
+  offers were in flight while it was thinking.
+- **A cancel arriving now queues behind the pending answer** instead of
+  being decided in funduq's favour. If the provider took the run it is
+  asked to stop; if it declined, the run ends here. What cannot happen
+  any more is both — funduq recording `cancelled` and handing the same
+  run over a moment later.
+
+Everything that happens to a run happens in one order, and whoever holds
+the run at the time is the one who applies it. Before any provider has
+taken it that is the dispatcher; afterwards it is the run's own lane,
+and **the lane's first act is to record the claim** rather than find it
+queued. That is what keeps the cancel from the window behind it: the
+claim became true first, so it is applied first, and the handover
+between the two owners happens at the one moment there is nothing in
+flight to reorder.
+
+**Waiting for an answer holds up one conversation and nothing else.** A
+thread is the pipe whose delivery order funduq guarantees, so a thread's
+utterances go over one at a time, in the order they arrived. Everything
+wider hands over side by side: two conversations have no order between
+them even when they share an agent, a provider and a caller.
+
+The order matters because of who does the sequencing. funduq imposes no
+turn-taking — a provider decides whether to run a new utterance at once,
+hold it, or fold it into the turn in flight — but a provider that *does*
+take turns can only take them in the order things reach it. Deliver two
+utterances of one conversation at once and its own sequencing locks in
+an order nobody chose, invisibly. So funduq owes sequence, not pacing.
+
+And the only thing that can say "this one came first" is that its answer
+came back first. An offer is an independent call carrying no position,
+and [the transport contract](../writing-a-transport.md) promises no
+ordering — nor could funduq define one to promise, since two offers it
+issues concurrently reach the wire in whatever order their own work
+finishes. **What makes this cheap is that the answer is a receipt.** A
+provider decides accept / full / never from what it already knows when
+the run lands; the provider SDK's runtime does not await at all on that
+path. So the wait is one round-trip, not the agent's work, and it is
+spent only when a second utterance of the same conversation is already
+waiting — which means it arrived faster than a round-trip.
+
+It used to hold up everything, because one loop offered to one agent at
+a time — and then, briefly, one agent's whole roster of conversations,
+which was the same mistake at a smaller size. See [the design
+record](../design-records.md#dispatch-was-single-file-and-the-queue-it-blocked-was-everyones).
+
+!!! note "One active turn per conversation is the provider's to enforce"
+    A conversation can only be generating one turn at a time — that is a
+    property of the medium, not a rule funduq invented — and an
+    interjection is not a second turn but something injected into the
+    one in flight. Resolving that is the agent's own scheduling
+    ([`serialize_per_thread`](../sdks/provider-sdk.md) is the
+    off-the-shelf form), and funduq deliberately does not do it for
+    them. What funduq owes is that the utterances arrive in order for
+    that scheduling to be possible at all.
 
 ## Cancelling a run
 
@@ -121,8 +195,8 @@ with a stake has the lever funduq does not need: the caller can cancel.
 
 ## Cancelling is not a state a caller can read as final
 
-`cancelling` is an **active** status, alongside `queued`, `running` and
-`input-required`. It means funduq has passed the request on and is still
+`cancelling` is an **active** status, alongside `queued`, `offering`,
+`running` and `input-required`. It means funduq has passed the request on and is still
 relaying — not that the run stopped. It has no A2A equivalent, because
 A2A's `TASK_STATE_CANCELED` asserts an outcome funduq has not observed
 yet; only the settled `cancelled` maps to it.
@@ -152,5 +226,7 @@ would read it is the one who asked.
 
 Why this is shaped the way it is, and what it was shaped like first:
 
+- [An offer's answer is a receipt, and arrives promptly](../design-records.md#an-offers-answer-is-a-receipt-and-arrives-promptly)
+- [Dispatch was single-file, and the queue it blocked was everyone's](../design-records.md#dispatch-was-single-file-and-the-queue-it-blocked-was-everyones)
 - [Silence about a verdict funduq has reached is a bug](../design-records.md#silence-about-a-verdict-funduq-has-reached-is-a-bug)
 - [Enforcing cancellation produced a family of bugs](../design-records.md#enforcing-cancellation-produced-a-family-of-bugs)

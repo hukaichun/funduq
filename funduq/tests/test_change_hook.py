@@ -60,8 +60,45 @@ async def test_a_run_reports_every_status_it_moves_through(funduq: Funduq, attac
     [event async for event in handle.events()]
     await _until(lambda: any(e.status == "completed" for e in seen))
 
-    assert [e.status for e in seen] == ["running", "completed"]
+    assert [e.status for e in seen] == ["offering", "running", "completed"]
     assert {e.run_id for e in seen} == {handle.run_id}
+
+
+class _Decliner:
+    """A provider with no room right now: it answers every offer "not me, not
+    yet" — the answer that sends a run back to the queue."""
+
+    public_key = "pk_decliner"
+    max_concurrent_runs = None
+
+    def __init__(self) -> None:
+        self.offered: list[str] = []
+
+    async def deliver(self, run) -> bool:
+        self.offered.append(run.run_id)
+        return False
+
+    def cancel(self, run_id: str) -> None:
+        pass
+
+
+async def test_a_declined_run_is_reported_back_where_it_came_from(funduq: Funduq) -> None:
+    """The dispatch window has two ends and the record follows both. A run
+    handed to a provider is "offering"; a provider that declines it leaves it
+    exactly where it was, and saying so is the only way a reader can tell an
+    offer still out from one that came back."""
+    seen: list = []
+    funduq.on_change(lambda e: seen.append(e.status) if isinstance(e, RunStatusChanged) else None)
+
+    agent, _identity = await _register(funduq, "declined")
+    provider = _Decliner()
+    funduq.broker.register_provider({agent: provider})
+    handle = await funduq.start_run(agent, {"messages": []})
+
+    await _until(lambda: seen[:2] == ["offering", "queued"])
+    run = await funduq.get_run(handle.run_id)
+    assert run.status == "queued"
+    assert provider.offered == [handle.run_id]
 
 
 async def test_unsubscribing_stops_it(funduq: Funduq) -> None:

@@ -15,7 +15,9 @@ from funduq.broker import (
     Fail,
     FinishStream,
     HandlerMap,
+    Offer,
     RelayEvent,
+    Requeue,
     RequestCancel,
     Run,
 )
@@ -43,6 +45,29 @@ def run_error(message: str, *, code: str | None = None) -> dict:
     return RunErrorEvent(message=message, code=code).model_dump(
         mode="json", by_alias=True, exclude_none=True
     )
+
+
+async def _handle_offer(funduq: "Funduq", run: Run, cmd: Offer) -> None:
+    """Mark the run "offering" as it is handed to a provider that has not answered yet.
+
+    Neither "queued" nor "running" is true for the length of that wait —
+    nobody has the run, and nobody has accepted it — and a caller reading the
+    record during it has to be told something.
+    """
+    async with funduq.session() as session:
+        await funduq.mark_run_status(session, run.run_id, "offering")
+
+
+async def _handle_requeue(funduq: "Funduq", run: Run, cmd: Requeue) -> None:
+    """Put a run back to "queued" after an offer it was dispatched on was declined,
+    went unanswered, or failed.
+
+    Not `mark_run_status`: that function never writes "queued" on purpose.
+    The guard is the same conditional UPDATE, so a hand-back racing an answer
+    that arrived just in time cannot undo the claim that won the row.
+    """
+    async with funduq.session() as session:
+        await funduq.return_run_to_queue(session, run.run_id)
 
 
 async def _handle_claim(funduq: "Funduq", run: Run, cmd: Claim) -> None:
@@ -165,6 +190,8 @@ async def _handle_fail(funduq: "Funduq", run: Run, cmd: Fail) -> None:
 def make_handlers(funduq: "Funduq") -> HandlerMap:
     """Build the broker's command-type-to-handler map, bound to this `funduq` instance."""
     return {
+        Offer: partial(_handle_offer, funduq),
+        Requeue: partial(_handle_requeue, funduq),
         Claim: partial(_handle_claim, funduq),
         RelayEvent: partial(_handle_relay, funduq),
         FinishStream: partial(_handle_finish, funduq),

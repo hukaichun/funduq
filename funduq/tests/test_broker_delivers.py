@@ -5,7 +5,7 @@ import logging
 
 import pytest
 
-from funduq.broker import Fail, RequestCancel, RunBroker
+from funduq.broker import Claim, Fail, RequestCancel, RunBroker
 from funduq.models import AgentRef
 
 AGENT = AgentRef(provider_key="pk_provider", name="translator")
@@ -28,12 +28,17 @@ class Recording:
         answers: list[bool] | None = None,
         default: bool = True,
         hang: bool = False,
+        hold: asyncio.Event | None = None,
     ) -> None:
         self.public_key = key
         self.max_concurrent_runs = max_concurrent_runs
         self._answers = list(answers or [])
         self._default = default
         self._hang = hang
+        # An offer this provider has in its hands and has not answered yet —
+        # the window every in-process test provider otherwise closes instantly,
+        # and the one a networked provider is always inside.
+        self._hold = hold
         self.offered: list[str] = []
         self.cancelled: list[str] = []
 
@@ -41,6 +46,8 @@ class Recording:
         self.offered.append(run.run_id)
         if self._hang:
             await asyncio.Event().wait()
+        if self._hold is not None:
+            await self._hold.wait()
         return self._answers.pop(0) if self._answers else self._default
 
     def cancel(self, run_id: str) -> None:
@@ -57,10 +64,23 @@ async def broker():
         b.stop()
 
 
+@pytest.fixture
+async def patient_broker():
+    """A broker that will wait for an answer. The tests about the dispatch
+    window hold an offer open on purpose, and the default fixture's 0.05s
+    delivery timeout would call that silence a timeout instead."""
+    b = RunBroker(deliver_timeout_seconds=5.0, unserved_timeout_seconds=30)
+    b.start()
+    try:
+        yield b
+    finally:
+        b.stop()
+
+
 def _enqueue(broker: RunBroker, run_id: str, agent: AgentRef = AGENT, thread_id: str | None = None):
-    # Each run gets its own thread unless a test is about thread order:
-    # dispatch is one turn per thread at a time, and these tests exercise
-    # delivery and capacity, not the thread gate.
+    # Each run gets its own thread unless a test names one: a thread is the
+    # unit funduq hands over serially, and most of these tests are about
+    # delivery and capacity rather than about a conversation's order.
     return broker.enqueue_run(
         run_id, agent, thread_id or f"thread_{run_id}", {"messages": []}, "ag-ui", {}
     )
@@ -429,10 +449,15 @@ async def test_a_declined_head_is_not_overtaken_by_its_sibling(broker):
     """Arrival order is the one sequencing funduq does own: while the head of
     the queue stands declined, a later utterance of the same thread must not
     reach the provider first — offers resume (head first) as capacity
-    frees."""
+    frees.
+
+    The provider declares no limit on purpose. With a declared one, a decline
+    is additionally treated as reaching it, and *that* is what would hold the
+    sibling back — the test would pass without arrival order existing at all.
+    """
     from funduq.broker import FinishStream
 
-    provider = Recording(max_concurrent_runs=5, answers=[True, False, True, True])
+    provider = Recording(answers=[True, False, True, True])
     broker.register_provider({AGENT: provider})
     _enqueue(broker, "run_1", thread_id="thread_shared")
     _enqueue(broker, "run_2", thread_id="thread_shared")
@@ -443,9 +468,10 @@ async def test_a_declined_head_is_not_overtaken_by_its_sibling(broker):
     assert "run_3" not in provider.offered, "run_3 must not overtake the declined run_2"
 
     broker.push("run_1", FinishStream())
-    await _until(lambda: provider.offered == ["run_1", "run_2", "run_2"], timeout=2.0)
-    broker.push("run_2", FinishStream())
     await _until(lambda: "run_3" in provider.offered, timeout=2.0)
+    assert provider.offered == ["run_1", "run_2", "run_2", "run_3"], (
+        "the declined head is retried before its sibling is offered at all"
+    )
 
 
 async def test_a_paused_run_does_not_hold_back_its_siblings(broker):
@@ -487,3 +513,188 @@ async def test_an_unlimited_provider_that_declines_is_not_asked_again(broker):
     await _until(lambda: broker.get("run_1").is_claimed)
 
 
+
+
+async def _recorder(seen: list[str], name: str):
+    async def handler(run, cmd) -> None:
+        seen.append(name)
+
+    return handler
+
+
+async def test_a_provider_slow_to_answer_does_not_hold_up_another_agents_handover(patient_broker):
+    """One loop offering to one agent at a time, blocking on each answer, made
+    a provider's slowness everyone's: an unrelated agent's trivial run took
+    3.1s to reach its own unrelated provider (funduq#164). Handover is now one
+    lane per agent, and only that agent's queue waits."""
+    held = asyncio.Event()
+    slow = Recording(key="pk_slow", hold=held)
+    quick = Recording(key="pk_quick")
+    patient_broker.register_provider({AGENT: slow, OTHER: quick})
+    _enqueue(patient_broker, "run_slow", agent=AGENT)
+    await _until(lambda: slow.offered == ["run_slow"])
+
+    _enqueue(patient_broker, "run_quick", agent=OTHER)
+    await _until(lambda: patient_broker.get("run_quick").is_claimed)
+
+    assert patient_broker.get("run_slow").is_offered
+    assert not patient_broker.get("run_slow").is_claimed, "the slow offer is still unanswered"
+    held.set()
+
+
+async def test_a_place_is_taken_when_the_offer_leaves_not_when_it_is_answered(patient_broker):
+    """A provider that declared room for one, serving two agents, gets one
+    offer — not two. The second lane would otherwise read an in-flight count
+    the first lane has not been able to raise yet, and both would conclude
+    there was room."""
+    held = asyncio.Event()
+    provider = Recording(max_concurrent_runs=1, hold=held)
+    patient_broker.register_provider({AGENT: provider, OTHER: provider})
+    _enqueue(patient_broker, "run_1", agent=AGENT)
+    await _until(lambda: provider.offered == ["run_1"])
+
+    _enqueue(patient_broker, "run_2", agent=OTHER)
+    await asyncio.sleep(0.05)
+
+    assert provider.offered == ["run_1"]
+    assert patient_broker.quality()["pk_provider"].in_flight == 1
+    held.set()
+
+
+async def test_an_unaccepted_offer_gives_back_the_place_it_took(patient_broker):
+    """The place is spent at dispatch, so a declined offer has to return it —
+    otherwise a provider that declines enough times is silently full for good."""
+    provider = Recording(default=False)
+    patient_broker.register_provider({AGENT: provider})
+    _enqueue(patient_broker, "run_1")
+
+    await _until(lambda: provider.offered == ["run_1"])
+    await _until(lambda: patient_broker.quality()["pk_provider"].in_flight == 0)
+    assert patient_broker.get("run_1").is_offered is False
+
+
+async def test_a_cancel_inside_the_dispatch_window_waits_for_the_answer(patient_broker):
+    """A cancel arriving while an offer is unanswered used to take the queued
+    path — funduq recorded the run cancelled and handed it to the provider a
+    moment later, which then worked on something nobody would collect and lost
+    its place for good (funduq#164). The claim is the older fact, so it is
+    processed first and the cancel follows it: funduq asks the provider that
+    took the run to stop, which is what a cancel is."""
+    held = asyncio.Event()
+    seen: list[str] = []
+    handlers = {
+        Claim: await _recorder(seen, "claim"),
+        RequestCancel: await _recorder(seen, "cancel"),
+    }
+    provider = Recording(hold=held)
+    patient_broker.register_provider({AGENT: provider})
+    patient_broker.enqueue_run("run_1", AGENT, "thread_1", {"messages": []}, "ag-ui", handlers)
+    await _until(lambda: provider.offered == ["run_1"])
+
+    assert patient_broker.request_cancel("run_1") is True
+    held.set()
+
+    await _until(lambda: seen == ["claim", "cancel"])
+    assert patient_broker.get("run_1").claimed_by == "pk_provider"
+    assert patient_broker.quality()["pk_provider"].in_flight == 1
+
+
+async def test_a_cancel_inside_the_window_settles_the_run_when_nobody_takes_it(patient_broker):
+    """The other half of the same window: the offer comes back declined, so no
+    provider is working on anything, and the run is funduq's to end."""
+    held = asyncio.Event()
+    seen: list[str] = []
+    handlers = {RequestCancel: await _recorder(seen, "cancel")}
+    provider = Recording(default=False, hold=held)
+    patient_broker.register_provider({AGENT: provider})
+    patient_broker.enqueue_run("run_1", AGENT, "thread_1", {"messages": []}, "ag-ui", handlers)
+    await _until(lambda: provider.offered == ["run_1"])
+
+    patient_broker.request_cancel("run_1")
+    await asyncio.sleep(0.02)
+    assert seen == [] and patient_broker.get("run_1") is not None, (
+        "nothing about the run is settled while its answer is still out"
+    )
+
+    held.set()
+    await _until(lambda: seen == ["cancel"])
+    await _until(lambda: patient_broker.get("run_1") is None)
+    assert patient_broker.quality()["pk_provider"].in_flight == 0
+
+
+async def test_a_provider_that_stopped_serving_while_answering_does_not_keep_the_run(
+    patient_broker,
+):
+    """The offer was out when the provider left the roster, and it came back
+    accepted. The provider believes it took the run and nothing will finish
+    it — the same fact `unregister_provider` records for a run it was already
+    holding, reached through the one window that call cannot see into."""
+    held = asyncio.Event()
+    seen: list[str] = []
+    handlers = {
+        Claim: await _recorder(seen, "claim"),
+        Fail: await _recorder(seen, "fail"),
+    }
+    provider = Recording(hold=held)
+    patient_broker.register_provider({AGENT: provider})
+    patient_broker.enqueue_run("run_1", AGENT, "thread_1", {"messages": []}, "ag-ui", handlers)
+    await _until(lambda: provider.offered == ["run_1"])
+
+    patient_broker.unregister_provider([AGENT])
+    held.set()
+
+    await _until(lambda: seen == ["claim", "fail"])
+    assert patient_broker.quality()["pk_provider"].abandoned == 1
+
+
+async def test_two_conversations_with_one_agent_do_not_wait_for_each_other(patient_broker):
+    """A thread is the pipe whose delivery order funduq guarantees. An agent is
+    not a pipe: two of its conversations have no order between them, and a
+    provider slow to answer about one of them says nothing about the other.
+    Serializing per agent made Alice's 2s cost Bob 2s (funduq#164)."""
+    held = asyncio.Event()
+
+    class SlowAboutAlice(Recording):
+        async def deliver(self, run) -> bool:
+            self.offered.append(run.thread_id)
+            if run.thread_id == "chat_alice":
+                await held.wait()
+            return True
+
+    provider = SlowAboutAlice()
+    patient_broker.register_provider({AGENT: provider})
+    _enqueue(patient_broker, "run_alice", thread_id="chat_alice")
+    await _until(lambda: provider.offered == ["chat_alice"])
+
+    _enqueue(patient_broker, "run_bob", thread_id="chat_bob")
+    await _until(lambda: patient_broker.get("run_bob").is_claimed)
+
+    assert not patient_broker.get("run_alice").is_claimed
+    held.set()
+
+
+async def test_one_conversation_is_handed_over_one_utterance_at_a_time(patient_broker):
+    """The order funduq does owe: a provider that takes turns can only take
+    them in the order things reach it, so two utterances of the same thread are
+    never in flight to it at once. Handing both over together would let its own
+    sequencing lock in an order nobody chose."""
+    held = asyncio.Event()
+
+    class SlowAboutTheFirst(Recording):
+        async def deliver(self, run) -> bool:
+            self.offered.append(run.run_id)
+            if run.run_id == "run_1":
+                await held.wait()
+            return True
+
+    provider = SlowAboutTheFirst()
+    patient_broker.register_provider({AGENT: provider})
+    _enqueue(patient_broker, "run_1", thread_id="one_chat")
+    await _until(lambda: provider.offered == ["run_1"])
+
+    _enqueue(patient_broker, "run_2", thread_id="one_chat")
+    await asyncio.sleep(0.05)
+    assert provider.offered == ["run_1"], "the second utterance must not overtake the first"
+
+    held.set()
+    await _until(lambda: provider.offered == ["run_1", "run_2"])

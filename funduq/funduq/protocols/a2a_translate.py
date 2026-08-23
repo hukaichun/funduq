@@ -11,6 +11,9 @@ _PLACEHOLDER_MESSAGE_ID = "unset"
 
 RUN_STATUS_TO_A2A_STATE = {
     "queued": pb.TaskState.TASK_STATE_SUBMITTED,
+    # Submitted, not working: funduq has offered the run to a provider and is
+    # waiting for an answer, so nothing is being worked on yet.
+    "offering": pb.TaskState.TASK_STATE_SUBMITTED,
     "running": pb.TaskState.TASK_STATE_WORKING,
     "input-required": pb.TaskState.TASK_STATE_INPUT_REQUIRED,
     "completed": pb.TaskState.TASK_STATE_COMPLETED,

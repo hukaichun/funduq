@@ -26,7 +26,12 @@ from funduq.schema import (
 logger = logging.getLogger("funduq.repo")
 
 
-ACTIVE_RUN_STATUSES = ["queued", "running", "cancelling", "input-required"]
+# A run nobody has accepted yet: waiting in the queue, or handed to a
+# provider that has not answered. A declined offer puts an "offering" run
+# straight back to "queued", so both are the same thing to anyone asking how
+# much is still pending.
+PENDING_RUN_STATUSES = ["queued", "offering"]
+ACTIVE_RUN_STATUSES = [*PENDING_RUN_STATUSES, "running", "cancelling", "input-required"]
 
 
 def _utcnow() -> datetime:
@@ -631,16 +636,41 @@ async def reopen_run(
 # UPDATE whose WHERE carries the legal predecessors — so ordering holds under
 # any concurrency, in-process or across processes: of two racing writers, the
 # database picks one winner and the loser's update matches zero rows.
-# "queued" is deliberately absent: a run is born queued (`create_run`) or put
-# back by `reopen_run`, never by this function.
+# "queued" is deliberately absent: a run is born queued (`create_run`), put
+# back by `reopen_run` when it is answered, or handed back by
+# `return_run_to_queue` when an offer is not accepted — never by this
+# function.
 LEGAL_STATUS_TRANSITIONS: dict[str, tuple[str, ...]] = {
-    "running": ("queued",),
+    "offering": ("queued",),
+    # "queued" as well as "offering": a provider that answers after funduq
+    # gave up waiting has had its run put back in the queue
+    # (`RunBroker.accept_late_ack`).
+    "running": ("queued", "offering"),
     "input-required": ("running", "cancelling"),
     "cancelling": ("running",),
     "completed": ("running", "cancelling"),
-    "cancelled": ("queued", "running", "cancelling"),
-    "failed": ("queued", "running", "cancelling", "input-required"),
+    "cancelled": ("queued", "offering", "running", "cancelling"),
+    "failed": ("queued", "offering", "running", "cancelling", "input-required"),
 }
+
+
+async def return_run_to_queue(session: AsyncSession, run_id: str) -> bool:
+    """Puts a run whose offer was not accepted back to "queued", and returns
+    whether it applied.
+
+    Separate from `mark_run_status` because that function deliberately never
+    writes "queued" — a run is born queued or reopened, it does not move
+    there. This is the third way, and the only one: the guard is the same
+    conditional UPDATE, so a hand-back cannot undo a claim that won the row
+    (an offer answered just as funduq gave up waiting on it).
+    """
+    result = await session.execute(
+        update(runs)
+        .where(runs.c.run_id == str(run_id), runs.c.status == "offering")
+        .values(status="queued", last_activity_at=_utcnow())
+    )
+    await session.commit()
+    return result.rowcount > 0
 
 
 async def mark_run_status(
@@ -734,15 +764,17 @@ async def ensure_queue_room(session: AsyncSession, thread_id: str, limit: int | 
 
 
 async def count_queued_runs_for_thread(session: AsyncSession, thread_id: str) -> int:
-    """How many of the thread's runs are still waiting to be dispatched — the
-    depth of its pending-utterance buffer. The count-then-create at the doors
-    is deliberately unlocked: the limit is a resource guard, not accounting,
-    and a rare concurrent overshoot by one is cheaper than a lock here."""
+    """How many of the thread's runs no provider has accepted yet
+    (`PENDING_RUN_STATUSES`) — the depth of its pending-utterance buffer. A
+    run mid-handover counts: the offer may still be declined, which puts it
+    back in the queue. The count-then-create at the doors is deliberately
+    unlocked: the limit is a resource guard, not accounting, and a rare
+    concurrent overshoot by one is cheaper than a lock here."""
     return (
         await session.execute(
             select(func.count())
             .select_from(runs)
-            .where(runs.c.thread_id == thread_id, runs.c.status == "queued")
+            .where(runs.c.thread_id == thread_id, runs.c.status.in_(PENDING_RUN_STATUSES))
         )
     ).scalar_one()
 
@@ -819,7 +851,7 @@ async def _fail_runs(
 async def fail_orphaned_runs(session: AsyncSession) -> list[str]:
     return await _fail_runs(
         session,
-        runs.c.status.in_(["queued", "running", "cancelling"]),
+        runs.c.status.in_([*PENDING_RUN_STATUSES, "running", "cancelling"]),
         "orphaned_by_funduq_restart",
     )
 

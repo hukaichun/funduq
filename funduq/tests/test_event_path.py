@@ -28,7 +28,6 @@ async def _delivered(broker: RunBroker, key: str = "sdk_1"):
     async with asyncio.timeout(1):
         while run.claimed_by is None:
             await asyncio.sleep(0)
-    run.in_queue.get_nowait()
     return run
 
 

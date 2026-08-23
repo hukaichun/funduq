@@ -782,6 +782,16 @@ class Funduq:
             self._notify_change(RunStatusChanged(run_id=run_id, status=status))
         return applied
 
+    async def return_run_to_queue(self, session: AsyncSession, run_id: str) -> bool:
+        """Puts a run whose offer was not accepted back to "queued"
+        (`repo.return_run_to_queue`) and notifies change subscribers only when
+        it actually applied — the mirror of `mark_run_status`, for the one
+        transition that function deliberately does not write."""
+        applied = await repo.return_run_to_queue(session, run_id)
+        if applied:
+            self._notify_change(RunStatusChanged(run_id=run_id, status="queued"))
+        return applied
+
     async def list_agents(self) -> list[AgentSummary]:
         """List registered agents with `online` set to whether a provider is currently serving each."""
         async with self.session() as session:

@@ -12,9 +12,10 @@ each entry links to the section it came from at
 Those links are pinned to a commit, so they keep resolving; nothing new
 will be written there.
 
-Three kinds of record: rules that shipped and whose reasoning is easy to
-undo by accident; designs settled but not built; and decisions that were
-made, measured, and reversed.
+Four kinds of record: rules that shipped and whose reasoning is easy to
+undo by accident; **assumptions funduq rests on and cannot enforce**;
+designs settled but not built; and decisions that were made, measured,
+and reversed.
 
 ## Rules that shipped
 
@@ -356,6 +357,48 @@ So the defense now has three layers, each aimed at the verb
 
 This is a strengthening, not a loosening: the noun scan could never see a
 dependency dialing out on its own, the audit hook can.
+
+## Assumptions funduq cannot enforce
+
+### An offer's answer is a receipt, and arrives promptly
+
+funduq holds the next utterance of one conversation until the previous
+one's answer lands. That is the only thing that can say which of two
+offers came first: an offer is an independent call carrying no position,
+[the transport contract](writing-a-transport.md) promises no ordering,
+and funduq could not define an order to promise anyway — two offers it
+issues concurrently reach the wire in whatever order their own work
+finishes.
+
+That is affordable only if the answer is a **receipt**: whether the run
+arrived, whether there is room for it, whether its input is valid. All
+three are known the moment it lands and none is a question for the
+agent. The provider SDK's runtime answers exactly that way —
+`ProviderRuntime.deliver` has no `await` in it at all, pinned by a test
+that drives the coroutine one step — but a third-party transport is free
+to do otherwise, and funduq cannot make it.
+
+**So this is an assumption, stated rather than enforced.** It is written
+into `FunduqLink.offer` and into the transport guide; nothing checks it
+across a wire funduq does not own.
+
+What a violation costs, exactly: a transport that answers only once the
+agent has started delays **the next utterance of that one conversation**
+by the agent's startup time. Nothing else — other threads, other agents
+and other providers hand over meanwhile. The blast radius being one
+conversation is why the assumption is acceptable rather than reckless.
+
+What notices: an answer that never arrives inside the delivery timeout
+(5s) counts `unanswered` against the provider, and the quality allowance
+eventually withdraws it. Between "instant" and that timeout there is a
+band where a transport answering from the agent degrades one
+conversation and nothing complains. Closing that band means a second,
+much tighter clock, and this repository has been wrong about clocks
+before — [silence was read as
+death](#silence-was-read-as-death-and-the-party-that-had-done-nothing-wrong-was-blamed)
+— so no clock has been added without a measurement asking for one. The
+lever, if one is ever wanted, is the delivery timeout, which today is
+sized for *unreachable* rather than for *receipt*.
 
 ## Designed, not built
 
@@ -786,8 +829,11 @@ A provider with `max_concurrent_runs=1` that delegates to **its own**
 agent deadlocks: the outer run holds the slot while it waits, the inner
 run needs a slot from the same provider, and funduq — tracking that
 provider's budget itself — withholds the offer rather than asking. The
-outer run sits `running` until the stall sweep
-gives up on it — `run_stall_timeout_seconds`, 120s by default. A
+outer run sits `running` indefinitely: the clock that used to give up on
+it was removed when [silence stopped being read as
+death](#silence-was-read-as-death-and-the-party-that-had-done-nothing-wrong-was-blamed),
+so what ends the deadlock now is the caller cancelling, or the provider's
+`undelivered` allowance running out and withdrawing it. A
 provider that recurses should stay on the default unlimited capacity.
 Delegating to a *different* provider is unaffected, since it has its own
 budget.
@@ -795,6 +841,86 @@ budget.
 funduq imposes no depth limit and performs no cycle detection.
 
 [full record](https://github.com/hukaichun/funduq/blob/d78d0638c0ec2126167240c62471651b5468d35b/design/agent-provider-guide.md#multi-agent-topologies--verified-not-just-argued)
+
+### Dispatch was single-file, and the queue it blocked was everyone's
+
+Runs executed concurrently from the beginning — each claimed run got its
+own pipeline task. **Handing them over did not.** One loop offered to one
+agent at a time and blocked on the provider's answer before moving to the
+next, so a provider slow to answer stalled the handover of every other
+agent, provider and caller. Measured, with two unrelated agents on two
+unrelated providers and the first sitting on its offer for 3 s:
+
+```
+slow provider holds the offer, unanswered (3s)
+the other agent's run, sent to finished: 3.10s
+```
+
+Milliseconds of work, three seconds of waiting, for a run that shared
+nothing with the one ahead of it but the loop. **A networked provider is
+always slow to answer**, so the worst case was the full delivery timeout
+added to every other agent's next handover, per unanswered offer.
+
+No test saw it, and the reason is worth keeping: every test provider is
+in-process and acks immediately, so the window whose width is the whole
+defect had zero width. The second defect in the same window was worse —
+a cancel arriving while the offer was in flight took the
+nobody-has-it-yet path, so funduq recorded the run `cancelled` **and**
+handed it to the provider, which then worked on something nobody would
+collect and lost a capacity slot permanently.
+
+The fix was not to make the loop faster but to notice that **the run has
+an owner from dispatch onwards**. The offer leaves, and with it goes the
+run's place on the provider and a status of its own (`offering`); a
+cancel arriving now queues behind the pending answer instead of being
+decided in funduq's favour; and the waiting itself moved out of the
+shared loop into one lane per agent. The sweep starts lanes and goes back
+to sleep.
+
+The first version of that fix carried a patch worth recording, because
+rejecting it is what produced the shape above. It queued the claim like
+any other command and then had to *reorder the queue* to put it in
+front, since the cancel from the window had arrived first in wall-clock
+time and second in truth. Reordering a queue is a sign that the order
+was never the queue's to fix. The claim became true before the run's
+lane existed, so it is not a queued command at all: **the lane's first
+act is to record it.** Ownership passes from the dispatcher to the lane
+at the one moment there is nothing in flight to reorder, and one step
+function applies every command about a run whichever owner is holding
+it. The reordering, and the flag tracking whether a lane had been
+started, both disappeared with it.
+
+One thing deliberately stayed serial, and getting its *unit* right took
+one more pass. The first answer was "per agent, because the queue is per
+agent" — which is the data structure justifying itself, and it is the
+same mistake one size down: two conversations with one agent still made
+each other wait, measured at 2.00s for a conversation that shared
+nothing with the slow one but its agent.
+
+The unit is the **thread**, because a thread is the pipe whose delivery
+order funduq guarantees, and nothing wider has an order at all. The
+reason funduq owes that order is worth stating exactly, because it is
+not pacing: a conversation can only be generating one turn at a time,
+resolving that is the agent's own scheduling, and **a provider that
+takes turns can only take them in the order things reach it.** Deliver
+two utterances of one conversation at once and its sequencing locks in
+an order nobody chose, invisibly. funduq owes sequence; the provider
+owns pacing.
+
+A test was measured against this and found not to hold its own claim.
+`test_a_declined_head_is_not_overtaken_by_its_sibling` said arrival
+order held the sibling back; what actually held it back was the capacity
+rule that treats a decline as reaching the provider's declared limit.
+Against a provider that declares no limit there was no such brake, and
+the test passed with per-run queues — that is, with no arrival order at
+all. It now uses an unlimited provider and asserts the whole order.
+
+An earlier attempt fixed only the cancel race, by arbitrating the run's
+status with a conditional UPDATE. It was abandoned: every fix needed
+another field to keep memory and the record in step, which is patching
+the seam rather than closing it.
+
+funduq#164.
 
 ## Open contradictions
 
