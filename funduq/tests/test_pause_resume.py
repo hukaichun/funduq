@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 
 from funduq import repo
-from funduq.broker import FinishStream, RelayEvent
+from funduq.broker import FinishStream, RelayEvent, Run
 from funduq.handlers import _handle_finish, _handle_relay
 
 
@@ -17,7 +17,12 @@ async def test_native_ag_ui_interrupt_outcome_pauses_a_run(session, funduq, new_
     run_id = created["run_id"]
     await session.commit()
 
-    run = funduq.broker.enqueue_run(run_id, agent_b, thread_b, {}, "ag-ui")
+    # These exercise the handlers directly, not dispatch: a bare `Run` is
+    # what they need, and going through the broker would give the run a lane
+    # that races them for its own queue.
+    run = Run(
+        run_id=run_id, agent=agent_b, thread_id=thread_b, input_json={}, protocol="ag-ui"
+    )
     interrupt = {"id": "int_1", "reason": "tool_call", "message": "Approve foo(1)?"}
     finished_event = {
         "type": "RUN_FINISHED",
@@ -31,7 +36,6 @@ async def test_native_ag_ui_interrupt_outcome_pauses_a_run(session, funduq, new_
     reread = await repo.get_run(session, run_id)
     assert reread.status == "input-required"
     assert reread.metadata["interrupts"] == [interrupt]
-    funduq.broker.forget(run_id)
 
 
 async def test_native_ag_ui_success_outcome_completes_a_run_normally(session, funduq, new_identity):
@@ -44,14 +48,18 @@ async def test_native_ag_ui_success_outcome_completes_a_run_normally(session, fu
     run_id = created["run_id"]
     await session.commit()
 
-    run = funduq.broker.enqueue_run(run_id, agent_b, thread_b, {}, "ag-ui")
+    # These exercise the handlers directly, not dispatch: a bare `Run` is
+    # what they need, and going through the broker would give the run a lane
+    # that races them for its own queue.
+    run = Run(
+        run_id=run_id, agent=agent_b, thread_id=thread_b, input_json={}, protocol="ag-ui"
+    )
     finished_event = {"type": "RUN_FINISHED", "threadId": thread_b, "runId": run_id}
     await _handle_relay(funduq, run, RelayEvent(finished_event))
     await _handle_finish(funduq, run, FinishStream())
 
     reread = await repo.get_run(session, run_id)
     assert reread.status == "completed"
-    funduq.broker.forget(run_id)
 
 
 async def test_finalize_delegated_call_reports_honestly_without_registering_any_interest(

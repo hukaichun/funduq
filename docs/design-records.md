@@ -922,6 +922,60 @@ the seam rather than closing it.
 
 funduq#164.
 
+### A run had no owner until somebody took it, and every pair of the four who touched it needed reconciling
+
+The dispatch fix above ([single-file
+handover](#dispatch-was-single-file-and-the-queue-it-blocked-was-everyones))
+was measured, tested and correct, and it still carried six patches. They
+were counted deliberately rather than argued about:
+
+- a five-line comment *proving* only one party would settle a cancelled
+  run, resting on there being no `await` between two lines — a property
+  any later edit would break silently;
+- a re-read of the roster after an offer was accepted, compensating for
+  a decision made across an `await`;
+- two ways for a run to end, `_pipeline` and `_one_shot`, with the same
+  two closing lines in each;
+- three paths for one cancel, and which applied depended on the instant
+  the cancel arrived in;
+- three different parties removing entries from the same queue, one of
+  them tidying up after the others;
+- a registry of per-thread dispatch tasks that removed itself in a
+  `finally`, correct for the same by-scheduling reason as the first.
+
+One cause under all six: **a run had no owner until a provider took
+it.** Before that it was passed between the sweep, the dispatch lane,
+`request_cancel` and the expiry clock — four parties with no order
+between them — and every place two of them met grew a patch to
+reconcile the two views.
+
+What replaced it: a run gets its own task the moment it is queued, and
+**that task's only wait is the run's own command queue**. Being asked to
+try handing itself over is a command like any other, so nothing outside
+works out what a run's state means and then acts on it — it says what
+happened, and the run decides in its own order. `unregister_provider`
+stopped reading `claimed_by` and started saying *this provider is gone*;
+the expiry clock stopped settling runs and started saying *nobody took
+you*; cancel became one line.
+
+Two things made it affordable rather than a new kind of complexity.
+Duplicate reasons to try are coalesced into one pending question — three
+things changing at once used to mean three offers for one dispatchable
+moment, and three counts against a provider for one decline. And
+`enqueue_run` now refuses a run whose agent nobody is serving, which was
+already true on every production path (the doors record `agent_offline`
+instead of queueing) but was not relied on: with it, the lane opens by
+offering rather than by waiting for someone to appear, and "no provider"
+is a recovery path rather than an entry state.
+
+Four of the twelve counted items survived, and they belong to a
+different cause: `in_flight` is both a count of what a provider holds
+and a place to record "it says it is full", and the status machine is
+both the record of what happened and the permit a compensation path
+needs. Fact and policy sharing a field is its own record to write.
+
+funduq#164, and the branch that followed it.
+
 ## Open contradictions
 
 One thing on this page still disagrees with the code. It is recorded

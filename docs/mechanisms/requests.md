@@ -56,20 +56,19 @@ dispatch onwards.**
   any more is both — funduq recording `cancelled` and handing the same
   run over a moment later.
 
-Everything that happens to a run happens in one order, and whoever holds
-the run at the time is the one who applies it. Before any provider has
-taken it that is the dispatcher; afterwards it is the run's own lane,
-and **the lane's first act is to record the claim** rather than find it
-queued. That is what keeps the cancel from the window behind it: the
-claim became true first, so it is applied first, and the handover
-between the two owners happens at the one moment there is nothing in
-flight to reorder.
+Everything that happens to a run happens in one order, because **one
+thing applies all of it: the run itself.** Its lane exists from the
+moment it is queued and its own command queue is the only thing that
+lane ever waits on, so a cancel arriving during an unanswered offer is
+simply read after the answer — not raced against it, and not decided by
+whoever happened to be touching the run at that instant.
 
 **Waiting for an answer holds up one conversation and nothing else.** A
 thread is the pipe whose delivery order funduq guarantees, so a thread's
 utterances go over one at a time, in the order they arrived. Everything
 wider hands over side by side: two conversations have no order between
-them even when they share an agent, a provider and a caller.
+them even when they share an agent, a provider and a caller. Each run
+does its own waiting, in its own task, from the moment it is queued.
 
 The order matters because of who does the sequencing. funduq imposes no
 turn-taking — a provider decides whether to run a new utterance at once,

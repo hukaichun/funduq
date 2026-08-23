@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 
 from funduq import repo
-from funduq.broker import FinishStream, RelayEvent
+from funduq.broker import FinishStream, RelayEvent, Run
 from funduq.handlers import _handle_finish, _handle_relay
 
 
@@ -17,7 +17,12 @@ async def test_a_tool_call_reply_is_persisted_as_real_thread_history_messages(se
     run_id = created["run_id"]
     await session.commit()
 
-    run = funduq.broker.enqueue_run(run_id, agent_b, thread_b, {}, "ag-ui")
+    # These exercise the handlers directly, not dispatch: a bare `Run` is
+    # what they need, and going through the broker would give the run a lane
+    # that races them for its own queue.
+    run = Run(
+        run_id=run_id, agent=agent_b, thread_id=thread_b, input_json={}, protocol="ag-ui"
+    )
     events = [
         {"type": "RUN_STARTED", "threadId": thread_b, "runId": run_id},
         {
@@ -50,7 +55,6 @@ async def test_a_tool_call_reply_is_persisted_as_real_thread_history_messages(se
     assert stored[1]["content"] == "- b (online)"
     assert stored[2]["content"] == "Here you go."
     assert all(m["id"].startswith("msg_") for m in stored)
-    funduq.broker.forget(run_id)
 
 
 async def test_a_plain_text_only_reply_is_still_persisted(session, funduq, new_identity):
@@ -63,7 +67,12 @@ async def test_a_plain_text_only_reply_is_still_persisted(session, funduq, new_i
     run_id = created["run_id"]
     await session.commit()
 
-    run = funduq.broker.enqueue_run(run_id, agent_b, thread_b, {}, "ag-ui")
+    # These exercise the handlers directly, not dispatch: a bare `Run` is
+    # what they need, and going through the broker would give the run a lane
+    # that races them for its own queue.
+    run = Run(
+        run_id=run_id, agent=agent_b, thread_id=thread_b, input_json={}, protocol="ag-ui"
+    )
     events = [
         {"type": "TEXT_MESSAGE_START", "messageId": "m1", "role": "assistant"},
         {"type": "TEXT_MESSAGE_CONTENT", "messageId": "m1", "delta": "hi"},
@@ -78,7 +87,6 @@ async def test_a_plain_text_only_reply_is_still_persisted(session, funduq, new_i
     assert len(stored) == 1
     assert stored[0]["role"] == "assistant"
     assert stored[0]["content"] == "hi"
-    funduq.broker.forget(run_id)
 
 
 async def test_a_failed_run_persists_nothing_to_thread_history(session, funduq, new_identity):
@@ -94,11 +102,15 @@ async def test_a_failed_run_persists_nothing_to_thread_history(session, funduq, 
     run_id = created["run_id"]
     await session.commit()
 
-    run = funduq.broker.enqueue_run(run_id, agent_b, thread_b, {}, "ag-ui")
+    # These exercise the handlers directly, not dispatch: a bare `Run` is
+    # what they need, and going through the broker would give the run a lane
+    # that races them for its own queue.
+    run = Run(
+        run_id=run_id, agent=agent_b, thread_id=thread_b, input_json={}, protocol="ag-ui"
+    )
     partial = {"type": "TEXT_MESSAGE_START", "messageId": "m1", "role": "assistant"}
     await _handle_relay(funduq, run, RelayEvent(partial))
     await _handle_fail(funduq, run, Fail(reason="stalled"))
 
     stored = await repo.get_thread_messages(session, thread_b)
     assert stored == []
-    funduq.broker.forget(run_id)

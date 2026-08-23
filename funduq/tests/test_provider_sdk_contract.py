@@ -143,5 +143,5 @@ def test_the_handle_actually_carries_those_fields():
 
 def test_a_refusal_is_read_by_the_attribute_the_sdk_declares():
     assert getattr(Refusal("gone"), "reason") == "gone"
-    source = inspect.getsource(RunBroker._offer)
+    source = inspect.getsource(RunBroker._try_dispatch)
     assert 'getattr(accepted, "reason"' in source

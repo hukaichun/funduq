@@ -21,10 +21,10 @@ async def close_with_terminal_event(funduq: "Funduq", run_id: str, failure_reaso
     """Give a run funduq has just failed its terminal `RUN_ERROR`, whether or not
     the broker still tracks it.
 
-    A live run gets a `Fail` pushed into its pipeline, which appends the event
+    A live run gets a `Fail` pushed into its own lane, which appends the event
     and relays it to any subscriber. A run the broker has already forgotten —
     a stale pause reaped by the sweep, an orphan reaped at startup — has no
-    pipeline and no subscriber left, but the record still owes the verdict: the
+    lane and no subscriber left, but the record still owes the verdict: the
     same event is appended directly, so the event stream ends the way the
     database says the run did. A run that already carries its own `RUN_ERROR`
     is left alone, same as everywhere else."""
