@@ -156,7 +156,8 @@ async def test_a_provider_past_its_abnormality_allowance_is_withdrawn():
         assert b.quality()["pk_provider"].misdeclared == 2
         offered_when_withdrawn = list(provider.offered)
 
-        _enqueue(b, "run_2")
+        with pytest.raises(RuntimeError, match="no provider is serving"):
+            _enqueue(b, "run_2")
         await asyncio.sleep(0.2)
         assert provider.offered == offered_when_withdrawn, (
             "withdrawn means withdrawn — no more offers"
@@ -310,7 +311,12 @@ async def test_taking_a_run_and_never_ending_it_is_recorded(broker):
 
 
 async def test_a_run_nobody_ever_takes_is_given_up_on(broker):
+    """A run is only born with a provider online, so the way to be nobody's is
+    to have your provider leave: here it is withdrawn while too full to have
+    taken the run."""
+    broker.register_provider({AGENT: Recording(max_concurrent_runs=0)})
     _enqueue(broker, "run_1")
+    broker.unregister_provider([AGENT])
 
     expired = broker.expire_queued(timeout_seconds=0)
 
@@ -332,21 +338,33 @@ async def test_cancelling_a_delivered_run_keeps_the_provider_in_the_loop(broker)
 
 
 async def test_cancelling_a_queued_run_stops_it_ever_being_offered(broker):
-    provider = Recording()
+    """Its provider has no room, so it is still funduq's when the cancel
+    arrives — nobody to ask, so the cancel settles it, and it is never offered
+    even once room appears."""
+    full = Recording(max_concurrent_runs=0)
+    broker.register_provider({AGENT: full})
     _enqueue(broker, "run_1")
 
     assert broker.request_cancel("run_1") is True
-    broker.register_provider({AGENT: provider})
+    await _until(lambda: broker.get("run_1") is None)
+
+    roomy = Recording(key="pk_roomy")
+    broker.register_provider({AGENT: roomy})
     await asyncio.sleep(0.05)
 
-    assert provider.offered == []
+    assert full.offered == [] and roomy.offered == []
 
 
 async def test_a_cancelled_run_does_not_block_the_one_behind_it(broker):
-    provider = Recording()
-    _enqueue(broker, "run_1")
-    _enqueue(broker, "run_2")
+    """Same conversation, so run_2 really is behind run_1 — and a cancelled
+    head must let go of its turn rather than hold the thread forever."""
+    broker.register_provider({AGENT: Recording(max_concurrent_runs=0)})
+    _enqueue(broker, "run_1", thread_id="one_chat")
+    _enqueue(broker, "run_2", thread_id="one_chat")
     broker.request_cancel("run_1")
+    await _until(lambda: broker.get("run_1") is None)
+
+    provider = Recording(key="pk_roomy")
     broker.register_provider({AGENT: provider})
 
     await _until(lambda: provider.offered == ["run_2"])
@@ -698,3 +716,33 @@ async def test_one_conversation_is_handed_over_one_utterance_at_a_time(patient_b
 
     held.set()
     await _until(lambda: provider.offered == ["run_1", "run_2"])
+
+
+async def test_several_reasons_to_try_at_once_ask_the_run_once(broker):
+    """A run's chance to be handed over can change for several reasons in the
+    same breath — it was queued, a provider attached, a place freed. Each puts
+    the same question in its lane, and without coalescing the run is offered
+    once per copy: two offers for one dispatchable moment, and two counts
+    against a provider for one decline."""
+    provider = Recording(default=False)
+    broker.register_provider({AGENT: provider})
+    run = _enqueue(broker, "run_1")
+    broker.register_provider({AGENT: provider})
+    broker.register_provider({AGENT: provider})
+
+    assert run.in_queue.qsize() == 1, "one pending question, however many reasons"
+
+
+async def test_a_run_is_not_accepted_for_an_agent_nobody_is_serving(broker):
+    """A run is only ever born with a provider online — the caller-facing doors
+    record `agent_offline` rather than queue one — and the lane is written to
+    open by offering rather than by waiting for somebody to appear. Losing a
+    provider later is an ordinary thing that happens to a live run; never
+    having had one is not, and taking such a run would mean holding something
+    nothing could ever finish."""
+    with pytest.raises(RuntimeError, match="no provider is serving"):
+        _enqueue(broker, "run_1")
+
+    broker.register_provider({AGENT: Recording()})
+    _enqueue(broker, "run_2")
+    await _until(lambda: broker.get("run_2").is_claimed)

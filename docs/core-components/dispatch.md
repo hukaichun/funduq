@@ -62,65 +62,74 @@ dispatched it. An agent therefore becomes A2A-callable without its
 author writing any A2A: by the time the run reaches the provider, the
 protocol difference has already been erased.
 
-## The agent-provider lane: offer, claim, pipeline
+## The agent-provider lane: a run owns itself
 
 `RunBroker` keeps the live state in memory: a `Run` object per active
-run, a pending deque per agent, and a capacity bucket per provider
-(declared limit vs in-flight count). A sweep task wakes whenever work
-arrives or capacity frees, and makes sure every conversation with pending
-runs has a **lane** handing them over. One lane per thread, because a
-thread is the one pipe whose delivery order funduq guarantees; the sweep
-itself never waits for a provider:
+run, a pending deque per **thread**, and a capacity bucket per provider
+(declared limit vs in-flight count).
 
-1. **Offer.** The head of the agent's queue is offered to its attached
-   connection — one awaited call carrying the claimed-run envelope,
-   under a delivery timeout. Arrival order is the only sequencing funduq
-   imposes: a thread's utterances are offered in the order they came,
-   and a sibling is offered as soon as it reaches the head, whether or
-   not an earlier run of that thread is still producing. funduq does not
-   pace a provider's conversation — running the new turn at once,
-   holding it, or folding it into the turn in flight is the provider's
-   own decision, made in the agent author's code (the design record
+**Every run gets its own task the moment it is queued, and that task's
+only wait is the run's own command queue.** Everything that can happen
+to a run arrives there — a chance to be handed over, a cancel, an event
+from the provider, a provider leaving, a verdict from a sweep — so
+everything about one run happens in one order, decided by the run
+itself. Nothing outside works out what a run's state means and then acts
+on it; it says what happened, and the run decides.
+
+Two refusals at the door of `enqueue_run`, both because accepting would
+create a run nothing could ever finish: the broker must be started, and
+**the agent must be served right now**. A run is only ever born with a
+provider online — the caller-facing doors record `agent_offline` rather
+than queue one — so the lane opens by offering rather than by waiting
+for somebody to appear. Losing a provider afterwards is an ordinary
+thing that happens to a live run; never having had one is not.
+
+1. **Try.** Asked whether it can be handed over now, a run reads four
+   things it owns or can see: it is not already dispatched, it is its
+   conversation's turn, its agent is served, and its provider has a
+   place. Any of them false means wait — whatever changes will ask
+   again, and several reasons arriving at once are coalesced into one
+   question. Arrival order is the only sequencing funduq imposes: a
+   thread's utterances are offered in the order they came, and nothing
+   wider than a thread is serialized. funduq does not pace a provider's
+   conversation — running a new turn at once, holding it, or folding it
+   into the turn in flight is the provider's own decision, made in the
+   agent author's code (the design record
    [the thread gate is retired](../design-records.md#the-thread-gate-is-retired-funduq-does-not-pace-a-providers-conversation)
    records why funduq once decided this and stopped).
-   The provider answers accepted / declined-full /
-   refused-permanently; timeouts and refusals are handled per
-   [runs and cancels are requests](../mechanisms/requests.md).
-
-   The lane waits here, and only this conversation waits with it: a
-   thread's utterances reach the provider in arrival order, because a
-   provider that takes turns can only take them in the order they reach
-   it. Every other conversation is handing over at the same time in a
-   lane of its own, including the other conversations of this same
-   agent. The
-   run leaves the queue and takes its place on the provider as the offer
-   goes out, is recorded `offering` for the length of the wait, and is
-   handed back — place and status both — if the answer is not an
-   acceptance.
-2. **Claim.** An accepted run is marked claimed by that provider's key.
-   Its place was already taken at step 1; claiming is when funduq starts
-   calling it `running`.
-3. **Its own lane.** Each claimed run gets its own consumer task, whose
-   first act is to record the claim and which then drains a per-run
-   command queue **in order** for the rest of the run's life. Recording
-   rather than queueing the claim is what makes the window above safe:
-   anything that arrived while the provider was still answering — a
-   cancel, typically — is drained after it, so funduq never asks a
-   provider to stop a run it has not yet called running. The two owners
-   (the dispatch lane, then the run's own) hand over at the one moment
-   there is nothing in flight to reorder.
-
-   What the lane then drains: the provider reporting an event becomes a
+2. **Offer.** One awaited call carrying the claimed-run envelope, under
+   a delivery timeout. The place is taken as the offer *leaves*, in the
+   same breath as the check that there was one, and the run is recorded
+   `offering` for the length of the answer — it is neither queued nor
+   running, and both would be untrue to anyone reading the record. The
+   provider answers accepted / declined-full / refused-permanently;
+   timeouts and refusals are handled per [runs and cancels are
+   requests](../mechanisms/requests.md). Anything that arrives during
+   that answer — a cancel, typically — is read straight afterwards, in
+   order, so funduq never asks a provider to stop a run it has not yet
+   called running.
+3. **Claim, then relay.** An accepted run leaves its conversation's
+   queue (the next utterance gets its turn) and funduq starts calling it
+   `running`. From there the same lane drains the same queue for the
+   rest of the run's life: the provider reporting an event becomes a
    relay command (persist the event row, forward it to the caller's live
    stream); finishing the stream folds the run's outcome and writes the
    terminal status; a cancel request is forwarded to the provider's
-   `cancel` and the lane keeps running until a terminal command actually
-   arrives. Ordering per run is guaranteed by the queue; runs are
-   independent of each other.
+   `cancel` and the lane keeps going until a terminal command actually
+   arrives.
 
-When a run ends — however it ends — one funnel (`forget`) releases its
-state: capacity is freed, the sweep wakes, KYOK bindings die, listeners
-are told.
+A lane ends on a terminal verdict, or on a cancel for a run no provider
+took — nobody is working on it, so there is nothing to ask. Then one
+funnel (`forget`) releases its state: it leaves its conversation's queue
+so the next utterance gets its turn, its place goes back, KYOK bindings
+die, listeners are told.
+
+What is left of the sweep is two clocks and a nudge. It notes providers
+that have not delivered what they accepted, gives up on queued runs
+whose agent has gone unserved too long, and asks every waiting
+conversation's head to try again. **It dispatches nothing and settles
+nothing** — both clocks say what they observed into the run's own lane
+and let the run decide.
 
 ## The LLM-provider lane: the completion relay
 
@@ -138,31 +147,31 @@ holding a live stream open — queueing here would help nobody.
 
 ## One deliverer, and why that is load-bearing
 
-Exactly one place in the process offers a run to a provider: the
-broker's dispatch lane. `enqueue_run` and attaching a provider do not
-deliver anything — they set a flag that wakes the sweep, which starts
-lanes. The call that actually hands a run over has a single call site,
-and each conversation has exactly one lane draining it.
+Exactly one thing offers a run to a provider: **that run**. Nothing else
+delivers, and nothing else settles — attaching a provider, freeing a
+place, a sweep's clock running out, a caller cancelling all say what
+happened into the run's own queue and let it decide. The call that hands
+a run over has a single call site, reached only by the run whose it is.
 
-That is an invariant, not a coincidence of the current code. Two callers
-racing to offer the same head run both plausibly succeed, and the run is
-delivered twice or claimed by one provider while the other's ack arrives
-against a run already in flight — either way a run is lost or
+That is an invariant, not a coincidence of the current code. Two parties
+racing to offer the same run both plausibly succeed, and the run is
+delivered twice, or claimed by one provider while the other's ack
+arrives against a run already in flight — either way a run is lost or
 duplicated, and neither is recoverable from the outcome funduq records.
-Anything that needs a run dispatched sooner should wake the sweep, never
-deliver on its own.
+It used to be an invariant *maintained*: the run had no owner until a
+provider took it, so four parties took turns touching it and every pair
+of them needed reconciling. Now it holds by construction.
 
-Lanes running side by side do not weaken this. A lane takes the run off
-the queue before the offer leaves, and the run is nobody's to offer
-again until it comes back; a second lane for the same thread is never
-started while the first is alive. What the lanes share is the provider's
-capacity bucket, which is why a place is spent at dispatch — two lanes
-reading an in-flight count that only rises on acceptance would both find
-room that is not there.
+Lanes running side by side do not weaken it. What they share is the
+provider's capacity bucket, which is why a place is taken as the offer
+leaves rather than when it is accepted — two runs reading an in-flight
+count that only rises on acceptance would both find room that is not
+there. Checking and taking are one function that does not await, so
+there is no moment between them.
 
-The same rule explains why `enqueue_run` raises when the broker is not
-running. Accepting work that nothing will ever dispatch would leave a
-run `queued` forever and look, from every vantage point, exactly like a
+The same rule explains the two things `enqueue_run` refuses: a broker
+that is not running, and an agent nobody is serving. Both would leave a
+run `queued` forever, looking from every vantage point exactly like a
 provider that is merely busy.
 
 ## The ack, and the ack that arrives too late

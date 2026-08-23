@@ -21,14 +21,23 @@ class _Taker:
 
 
 async def _delivered(broker: RunBroker, key: str = "sdk_1"):
+    """A claimed run, plus the list its lane records relays into. Observed
+    through a handler rather than by reading `run.in_queue`: the run has its
+    own lane from the moment it is queued, and reading its queue from a test
+    is racing that lane for it."""
     provider = _Taker()
     provider.public_key = key
     broker.register_provider({AGENT: provider})
-    run = broker.enqueue_run("run_1", AGENT, "thread_1", {}, "ag-ui")
+    relayed: list = []
+
+    async def record(run, cmd) -> None:
+        relayed.append(cmd)
+
+    run = broker.enqueue_run("run_1", AGENT, "thread_1", {}, "ag-ui", {RelayEvent: record})
     async with asyncio.timeout(1):
         while run.claimed_by is None:
             await asyncio.sleep(0)
-    return run
+    return run, relayed
 
 
 async def test_a_reported_event_lands_on_the_runs_own_queue_untouched(funduq):
@@ -36,15 +45,16 @@ async def test_a_reported_event_lands_on_the_runs_own_queue_untouched(funduq):
     broker.start()
     funduq.broker, original = broker, funduq.broker
     try:
-        run = await _delivered(broker)
+        _run, relayed = await _delivered(broker)
 
         event = {"type": "CUSTOM", "value": object()}
         assert funduq.report_event("run_1", event, claimed_by="sdk_1") is True
 
-        assert run.in_queue.qsize() == 1
-        queued = run.in_queue.get_nowait()
-        assert isinstance(queued, RelayEvent)
-        assert queued.event is event
+        async with asyncio.timeout(1):
+            while not relayed:
+                await asyncio.sleep(0)
+        assert isinstance(relayed[0], RelayEvent)
+        assert relayed[0].event is event
     finally:
         broker.stop()
         funduq.broker = original
@@ -55,13 +65,17 @@ async def test_an_event_for_someone_elses_run_is_refused(funduq):
     broker.start()
     funduq.broker, original = broker, funduq.broker
     try:
-        run = await _delivered(broker, key="sdk_owner")
+        _run, relayed = await _delivered(broker, key="sdk_owner")
 
         assert funduq.report_event("run_1", {"type": "CUSTOM"}, claimed_by="sdk_impostor") is False
         assert funduq.finish_run("run_1", claimed_by="sdk_impostor") is False
-        assert run.in_queue.qsize() == 0
+        await asyncio.sleep(0.02)
+        assert relayed == []
 
         assert funduq.report_event("run_1", {"type": "CUSTOM"}, claimed_by="sdk_owner") is True
+        async with asyncio.timeout(1):
+            while not relayed:
+                await asyncio.sleep(0)
     finally:
         broker.stop()
         funduq.broker = original

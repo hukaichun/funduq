@@ -13,9 +13,9 @@ AGENT = AgentRef(provider_key="pk_1", name="agent_1")
 class Taker:
 
     public_key = "pk_1"
-    max_concurrent_runs = None
 
-    def __init__(self) -> None:
+    def __init__(self, max_concurrent_runs: int | None = None) -> None:
+        self.max_concurrent_runs = max_concurrent_runs
         self.asked_to_stop: list[str] = []
 
     async def deliver(self, run) -> bool:
@@ -49,7 +49,11 @@ async def _delivered(broker: RunBroker, handlers: dict, run_id: str = "run_1"):
 
 
 async def test_next_seq_increments_for_a_known_run(broker):
-    run = broker.enqueue_run("run_1", AGENT, "thread_1", {}, "ag-ui")
+    from funduq.broker import Run
+
+    run = Run(
+        run_id="run_1", agent=AGENT, thread_id="thread_1", input_json={}, protocol="ag-ui"
+    )
     run.seq += 1
     run.seq += 1
     assert run.seq == 2
@@ -126,6 +130,9 @@ async def test_cancelling_a_queued_run_records_it_once_and_ends_it(broker):
     async def on_cancel(run, cmd):
         seen.append("cancel")
 
+    # A provider with no room: the run is queued, still funduq's, and never
+    # offered — which is the state this is about.
+    broker.register_provider({AGENT: Taker(max_concurrent_runs=0)})
     run = broker.enqueue_run("run_1", AGENT, "thread_1", {}, "ag-ui", {RequestCancel: on_cancel})
     assert run.claimed_by is None
 
@@ -136,7 +143,8 @@ async def test_cancelling_a_queued_run_records_it_once_and_ends_it(broker):
 
 
 async def test_request_cancel_marks_the_run_before_anything_else_happens(broker):
-    run = broker.enqueue_run("run_1", AGENT, "thread_1", {}, "ag-ui")
+    broker.register_provider({AGENT: Taker(max_concurrent_runs=0)})
+    run = broker.enqueue_run("run_1", AGENT, "thread_1", {}, "ag-ui", {})
 
     assert not run.cancel_requested
     broker.request_cancel("run_1")
