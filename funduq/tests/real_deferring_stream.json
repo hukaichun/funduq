@@ -1,0 +1,193 @@
+[
+ {
+  "type": "RUN_STARTED",
+  "timestamp": 1787526052319,
+  "threadId": "t",
+  "runId": "r"
+ },
+ {
+  "type": "TEXT_MESSAGE_START",
+  "timestamp": 1787526057224,
+  "messageId": "38cb4ae4-34c6-4501-bf60-be389c9fc915",
+  "role": "assistant"
+ },
+ {
+  "type": "TEXT_MESSAGE_CONTENT",
+  "timestamp": 1787526057224,
+  "messageId": "38cb4ae4-34c6-4501-bf60-be389c9fc915",
+  "delta": "\n\n"
+ },
+ {
+  "type": "TEXT_MESSAGE_CONTENT",
+  "timestamp": 1787526057224,
+  "messageId": "38cb4ae4-34c6-4501-bf60-be389c9fc915",
+  "delta": "Let"
+ },
+ {
+  "type": "TEXT_MESSAGE_CONTENT",
+  "timestamp": 1787526057224,
+  "messageId": "38cb4ae4-34c6-4501-bf60-be389c9fc915",
+  "delta": " me handle"
+ },
+ {
+  "type": "TEXT_MESSAGE_CONTENT",
+  "timestamp": 1787526057225,
+  "messageId": "38cb4ae4-34c6-4501-bf60-be389c9fc915",
+  "delta": " all three"
+ },
+ {
+  "type": "TEXT_MESSAGE_CONTENT",
+  "timestamp": 1787526057225,
+  "messageId": "38cb4ae4-34c6-4501-bf60-be389c9fc915",
+  "delta": " requests"
+ },
+ {
+  "type": "TEXT_MESSAGE_END",
+  "timestamp": 1787526057226,
+  "messageId": "38cb4ae4-34c6-4501-bf60-be389c9fc915"
+ },
+ {
+  "type": "TOOL_CALL_START",
+  "timestamp": 1787526057226,
+  "toolCallId": "call_2daf0c3fa7e847e3b7bc673c",
+  "toolCallName": "get_weather",
+  "parentMessageId": "38cb4ae4-34c6-4501-bf60-be389c9fc915"
+ },
+ {
+  "type": "TOOL_CALL_ARGS",
+  "timestamp": 1787526057226,
+  "toolCallId": "call_2daf0c3fa7e847e3b7bc673c",
+  "delta": "{"
+ },
+ {
+  "type": "TOOL_CALL_ARGS",
+  "timestamp": 1787526057226,
+  "toolCallId": "call_2daf0c3fa7e847e3b7bc673c",
+  "delta": "\"city\": \"Tai"
+ },
+ {
+  "type": "TOOL_CALL_ARGS",
+  "timestamp": 1787526057226,
+  "toolCallId": "call_2daf0c3fa7e847e3b7bc673c",
+  "delta": "pei\"}"
+ },
+ {
+  "type": "TOOL_CALL_END",
+  "timestamp": 1787526057226,
+  "toolCallId": "call_2daf0c3fa7e847e3b7bc673c"
+ },
+ {
+  "type": "TOOL_CALL_START",
+  "timestamp": 1787526057227,
+  "toolCallId": "call_e3861f5ab34a45689dff219a",
+  "toolCallName": "book_flight",
+  "parentMessageId": "38cb4ae4-34c6-4501-bf60-be389c9fc915"
+ },
+ {
+  "type": "TOOL_CALL_ARGS",
+  "timestamp": 1787526057227,
+  "toolCallId": "call_e3861f5ab34a45689dff219a",
+  "delta": "{"
+ },
+ {
+  "type": "TOOL_CALL_ARGS",
+  "timestamp": 1787526057235,
+  "toolCallId": "call_e3861f5ab34a45689dff219a",
+  "delta": "\"destination\": \"Tokyo\""
+ },
+ {
+  "type": "TOOL_CALL_ARGS",
+  "timestamp": 1787526057235,
+  "toolCallId": "call_e3861f5ab34a45689dff219a",
+  "delta": ", \"date\": \"2026-09"
+ },
+ {
+  "type": "TOOL_CALL_ARGS",
+  "timestamp": 1787526057235,
+  "toolCallId": "call_e3861f5ab34a45689dff219a",
+  "delta": "-01\"}"
+ },
+ {
+  "type": "TOOL_CALL_END",
+  "timestamp": 1787526057235,
+  "toolCallId": "call_e3861f5ab34a45689dff219a"
+ },
+ {
+  "type": "TOOL_CALL_START",
+  "timestamp": 1787526057235,
+  "toolCallId": "call_073e09413830483b9546819a",
+  "toolCallName": "send_money",
+  "parentMessageId": "38cb4ae4-34c6-4501-bf60-be389c9fc915"
+ },
+ {
+  "type": "TOOL_CALL_ARGS",
+  "timestamp": 1787526057236,
+  "toolCallId": "call_073e09413830483b9546819a",
+  "delta": "{"
+ },
+ {
+  "type": "TOOL_CALL_ARGS",
+  "timestamp": 1787526057236,
+  "toolCallId": "call_073e09413830483b9546819a",
+  "delta": "\"to\": \"Alic"
+ },
+ {
+  "type": "TOOL_CALL_ARGS",
+  "timestamp": 1787526057236,
+  "toolCallId": "call_073e09413830483b9546819a",
+  "delta": "e\""
+ },
+ {
+  "type": "TOOL_CALL_ARGS",
+  "timestamp": 1787526057236,
+  "toolCallId": "call_073e09413830483b9546819a",
+  "delta": ", \"amount\": 500}"
+ },
+ {
+  "type": "TOOL_CALL_END",
+  "timestamp": 1787526057260,
+  "toolCallId": "call_073e09413830483b9546819a"
+ },
+ {
+  "type": "TOOL_CALL_RESULT",
+  "timestamp": 1787526057263,
+  "messageId": "1843e1af-d853-4481-96f0-56d3bce7c630",
+  "toolCallId": "call_2daf0c3fa7e847e3b7bc673c",
+  "content": "Taipei: 28C, clear",
+  "role": "tool"
+ },
+ {
+  "type": "RUN_FINISHED",
+  "timestamp": 1787526057264,
+  "threadId": "t",
+  "runId": "r",
+  "outcome": {
+   "type": "interrupt",
+   "interrupts": [
+    {
+     "id": "int-call_073e09413830483b9546819a",
+     "reason": "tool_call",
+     "message": "Approve send_money({\"to\": \"Alice\", \"amount\": 500})?",
+     "toolCallId": "call_073e09413830483b9546819a",
+     "responseSchema": {
+      "properties": {
+       "approved": {
+        "type": "boolean"
+       },
+       "editedArgs": {
+        "type": "object"
+       },
+       "reason": {
+        "type": "string"
+       }
+      },
+      "required": [
+       "approved"
+      ],
+      "type": "object"
+     }
+    }
+   ]
+  }
+ }
+]
