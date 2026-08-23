@@ -56,6 +56,40 @@ times over.
 When you catch yourself about to write "this should work" or "X is
 transport-specific", write eight lines that prove it instead.
 
+## Ordering that depends on not awaiting is not ordering
+
+**Never let correctness rest on "there is no `await` between these two
+lines."** Not in a comment, not in a docstring, not in your head. If the
+argument for why something cannot interleave is the absence of a suspension
+point, the design is wrong — fix the design, not the comment.
+
+Why it keeps being tempting and keeps being wrong:
+
+- it is **invisible**. Nothing in the code says these two lines are load
+  bearing together, so the next edit inserts an `await` and the invariant is
+  gone;
+- **no test goes red**. The window is microseconds wide in-process, so the
+  suite stays green while the property is dead;
+- **horizontal scaling throws it away**. Single-event-loop atomicity is not
+  available across processes, and this repo intends to get there.
+
+It has been caught here four times, and one of them shipped:
+
+- the thread gate's second fix proposed doing two updates "in one synchronous
+  section" and was rejected for exactly this reason (see the design record);
+- `_put_first` reordered a run's queue and a five-line comment *proved* only
+  one party could settle a cancelled run, resting on two adjacent lines;
+- the per-thread dispatch registry removed itself in a `finally` "with no
+  await between its last look at the queue and that removal";
+- and a resolution's own event was going to be pushed after `enqueue_run`
+  on the strength of the same argument.
+
+What to do instead: **make the ordering structural.** One owner draining one
+ordered queue; or hand the thing in at construction so it is ordered by
+construction. An extra parameter is cheaper than a rule someone has to
+remember. If you find yourself writing a comment that argues two operations
+are atomic, that comment is the bug report.
+
 ## Testing
 
 - Run the suite on **both** backends. SQLite is the default;
