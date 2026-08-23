@@ -449,6 +449,37 @@ carrying a chain, like every other part of it: a thread that named no
 authority at birth has none to check against, and inventing one would
 make funduq the authority instead of the caller.
 
+**The freshness window is the only thing bounding a replayed cancel, and
+that was nearly recorded wrong.** The resolution it copies is safe
+because it is *consumed* — the status-guarded reopen picks one winner,
+so a replay finds the ask already answered. Nothing consumes a cancel,
+and `reopen_run` puts a run back under the same id, so one signature
+stops any round of that run while it is fresh. Measured:
+
+```
+round 1 paused: 'input-required'
+round 2 live:   'running'   (same run id: True)
+the round-1 signature stops round 2: True
+```
+
+Left as it is, deliberately, and the reason is a comparison rather than
+a claim that it cannot happen. The cancel signature never reaches the
+record or the provider, so replaying it takes seeing the request on the
+wire — and anyone who can see that can also see the caller's actor
+chain, a plain bearer token with a **300s** TTL whose holder is admitted
+as a *writer* on the same thread. Writing into a conversation is
+strictly more than stopping one round of it, in a window five times as
+long, and chains being replayable is a stated property of the design
+rather than an oversight. Binding the signature to a round would close
+the shorter window and leave the longer one open.
+
+What the guard does buy is complete, and it is the whole point: it stops
+the party who knows only the run id. Run ids leak — logs, references,
+error messages — and private keys do not.
+
+If chains ever stop being replayable, this window becomes the weakest
+link and should be revisited.
+
 funduq#151.
 
 ### Saying it in a vocabulary the other side has is not the same as lying

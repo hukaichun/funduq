@@ -162,10 +162,24 @@ def resolve_signing_payload(run_id: str, timestamp: int) -> bytes:
 def cancel_signing_payload(run_id: str, timestamp: int) -> bytes:
     """The bytes an authority signs to ask that a run be stopped: "I ask this run to stop, now".
 
-    Same family as a resolution, for the same reason: cancelling is a
-    singular act with a 60s freshness window, not a repeated one needing a
-    challenge. A separate tag so a resolution signature can never be
-    replayed as a cancel, or the reverse.
+    Timestamp family, and a separate tag so a resolution signature can never
+    be spent as a cancel or the reverse. **The freshness window is doing
+    more work here than it does for a resolution**, and the difference is
+    worth stating rather than inheriting by analogy: a resolution is
+    *consumed* — the status-guarded reopen picks one winner, so a replay
+    finds the ask already answered and does nothing. Nothing consumes a
+    cancel, and `repo.reopen_run` puts a run back under the same id, so one
+    signature stops any round of that run for as long as it is fresh.
+
+    That is acceptable because of who could use it, not because it cannot
+    happen. This signature never reaches the record or the provider (it is
+    read by `doors.authorize_cancel` and discarded), so replaying it takes
+    seeing the request on the wire — and anyone who can see that can also
+    see the caller's actor chain, which is a plain bearer token with a
+    300s TTL and admits its holder as a *writer* on the same thread.
+    Stopping one round is the strictly weaker power, in the shorter window.
+    If chains ever stop being replayable, this window becomes the weakest
+    link and should be revisited.
     """
     return f"{_CANCEL}:{run_id}:{timestamp}".encode()
 

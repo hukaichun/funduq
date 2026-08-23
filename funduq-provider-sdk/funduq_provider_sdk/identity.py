@@ -96,7 +96,12 @@ def cancel_payload(run_id: str, timestamp: int) -> bytes:
     Its own tag, not the resolution's, so neither signature is ever the
     other. On a thread that bound an authority at birth, funduq refuses a
     cancel without one of these — holding the run id is not a right to stop
-    the run.
+    the run, and a run id leaks (logs, references, error messages) in a way
+    a private key does not.
+
+    Sign one per request. A run keeps its id across rounds, so a signature
+    kept around stops whichever round is live when it is used, until it
+    goes stale.
     """
     return f"funduq-cancel:{run_id}:{timestamp}".encode()
 
