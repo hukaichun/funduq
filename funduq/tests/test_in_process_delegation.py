@@ -15,6 +15,7 @@ from funduq.protocols.a2a import A2AAdapter
 from tests.conftest import EchoAgent
 
 from a2a.types import a2a_pb2 as pb
+from a2a.utils.errors import TaskNotCancelableError
 
 COMPLETED = pb.TaskState.TASK_STATE_COMPLETED
 INPUT_REQUIRED = pb.TaskState.TASK_STATE_INPUT_REQUIRED
@@ -161,8 +162,11 @@ async def test_get_and_cancel_are_callable_directly(funduq, serve):
     task = await adapter.send_task(callee, _message("hi"))
     assert (await adapter.get_task(callee, task.id)).id == task.id
 
-    cancelled = await adapter.cancel_task(callee, task.id)
-    assert cancelled.status.state == COMPLETED
+    # The echo agent has already finished, and a finished task is not
+    # cancellable — returning it as though the request had been accepted is
+    # the unreadable answer this raise replaces (funduq#149).
+    with pytest.raises(TaskNotCancelableError):
+        await adapter.cancel_task(callee, task.id)
 
 
 async def test_an_unknown_task_is_not_found_rather_than_an_exception(funduq, register):

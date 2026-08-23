@@ -40,7 +40,7 @@ the same repository calls, with one deliberate difference: an unknown
 `contextId` is refused rather than replaced, because A2A's spec assigns
 that id server-side while AG-UI's is client-chosen and required. Task
 states are derived from run statuses; `referenceTaskIds`
-records lineage; `tasks/cancel` is the one external cancel path. Every
+records lineage; `tasks/cancel` is the one external cancel path — it raises `TaskNotCancelableError` on a task that has already ended, and otherwise answers `working` plus a marker saying the request is pending, because funduq asks a provider to stop and cannot make it. Every
 message is kept: one whose `taskId` names the thread's paused
 `input-required` task is the answer to its question and resumes that
 run (status-guarded, so concurrent replies resolve to one resume); any
@@ -207,11 +207,22 @@ serving five agents has one budget across all five, which is the same
 answer funduq gives everywhere else: the key is the identity, and how a
 provider arranges itself behind it is its own business.
 
-A provider that declines while claiming to have room is counted
-`misdeclared` and then treated as full, because its own declaration is
-the only capacity figure funduq has and the decline is the more recent
-fact. This is also what makes self-delegation deadlock — see
-[the design record](../design-records.md#self-delegation-deadlocks-a-capacity-capped-provider).
+**A provider has whatever room it said it has.** `declared` is its own
+figure and the only capacity figure funduq has; the in-flight count is a
+count, incremented when an offer leaves and decremented when the run
+comes back or ends. A provider that declines while claiming to have room
+is counted `misdeclared` — and that is all that happens. funduq does not
+revise the declaration, and the run is simply offered again when
+something changes. (A capped provider that delegates to its own agent
+still deadlocks — see [the design
+record](../design-records.md#self-delegation-deadlocks-a-capacity-capped-provider).)
+
+funduq used to write its own conclusion into that count instead
+(`in_flight = declared`, "treating it as full"). A count only knows how
+to be incremented and decremented, so the phantom places that injected
+never came back: **a provider that declared room for five and declined
+once was capped at one, permanently.** Measured, and the reason the
+count and the conclusion are no longer the same field.
 
 The quality counters are not just a report — they are **the
 allowance**: they say how much abnormality a provider is permitted,
@@ -224,9 +235,11 @@ runs — queued ones stay in the queue like anyone's and, the agent now
 unserved, travel the ordinary no-provider expiry road to a loud
 failure; runs already in flight finish and report. The way back is
 the front door: reconnect and register again, with the record intact
-and still counting. (Before this rule, an unlimited provider that kept
-declining was re-offered every sweep forever, inflating `misdeclared`
-into noise — funduq#128.) Providers that want funduq to pace intake
+and still counting. (Before this rule, a provider that kept declining
+was re-offered every sweep forever, inflating `misdeclared` into noise —
+funduq#128. That was the old sweep's eagerness: a run is now asked to
+try only when something has actually changed, and several reasons
+arriving at once are coalesced into one question.) Providers that want funduq to pace intake
 declare a real limit — that is what the declaration is for — and the
 provider SDK keeps the default coherent: a runtime that claims no
 limit accepts every delivered run, so it can never be branded abnormal

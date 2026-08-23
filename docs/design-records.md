@@ -358,6 +358,42 @@ So the defense now has three layers, each aimed at the verb
 This is a strengthening, not a loosening: the noun scan could never see a
 dependency dialing out on its own, the audit hook can.
 
+### Saying it in a vocabulary the other side has is not the same as lying
+
+funduq will not record an outcome it has not observed, and A2A has no
+state for "asked to stop, still running" — because in A2A's own server
+the agent is in the same process and can simply be killed
+(`ActiveTask.cancel()` cancels the producer, calls
+`AgentExecutor.cancel()`, waits for the task to finish, and forces
+`CANCELED` on anything still non-terminal). funduq's provider is on
+somebody else's laptop.
+
+The first answer to that mismatch was to say nothing: `cancelling` had
+no entry in the status table, so it fell through to
+`TASK_STATE_UNSPECIFIED` and serialised as an empty `status`. That was
+read as modesty and it was not. A client got neither "your request
+landed" nor "something is still running" — and a2a-python's own bug
+report for the equivalent case (a2aproject/a2a-python#1170) puts the
+complaint exactly: callers are left polling something that never
+resolves.
+
+`working` is what funduq says now, plus a metadata marker naming the
+pending request. `working` is **true** — the run has not stopped — and
+it is a word A2A has. Translating into the other side's vocabulary is
+not lying; asserting `CANCELED` would be, because it names an outcome
+funduq has not seen and the provider's own output may contradict.
+Sending nothing is not a smaller claim than `working`; it is an
+unreadable one.
+
+Two details the shape turns on. The marker rides on the **request**, not
+on the record: the run's own lane writes `cancelling` a moment after the
+door asks, and a caller answered inside that window would read a plain
+`working` and learn nothing. And a run that has already ended raises
+`TaskNotCancelableError` rather than returning the finished task, which
+is the same unreadable answer in a different disguise.
+
+funduq#149.
+
 ## Assumptions funduq cannot enforce
 
 ### An offer's answer is a receipt, and arrives promptly

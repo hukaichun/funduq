@@ -213,7 +213,10 @@ async def test_runs_of_a_withdrawn_provider_expire_on_the_ordinary_road():
         b.stop()
 
 
-async def test_declining_while_funduq_believed_there_was_room_is_recorded(broker):
+async def test_declining_while_funduq_believed_there_was_room_is_counted_not_believed(broker):
+    """A provider has whatever room it said it has. The decline is recorded
+    against it and the declaration is left alone — the in-flight number stays
+    a count of what the provider is actually holding."""
     provider = Recording(max_concurrent_runs=2, default=False)
     broker.register_provider({AGENT: provider})
     _enqueue(broker, "run_1")
@@ -223,7 +226,38 @@ async def test_declining_while_funduq_believed_there_was_room_is_recorded(broker
 
     quality = broker.quality()["pk_provider"]
     assert quality.declared == 2
-    assert quality.in_flight == 2
+    assert quality.in_flight == 0, "it is holding nothing, so that is what the count says"
+
+
+async def test_one_decline_does_not_cost_a_provider_its_declared_room(broker):
+    """funduq used to write its own conclusion into the count — `in_flight =
+    declared`, "treating it as full". A count only knows how to be
+    incremented and decremented, so the phantom places that injected never
+    came back: a provider that declared room for five and declined once was
+    capped at one, for good."""
+
+    class DeclinesOnce(Recording):
+        def __init__(self) -> None:
+            super().__init__(max_concurrent_runs=5)
+            self.declined = False
+            self.holding: set[str] = set()
+
+        async def deliver(self, run) -> bool:
+            self.offered.append(run.run_id)
+            if not self.declined:
+                self.declined = True
+                return False
+            self.holding.add(run.run_id)
+            return True
+
+    provider = DeclinesOnce()
+    broker.register_provider({AGENT: provider})
+    for i in range(6):
+        _enqueue(broker, f"run_{i}")
+        await asyncio.sleep(0)
+
+    await _until(lambda: len(provider.holding) == 5, timeout=2.0)
+    assert broker.quality()["pk_provider"].in_flight == 5
 
 
 async def test_a_provider_that_never_answers_is_not_waited_on_forever(broker):

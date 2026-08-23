@@ -96,15 +96,14 @@ def test_run_statuses_map_to_a2a_states():
     assert state_for_run_status("failed") == pb.TaskState.TASK_STATE_FAILED
     assert state_for_run_status("cancelled") == pb.TaskState.TASK_STATE_CANCELED
     assert state_for_run_status("offering") == pb.TaskState.TASK_STATE_SUBMITTED
-    assert state_for_run_status("cancelling") == pb.TaskState.TASK_STATE_UNSPECIFIED
+    assert state_for_run_status("cancelling") == pb.TaskState.TASK_STATE_WORKING
 
 
 def test_every_status_a_run_can_carry_has_an_answer_here():
     """A status funduq can write and this table does not know reaches an A2A
-    caller as `TASK_STATE_UNSPECIFIED` — a shrug, on a wire where every other
-    answer means something. `cancelling` is the one deliberate shrug (A2A's
-    `CANCELED` would assert an outcome funduq has not observed); anything else
-    landing there is a status somebody added and forgot to translate."""
+    caller as `TASK_STATE_UNSPECIFIED`, which serialises to nothing — a shrug,
+    on a wire where every other answer means something. Nothing may land
+    there: a status without a translation is one somebody added and forgot."""
     from funduq.schema import RUN_STATUSES
 
     unmapped = {
@@ -112,7 +111,7 @@ def test_every_status_a_run_can_carry_has_an_answer_here():
         for status in RUN_STATUSES
         if state_for_run_status(status) == pb.TaskState.TASK_STATE_UNSPECIFIED
     }
-    assert unmapped == {"cancelling"}
+    assert unmapped == set()
 
 
 def test_status_update_from_a_persisted_status_has_no_final_flag():
@@ -235,3 +234,23 @@ def test_a_task_with_nothing_unmapped_carries_no_overflow_metadata():
     )
 
     assert "metadata" not in _wire(task)
+
+
+def test_the_pending_cancel_marker_can_come_from_the_request_alone():
+    """The request outruns the record. `cancelling` is written by the run's own
+    lane a moment after the A2A door asks, and a caller answered inside that
+    window would see a plain `working` and learn nothing — neither that its
+    request landed nor that the provider was ignoring it. So the door marks
+    what it just did rather than reading back what has been written yet."""
+    from funduq.protocols.a2a_translate import CANCEL_REQUESTED_METADATA_KEY, build_task
+
+    asked = build_task("t1", "c1", "agent", "running", [], cancel_requested=True)
+    assert asked.status.state == pb.TaskState.TASK_STATE_WORKING
+    assert asked.metadata[CANCEL_REQUESTED_METADATA_KEY] is True
+
+    written = build_task("t1", "c1", "agent", "cancelling", [])
+    assert written.status.state == pb.TaskState.TASK_STATE_WORKING
+    assert written.metadata[CANCEL_REQUESTED_METADATA_KEY] is True
+
+    plain = build_task("t1", "c1", "agent", "running", [])
+    assert CANCEL_REQUESTED_METADATA_KEY not in plain.metadata
