@@ -11,7 +11,7 @@ particular database. Replace the database and:
   re-derive them because only funduq can mint them;
 - re-registering does not fix it either — a fresh database mints *fresh* ids,
   and funduq's own in-process worker keeps claiming for the ones it was attached
-  with, so `attach_provider` has to be called a second time with the new ones.
+  with, so recovering meant learning new identifiers from funduq first.
 
 That second point is what this probe pins. It is not "an id changed"; it is
 that recovering needed a step nobody had a reason to know about. Issue #37 is
@@ -20,7 +20,9 @@ ids nobody recognised.
 
 An agent is `(provider_key, name)` now. Both halves come from the provider's
 own configuration, so nothing it holds can be invalidated by a database it
-never saw. Re-registering is the whole repair.
+never saw. Opening a link again and publishing the same names is the whole
+repair — every input to it is the provider's own, and it learns nothing new
+from funduq.
 
     cd funduq && uv run python ../scripts/probes/probe_registration_survives_a_new_database.py
 """
@@ -41,7 +43,6 @@ from sqlalchemy import delete
 from funduq.config import CoreSettings
 from funduq.core import Funduq
 
-from funduq.identity import registration_signing_payload
 from funduq.schema import agents, providers, run_events, runs, thread_messages, threads
 from funduq_provider_sdk import InProcessLink, ProviderIdentity, ProviderRuntime
 
@@ -78,21 +79,18 @@ async def main() -> int:
     identity = ProviderIdentity(Ed25519PrivateKey.generate())
     key, public_key = identity._private_key, identity.public_key
 
-    async def register():
-        timestamp = int(time.time())
-        return await funduq.register_agents(
-            public_key,
-            key.sign(registration_signing_payload(["translator"], timestamp)).hex(),
-            timestamp,
-            [{"name": "translator"}],
-        )
-
-    first = await register()
-    # Attached once, with the names from this provider's own configuration.
     # Through the SDK's runtime, because that is what funduq can hand a run to.
     runtime = ProviderRuntime(identity, Provider())
     runtime.start()
-    await funduq.attach_provider(InProcessLink(funduq, runtime), ["translator"])
+    link = InProcessLink(funduq, runtime)
+
+    async def register():
+        """Publishing is an act on the open link, so re-registering means
+        opening one again — which is what a provider does after a restart."""
+        await funduq.attach_provider(link)
+        return await funduq.register_agents(link, [{"name": "translator"}])
+
+    first = await register()
 
     handle = await funduq.start_run(first.agents["translator"], {"messages": []})
     before = [event async for event in handle.events()]
@@ -106,7 +104,9 @@ async def main() -> int:
         await session.commit()
     print("        : database replaced underneath the running provider")
 
-    # The whole repair: register again, with the same names. No re-attach.
+    # The whole repair: open a link and publish the same names again. Every
+    # input is the provider's own configuration; nothing was learned from
+    # funduq, which is the point.
     second = await register()
     same_identity = second.agents["translator"] == first.agents["translator"]
     print(f"        : re-registered; same identity as before? {same_identity}")
@@ -122,7 +122,8 @@ async def main() -> int:
 
     ok = same_identity and status == "completed" and len(after) == len(before)
     print(
-        "\nOK   the provider is serving again with no re-attach and no new identifier"
+        "\nOK   the provider is serving again with nothing learned from funduq — "
+        "same names, same identifier"
         if ok
         else f"\nBROKEN: same_identity={same_identity} status={status} events={len(after)}"
     )
