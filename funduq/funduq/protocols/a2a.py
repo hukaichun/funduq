@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import contextlib
 import logging
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
@@ -8,12 +9,18 @@ from typing import TYPE_CHECKING, Any
 from a2a.server.events import Event
 from a2a.types import a2a_pb2 as pb
 from a2a.utils.constants import PROTOCOL_VERSION_CURRENT, TransportProtocol
-from a2a.utils.errors import TaskNotFoundError
+from a2a.utils.errors import InvalidParamsError, TaskNotFoundError
 from google.protobuf.json_format import ParseDict, ParseError
 
 from funduq import repo
 from funduq.doors import InboundRun, dispatch, resolve_kyok, verify_caller
-from funduq.errors import AgentNotFound
+from funduq.errors import (
+    AgentNotFound,
+    InvalidRunInput,
+    LlmProviderNotFound,
+    ThreadNotFound,
+    ThreadOwnershipMismatch,
+)
 from funduq.identity import verify_resolution
 from funduq.props import ADDRESSED_RUN_METADATA_KEY
 from funduq.models import AgentRef
@@ -48,6 +55,48 @@ class ServedInterface:
             raise ValueError(
                 f"unknown A2A binding {self.binding!r} — A2A defines {sorted(_BINDINGS)}"
             )
+
+
+# Caller mistakes funduq has its own words for, and the A2A word for each.
+# Translating them here is what the rest of this module does for everything
+# else: funduq's vocabulary in, A2A's out. A caller that names a context
+# funduq does not have, one belonging to another agent, an offering that is
+# not registered, or a message that will not build a run input has made the
+# same kind of mistake — a bad parameter — and A2A has one word for that.
+# The code the caller finally sees comes from the package's own table
+# (`JSON_RPC_ERROR_CODE_MAP`), never from a literal here.
+_BAD_PARAMETER = (
+    ThreadNotFound,
+    ThreadOwnershipMismatch,
+    LlmProviderNotFound,
+    InvalidRunInput,
+)
+
+
+@contextlib.contextmanager
+def _in_a2as_words():
+    """Re-raises funduq's caller-caused errors as A2A's own, so a transport can answer without
+    a translation table of funduq's.
+
+    Two deliberately stay funduq's, because A2A has no word for either and
+    inventing one would be worse than passing them on:
+
+    - `AgentNotFound` is not a bad *parameter*. The agent is the endpoint,
+      resolved from the route before this adapter is called at all, so an
+      unknown one means the address does not exist — a routing-layer
+      answer (404), not a JSON-RPC error inside a 200.
+    - `ThreadQueueFull` is backpressure: funduq telling a caller to come
+      back, with the thread's buffer full and the request **not** accepted.
+      A2A has no code for "slow down" because pacing is a transport
+      concern; the gateway's answer is 429.
+
+    Both are documented in `docs/writing-a-transport.md` rather than
+    mapped reflexively onto a word that means something else.
+    """
+    try:
+        yield
+    except _BAD_PARAMETER as e:
+        raise InvalidParamsError(str(e)) from e
 
 
 class A2AAdapter:
@@ -102,9 +151,10 @@ class A2AAdapter:
         keeps a task fetched afterwards from disagreeing with the one
         returned here.
         """
-        run_id, thread_id, is_live = await self._start_run(
-            agent, _params(message, actor_chain, metadata)
-        )
+        with _in_a2as_words():
+            run_id, thread_id, is_live = await self._start_run(
+                agent, _params(message, actor_chain, metadata)
+            )
         if is_live and self._funduq.broker.get(run_id) is not None:
             async for _ in self._funduq.broker.subscribe(run_id):
                 pass
@@ -136,9 +186,10 @@ class A2AAdapter:
         stream rather than tolerating it. Wrapping any of it for a wire is
         the transport's job, not this one's.
         """
-        run_id, thread_id, is_live = await self._start_run(
-            agent, _params(message, actor_chain, metadata)
-        )
+        with _in_a2as_words():
+            run_id, thread_id, is_live = await self._start_run(
+                agent, _params(message, actor_chain, metadata)
+            )
         live = is_live and self._funduq.broker.get(run_id) is not None
         events = self._funduq.broker.subscribe(run_id) if live else None
 

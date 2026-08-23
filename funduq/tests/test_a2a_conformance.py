@@ -88,3 +88,50 @@ async def test_resubscribing_reassembles_too(funduq, callee):
 
     assert task.id == sent.id
     assert task.status.state == pb.TaskState.TASK_STATE_COMPLETED
+
+
+async def test_a_caller_mistake_comes_back_in_a2as_words(funduq, callee, serve):
+    """A caller who names a context funduq does not have, or one belonging to another agent,
+    has made a bad-parameter mistake, and the A2A door says so in A2A's word for it.
+
+    These used to escape as bare funduq exceptions — a 500 where a
+    JSON-RPC error belonged, so the caller could not tell "you named a
+    context I do not know" from "funduq fell over".
+    """
+    from a2a.utils.errors import InvalidParamsError
+
+    adapter = A2AAdapter(funduq)
+    stranger = (await serve(EchoAgent(), "stranger")).agents["stranger"]
+
+    with pytest.raises(InvalidParamsError, match="thread_nope"):
+        await adapter.send_task(callee, {**_message("hi"), "contextId": "thread_nope"})
+
+    mine = await adapter.send_task(callee, _message("hi"))
+    with pytest.raises(InvalidParamsError):
+        await adapter.send_task(stranger, {**_message("hi"), "contextId": mine.context_id})
+
+
+def test_the_code_a_caller_sees_comes_from_the_package_not_from_us():
+    """funduq writes no JSON-RPC codes. It raises A2A's error types and the package's own
+    table decides what number each becomes — the same rule that put every A2A method name
+    behind the service descriptor."""
+    from a2a.utils.errors import (
+        JSON_RPC_ERROR_CODE_MAP,
+        InvalidParamsError,
+        TaskNotFoundError,
+    )
+
+    assert JSON_RPC_ERROR_CODE_MAP[InvalidParamsError] == -32602
+    assert JSON_RPC_ERROR_CODE_MAP[TaskNotFoundError] == -32001
+
+
+async def test_an_unknown_agent_stays_funduqs_because_it_is_not_a_parameter(funduq, register):
+    """The agent is the **endpoint**, resolved from the route before this adapter is called.
+    An unknown one means the address does not exist — a routing-layer answer, not a JSON-RPC
+    error inside a 200 — so it is deliberately not translated."""
+    from funduq.errors import AgentNotFound
+    from funduq.models import AgentRef
+
+    ghost = AgentRef(provider_key="0" * 64, name="nobody")
+    with pytest.raises(AgentNotFound):
+        await A2AAdapter(funduq).send_task(ghost, _message("hi"))

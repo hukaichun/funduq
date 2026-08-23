@@ -145,6 +145,21 @@ dispatcher turns it into the right error for the binding. An id the
 caller sent that names nothing at all raises A2A's own
 `TaskNotFoundError`, for the same reason.
 
+Caller mistakes come back in A2A's words too — an unknown `contextId`,
+one belonging to another agent, a `kyok` opt-in naming an offering that
+is not registered, or a message that will not build a run input all
+raise `InvalidParamsError`, carrying funduq's own message so the caller
+still learns which value was wrong. funduq writes no codes: the number
+comes from the package's `JSON_RPC_ERROR_CODE_MAP`.
+
+**Two are deliberately left as funduq's**, because A2A has no word for
+either and one that means something else would be worse:
+
+| escapes as | what it means | the answer that fits |
+|---|---|---|
+| `AgentNotFound` | the agent is the *endpoint*, resolved from the route before the adapter runs — an unknown one means the address does not exist | 404 on the route, not a JSON-RPC error inside a 200 |
+| `ThreadQueueFull` | backpressure: the thread's buffer is full and the request was **not** accepted | 429, and say retry — never accept-then-expire |
+
 !!! warning "`enable_v0_3_compat` is off by default, and forgetting it drops every v0.3 client"
 
     Measured against `a2a-sdk 1.1.2`: **which protocol version a request
