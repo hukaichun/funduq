@@ -226,6 +226,7 @@ would read it is the one who asked.
 
 Why this is shaped the way it is, and what it was shaped like first:
 
+- [An offer's answer is a receipt, and arrives promptly](../design-records.md#an-offers-answer-is-a-receipt-and-arrives-promptly)
 - [Dispatch was single-file, and the queue it blocked was everyone's](../design-records.md#dispatch-was-single-file-and-the-queue-it-blocked-was-everyones)
 - [Silence about a verdict funduq has reached is a bug](../design-records.md#silence-about-a-verdict-funduq-has-reached-is-a-bug)
 - [Enforcing cancellation produced a family of bugs](../design-records.md#enforcing-cancellation-produced-a-family-of-bugs)

@@ -128,6 +128,12 @@ agent to start turns that round-trip into the agent's startup time.
 Nothing wider than the conversation waits: other threads, other agents
 and other providers hand over meanwhile.
 
+funduq cannot check this across a wire it does not own, so it is
+recorded as [an assumption it rests
+on](design-records.md#an-offers-answer-is-a-receipt-and-arrives-promptly)
+rather than a rule it enforces — including what a violation costs, which
+is bounded to the one conversation.
+
 Everything else about how the answer travels is yours: framing,
 correlation, backpressure, reconnect policy. funduq asks a question and
 reads an answer; it has no opinion on the envelope.

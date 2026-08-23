@@ -12,9 +12,10 @@ each entry links to the section it came from at
 Those links are pinned to a commit, so they keep resolving; nothing new
 will be written there.
 
-Three kinds of record: rules that shipped and whose reasoning is easy to
-undo by accident; designs settled but not built; and decisions that were
-made, measured, and reversed.
+Four kinds of record: rules that shipped and whose reasoning is easy to
+undo by accident; **assumptions funduq rests on and cannot enforce**;
+designs settled but not built; and decisions that were made, measured,
+and reversed.
 
 ## Rules that shipped
 
@@ -356,6 +357,48 @@ So the defense now has three layers, each aimed at the verb
 
 This is a strengthening, not a loosening: the noun scan could never see a
 dependency dialing out on its own, the audit hook can.
+
+## Assumptions funduq cannot enforce
+
+### An offer's answer is a receipt, and arrives promptly
+
+funduq holds the next utterance of one conversation until the previous
+one's answer lands. That is the only thing that can say which of two
+offers came first: an offer is an independent call carrying no position,
+[the transport contract](writing-a-transport.md) promises no ordering,
+and funduq could not define an order to promise anyway — two offers it
+issues concurrently reach the wire in whatever order their own work
+finishes.
+
+That is affordable only if the answer is a **receipt**: whether the run
+arrived, whether there is room for it, whether its input is valid. All
+three are known the moment it lands and none is a question for the
+agent. The provider SDK's runtime answers exactly that way —
+`ProviderRuntime.deliver` has no `await` in it at all, pinned by a test
+that drives the coroutine one step — but a third-party transport is free
+to do otherwise, and funduq cannot make it.
+
+**So this is an assumption, stated rather than enforced.** It is written
+into `FunduqLink.offer` and into the transport guide; nothing checks it
+across a wire funduq does not own.
+
+What a violation costs, exactly: a transport that answers only once the
+agent has started delays **the next utterance of that one conversation**
+by the agent's startup time. Nothing else — other threads, other agents
+and other providers hand over meanwhile. The blast radius being one
+conversation is why the assumption is acceptable rather than reckless.
+
+What notices: an answer that never arrives inside the delivery timeout
+(5s) counts `unanswered` against the provider, and the quality allowance
+eventually withdraws it. Between "instant" and that timeout there is a
+band where a transport answering from the agent degrades one
+conversation and nothing complains. Closing that band means a second,
+much tighter clock, and this repository has been wrong about clocks
+before — [silence was read as
+death](#silence-was-read-as-death-and-the-party-that-had-done-nothing-wrong-was-blamed)
+— so no clock has been added without a measurement asking for one. The
+lever, if one is ever wanted, is the delivery timeout, which today is
+sized for *unreachable* rather than for *receipt*.
 
 ## Designed, not built
 
