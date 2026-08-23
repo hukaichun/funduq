@@ -23,7 +23,7 @@ BUILDERS = {
     ),
     "funduq-connect": lambda i: funduq_connect_payload(i["funduq_nonce"], i["provider_nonce"]),
     "delegation": lambda i: delegation_payload(i["delegate_public_key"], i["expires_at"]),
-    "resolution": lambda i: resolve_payload(i["run_id"], i["timestamp"]),
+    "resolution": lambda i: resolve_payload(i["run_id"], i["answers"]),
     "cancel": lambda i: cancel_payload(i["run_id"], i["timestamp"]),
 }
 

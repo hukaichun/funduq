@@ -63,13 +63,14 @@ identity.
 
 ## Roster rules
 
-Registration is a signed batch, and re-registering a subset withdraws the
-omitted names from live serving. Attaching — declaring which registered
-names a connection serves right now — requires prior registration and
-never implies it. Deletion is its own signed act and is refused while the
-name is in use. funduq holds one connection per role: a re-attach under the
-same key replaces the old connection; replicas are the provider's own
-concern behind its single connection.
+Registration and deletion happen **on the open link** and sign nothing —
+the link is the credential, and there is no way to reach either without
+one. A link serves exactly the names it last registered, so registering a
+smaller roster takes the omitted ones offline; their records stay,
+readable as `online: false`. Deletion is refused while the name is in
+use. funduq holds one connection per role: a re-attach under the same key
+replaces the old connection; replicas are the provider's own concern
+behind its single connection.
 
 ## Published as data
 

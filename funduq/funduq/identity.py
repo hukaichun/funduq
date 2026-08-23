@@ -147,16 +147,36 @@ def verify_delegation(certificate: dict) -> str:
     return authority
 
 
-def resolve_signing_payload(run_id: str, timestamp: int) -> bytes:
-    """The bytes an authority signs to answer a paused ask: "I resolve this run, now".
+def resolve_signing_payload(run_id: str, answers: dict[str, str]) -> bytes:
+    """The bytes an authority signs to answer a paused ask: "on this run, these
+    questions, these decisions".
 
-    A resolution is singular — the status-guarded reopen picks one winner and
-    consumes the signature with it — so it belongs to the timestamp family
-    (like registration), not the challenge family: `timestamp` is checked
-    against the 60s freshness window, and a stored signature is spent by the
-    time anyone can read it.
+    `answers` maps each interrupt's id to what is being decided about it
+    (`resolved` / `cancelled`, AG-UI's own two words). Sorted and joined, so
+    the order a caller happens to list them in cannot change the bytes:
+
+        funduq-resolve:{run_id}:int_7=resolved,int_8=cancelled
+
+    **No timestamp, deliberately.** The old payload was `{run_id}:{timestamp}`
+    and a run keeps its id across rounds, so one signature answered *any*
+    later ask of that run while the clock allowed it — measured, with the
+    replay carrying content the authority never wrote. Naming the questions
+    is what makes a stale signature stale: it points at an ask that has been
+    consumed, and no clock is standing in for a nonce any more.
+
+    Naming the *decisions* is what a signature is for. Without them the
+    signature says only "someone with the key wanted to answer this" — a
+    party who can see the request in flight could flip `cancelled` to
+    `resolved` and it would still verify. That is not replay; it is tamper,
+    and a clock never touched it.
+
+    What is **not** covered is each entry's free-form `payload`. Binding it
+    means agreeing a canonical serialization across every implementation,
+    which is a decision of its own; funduq's signature covers which questions
+    were answered and what was decided, and says so.
     """
-    return f"{_RESOLVE}:{run_id}:{timestamp}".encode()
+    joined = ",".join(f"{k}={answers[k]}" for k in sorted(answers))
+    return f"{_RESOLVE}:{run_id}:{joined}".encode()
 
 
 def cancel_signing_payload(run_id: str, timestamp: int) -> bytes:
@@ -194,12 +214,13 @@ class InvalidCancel(ValueError):
 
 def _verify_signed_act(
     proof: dict,
-    run_id: str,
-    payload_for: Callable[[str, int], bytes],
+    payload: bytes | Callable[[int], bytes],
     allowed_keys: set[str],
     delegation: dict | None,
     invalid: type[ValueError],
     act: str,
+    *,
+    fresh: bool = True,
 ) -> str:
     """Verifies one singular signed act against an authority set and returns the
     effective authority.
@@ -212,13 +233,19 @@ def _verify_signed_act(
 
     One function for resolving an ask and for cancelling a run, because they
     are the same act with different words: prove you hold a key this run's
-    segment answers to, once, now. What keeps them apart is the payload's
-    own tag, so neither signature is ever the other.
+    segment answers to. What keeps them apart is the payload's own tag, so
+    neither signature is ever the other.
+
+    `fresh` says whether a timestamp bounds it. A cancel is bounded by one
+    because it names nothing that gets used up — it is idempotent over the
+    run it names, and the clock is ordinary freshness rather than a
+    substitute nonce. A resolution names the questions it answers, so the
+    ask itself is what expires, and it carries no timestamp at all.
     """
     try:
         signer = proof["publicKey"]
-        timestamp = int(proof["timestamp"])
         signature = proof["signature"]
+        timestamp = int(proof["timestamp"]) if fresh else None
     except (KeyError, TypeError, ValueError) as e:
         raise invalid(f"malformed {act} proof: {e}") from e
     effective = signer
@@ -231,9 +258,10 @@ def _verify_signed_act(
             f"the signer is not an authority for this run — neither its "
             f"segment head nor its provider (cannot {act} it)"
         )
-    if not is_timestamp_fresh(timestamp):
+    if timestamp is not None and not is_timestamp_fresh(timestamp):
         raise invalid(f"{act} timestamp outside the freshness window")
-    if not verify_signature(signer, signature, payload_for(run_id, timestamp)):
+    bytes_signed = payload(timestamp) if callable(payload) else payload
+    if not verify_signature(signer, signature, bytes_signed):
         raise invalid(f"{act} signature does not verify")
     return effective
 
@@ -241,18 +269,27 @@ def _verify_signed_act(
 def verify_resolution(
     resolution: dict,
     run_id: str,
+    answers: dict[str, str],
     allowed_keys: set[str],
     delegation: dict | None = None,
 ) -> str:
-    """Verifies a resolution proof for a paused run and returns the effective authority.
+    """Verifies a resolution proof for a paused ask and returns the effective authority.
 
-    The signer signed `resolve_signing_payload(run_id, timestamp)`, and
-    `allowed_keys` is the ask's authority set: the run's chain head and the
-    agent's own provider key. Raises `InvalidResolution` on any failure.
+    The signer signed `resolve_signing_payload(run_id, answers)`, where
+    `answers` is what this request is actually submitting — so a signature
+    made for other questions, or for other decisions about these ones, does
+    not verify. `allowed_keys` is the ask's authority set: the run's chain
+    head and the agent's own provider key. Raises `InvalidResolution` on any
+    failure.
     """
     return _verify_signed_act(
-        resolution, run_id, resolve_signing_payload,
-        allowed_keys, delegation, InvalidResolution, "resolve",
+        resolution,
+        resolve_signing_payload(run_id, answers),
+        allowed_keys,
+        delegation,
+        InvalidResolution,
+        "resolve",
+        fresh=False,
     )
 
 
@@ -277,7 +314,8 @@ def verify_cancel(
     segment answers to.
     """
     return _verify_signed_act(
-        cancel, run_id, cancel_signing_payload,
+        cancel,
+        lambda timestamp: cancel_signing_payload(run_id, timestamp),
         allowed_keys, delegation, InvalidCancel, "cancel",
     )
 

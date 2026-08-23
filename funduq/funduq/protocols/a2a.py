@@ -21,8 +21,9 @@ from funduq.errors import (
     ThreadNotFound,
     ThreadOwnershipMismatch,
 )
-from funduq.identity import verify_resolution
-from funduq.props import ADDRESSED_RUN_METADATA_KEY
+from funduq.identity import InvalidResolution, verify_resolution
+from funduq.doors import Resolved, answers_of, pending_interrupt_ids
+from funduq.props import ADDRESSED_RUN_METADATA_KEY, RESUME_METADATA_KEY
 from funduq.models import AgentRef
 from funduq.protocols.a2a_translate import (
     TERMINAL_STATES,
@@ -359,6 +360,15 @@ class A2AAdapter:
             )
 
             messages = a2a_message_to_agui_messages(params.get("message", {}))
+            # AG-UI's own answer shape, opted into under funduq's resume
+            # extension: A2A can carry an answer but cannot name which of
+            # several questions it answers, and every provider here speaks
+            # AG-UI, so this is the shape the run was always going to reach
+            # it in. Absent, the message is the answer and nothing is
+            # correlated — exactly today's behaviour.
+            resume = (params.get("message", {}).get("metadata") or {}).pop(
+                RESUME_METADATA_KEY, None
+            ) or metadata.pop(RESUME_METADATA_KEY, None)
             run_input = {"thread_id": thread_id, "messages": messages}
 
             # Two lanes. A message whose taskId names this thread's paused
@@ -377,20 +387,33 @@ class A2AAdapter:
             # target's state.
             task_id = params.get("taskId")
             addressed = await repo.get_run(session, task_id) if task_id else None
+            resolved = None
             if (
                 addressed is not None
                 and addressed.thread_id == thread_id
                 and addressed.status == "input-required"
                 and addressed.head_key is not None
             ):
-                # A chained ask names its authorities; the resolution must be
-                # signed by one of them. Raises InvalidResolution otherwise.
-                verify_resolution(
+                # A chained ask names its authorities, and a resolution names
+                # the questions it answers. Raises InvalidResolution otherwise.
+                answers = answers_of(resume)
+                pending = pending_interrupt_ids(addressed)
+                if answers.keys() != pending:
+                    raise InvalidResolution(
+                        "a resolution must name every question this ask is asking "
+                        f"({sorted(pending)}), and only those — carry them as AG-UI "
+                        f"resume entries under '{RESUME_METADATA_KEY}'. A reopen ends "
+                        "the whole pause, so an unnamed question is dropped rather "
+                        "than left waiting"
+                    )
+                authority = verify_resolution(
                     metadata.get("resolution") or {},
                     task_id,
+                    answers,
                     {addressed.head_key, agent.provider_key},
                     metadata.get("delegation"),
                 )
+                resolved = Resolved(answers=answers, authority=authority)
             reopened = (
                 addressed is not None
                 and addressed.thread_id == thread_id
@@ -424,6 +447,7 @@ class A2AAdapter:
                 head_key=head_key,
                 actor_chain=actor_chain,
                 kyok=kyok,
+                resume=resume,
                 # The extension convention puts the key in the Message's own
                 # metadata map; the request-level map is accepted too.
                 addressed_run_id=(
@@ -437,6 +461,7 @@ class A2AAdapter:
             live = await dispatch(
                 funduq, session, inbound,
                 thread_id=thread_id, run_id=run_id, starting_seq=starting_seq,
+                resolved=resolved if reopened else None,
             )
 
         return run_id, thread_id, live

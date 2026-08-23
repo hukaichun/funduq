@@ -26,7 +26,7 @@ BUILDERS = {
     "delegation": lambda i: delegation_signing_payload(
         i["delegate_public_key"], i["expires_at"]
     ),
-    "resolution": lambda i: resolve_signing_payload(i["run_id"], i["timestamp"]),
+    "resolution": lambda i: resolve_signing_payload(i["run_id"], i["answers"]),
     "cancel": lambda i: cancel_signing_payload(i["run_id"], i["timestamp"]),
 }
 

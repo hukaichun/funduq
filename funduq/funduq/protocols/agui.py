@@ -12,6 +12,8 @@ from funduq.agui import rewrite_message_ids
 from funduq.doors import (
     InboundRun,
     PendingAsk,
+    answers_of,
+    pending_interrupt_ids,
     dispatch,
     offline_events,
     open_run,
@@ -119,7 +121,11 @@ class AGUIAdapter:
                 thread_id=thread_id,
                 entrance="result" if resume else "utterance",
                 ask=(
-                    PendingAsk(run_id=paused["run_id"], head_key=paused.get("head_key"))
+                    PendingAsk(
+                        run_id=paused["run_id"],
+                        head_key=paused.get("head_key"),
+                        interrupt_ids=pending_interrupt_ids(paused),
+                    )
                     if paused is not None
                     else None
                 ),
@@ -127,6 +133,7 @@ class AGUIAdapter:
                 metadata=metadata,
                 head_key=head_key,
                 protocol="ag-ui",
+                answers=answers_of(resume),
             )
             if opened is None:
                 # A result with no ask to land on: there was none, or another
@@ -156,6 +163,7 @@ class AGUIAdapter:
             live = await dispatch(
                 funduq, session, inbound,
                 thread_id=thread_id, run_id=run_id, starting_seq=starting_seq,
+                resolved=opened.resolved,
             )
 
         if not live:

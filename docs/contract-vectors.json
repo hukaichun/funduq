@@ -51,13 +51,16 @@
     },
     {
       "kind": "resolution",
-      "note": "the bytes an authority signs to answer a paused ask (resolve an input-required run). Singular operation, so it uses the timestamp family: the timestamp is checked against the 60s freshness window and the status-guarded reopen consumes the signature with the win.",
+      "note": "the bytes an authority signs to answer a paused ask: the run, the questions (AG-UI interrupt ids, sorted so the order they are listed in cannot change the bytes) and the decision on each. No timestamp \u2014 naming the questions is what makes a stale signature stale, since a run keeps its id across rounds but its asks do not.",
       "inputs": {
         "run_id": "run_2c26b46b68ffc68ff99b453c",
-        "timestamp": 1755500000
+        "answers": {
+          "int_7": "resolved",
+          "int_8": "cancelled"
+        }
       },
-      "payload_utf8": "funduq-resolve:run_2c26b46b68ffc68ff99b453c:1755500000",
-      "signature_hex": "c110a243a4d706870deb428555f6225d7f299088a4f54577b2099eb4bf76fe398b37ebe628671956b77ad6f3d82a7caf8136d5bad743b9b0768b65ed72ee6c08"
+      "payload_utf8": "funduq-resolve:run_2c26b46b68ffc68ff99b453c:int_7=resolved,int_8=cancelled",
+      "signature_hex": "3219b93f8be461fe4ed40a6ac8743f5be38d3e74c8f7fa2c0eb0ec4c8e294c9fd66e2b87181780566e78da6f128bc0a6e0912629fb8cb23119171b39b2516209"
     },
     {
       "kind": "cancel",

@@ -25,6 +25,43 @@ ordinary next turn. Yields to whatever carrier A2A ships for this."""
 
 ADDRESSED_RUN_METADATA_KEY = f"{INTERJECTION_EXTENSION_URI}/addressedRunId"
 
+RESOLVED_METADATA_KEY = "funduq/resolved"
+"""On the thread message that carried an answer: which questions it decided,
+and under whose authority.
+
+The record, as distinct from the proof. The signature that established it is
+evidence and is not kept; **who said yes to what** is the fact a
+responsibility chain exists to produce, and it is written in the same
+transaction as the status-guarded reopen that picked this answer over any
+other — so there is no second writer and nothing to race.
+"""
+
+RESOLVED_EVENT_NAME = "funduq.resolved"
+"""The AG-UI `CUSTOM` event that announces the same thing to whoever is
+watching. Deliberately only an announcement: it names the thread message that
+holds the record, so where it lands in the run's stream carries no meaning
+and needs no ordering guarantee."""
+
+RESUME_EXTENSION_URI = "https://github.com/hukaichun/funduq/ext/resume/v1"
+"""Where an A2A caller says *which* question it is answering.
+
+A2A has a channel for answering a paused task — `message/send` with a
+`taskId` — and no way to name one of several pending questions: `Part`
+carries no id, and the answer has no field pointing back at the ask.
+Checked against a2a-sdk 1.1.2, protocol 1.0. AG-UI does have it
+(`Interrupt.id` out, `ResumeEntry.interrupt_id` back), because an agent
+with an LLM behind it asks several things at once as a matter of course.
+
+So an A2A caller that wants to answer a specific question puts AG-UI's own
+`ResumeEntry` list under `RESUME_METADATA_KEY`, and funduq hands it to the
+provider as `RunAgentInput.resume` — the shape the provider was always
+going to receive, since every provider here speaks AG-UI. A caller that
+sends nothing behaves exactly as before: its message is the answer, and
+funduq correlates nothing.
+"""
+
+RESUME_METADATA_KEY = f"{RESUME_EXTENSION_URI}/resume"
+
 
 RESERVED_METADATA_KEYS = frozenset({"interrupts", "failureReason", "funduq"})
 """Metadata keys funduq itself writes into a run's record (plus "funduq", held in

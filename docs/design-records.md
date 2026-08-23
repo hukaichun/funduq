@@ -450,11 +450,11 @@ authority at birth has none to check against, and inventing one would
 make funduq the authority instead of the caller.
 
 **The freshness window is the only thing bounding a replayed cancel, and
-that was nearly recorded wrong.** The resolution it copies is safe
-because it is *consumed* — the status-guarded reopen picks one winner,
-so a replay finds the ask already answered. Nothing consumes a cancel,
-and `reopen_run` puts a run back under the same id, so one signature
-stops any round of that run while it is fresh. Measured:
+that was nearly recorded wrong.** The resolution it was copied from is
+safe because it is *consumed* — the status-guarded reopen picks one
+winner, so a replay finds the ask already answered. Nothing consumes a
+cancel, and `reopen_run` puts a run back under the same id, so one
+signature stops any round of that run while it is fresh. Measured:
 
 ```
 round 1 paused: 'input-required'
@@ -481,6 +481,72 @@ If chains ever stop being replayable, this window becomes the weakest
 link and should be revisited.
 
 funduq#151.
+
+### A run keeps its id across rounds, so a resolution had to name its questions
+
+A resolution was signed over `funduq-resolve:{run_id}:{timestamp}`,
+freshness-checked against the same 60s window as a cancel. The run id and a
+clock: between them they say *who* may answer and *roughly when*, and
+nothing at all about **what** was answered. Three things followed, each
+measured rather than argued.
+
+One signature answered a second, different ask. An agent that pauses,
+resumes, and pauses again is one run throughout — `reopen_run` puts it
+back under its own id — so a proof collected for round 1 was, to the
+verifier, indistinguishable from a proof for round 3:
+
+```
+rounds the agent ran: 3
+the same signature answered a second, different ask: True
+```
+
+Answering one of two questions resumed the whole run and dropped the
+other in silence. A reopen ends the pause; there is no half-pause to
+leave behind. The unanswered question simply stopped existing, and
+nothing recorded that it had.
+
+And `verify_resolution` returned the effective authority — the durable
+key behind a session delegation — which both doors discarded. The chains
+page claimed "who resolved, under whose authority, is recorded"; grep
+found no writer. It was false the whole time.
+
+All three are one omission. The payload is now
+`funduq-resolve:{run_id}:{id=decision,…}` — every pending interrupt id
+with its AG-UI decision (`resolved` / `cancelled`), sorted so listing
+order cannot change the bytes — and **no timestamp**. The ask is what
+expires, not the clock: a stale signature is stale because the questions
+it names are no longer being asked. Both doors refuse a resolution whose
+answers are not exactly the pending set, so a partial answer is a
+refusal rather than a silent drop, and the run stays paused to be
+answered properly.
+
+What is deliberately *not* in the signed bytes is each entry's free-form
+`payload`. Covering it means agreeing a canonical serialization across
+every implementation, which is its own decision; the signature covers
+which questions were answered and what was decided, and the docs say so
+rather than implying more.
+
+The third needed somewhere to put the answer, and the choice was between
+a new record of funduq's own and the record already there. It went into
+the **thread's message record**: the message the answer arrived as
+carries `metadata["funduq/resolved"] = {answers, authority}`, written in
+the same transaction as the status-guarded reopen. That placement is the
+whole race argument — the guard already picks exactly one winner, so the
+only writer of that stamp is the transaction that won, and no ordering
+needs arranging between them. An AG-UI resume says everything in its
+entries and nothing in prose, so funduq records a wordless turn rather
+than inventing words for it; A2A's answer *is* a message and carries its
+own.
+
+Watchers get the same fact as an **update**, not a record: a
+`funduq.resolved` CUSTOM event pushed onto the reopened run's lane,
+naming the run, the message holding the record, the answers and the
+authority. CUSTOM because AG-UI has no event for this and funduq does
+not get to invent a type — and because the update is redundant with the
+record, where it lands in the stream carries no meaning, which is why it
+needs no ordering guarantee to be correct.
+
+funduq#173.
 
 ### Saying it in a vocabulary the other side has is not the same as lying
 
@@ -666,9 +732,10 @@ Three subtractions fell out of the same conversation:
   to forge — the `verifiedActorChain` reserved-key defense retires.
   funduq's part is four verbs: verify, copy the head, relay, refuse.
 - **No challenge round-trip for resolutions.** An ask's funduq-minted
-  single-use id is already the nonce: a resolution signs over the ask
-  id and the answer's hash, and a replay hits an ask that no longer
-  exists.
+  single-use id is already the nonce: a resolution signs over the
+  questions it answers, and a replay hits an ask that no longer exists.
+  Built, once the payload actually carried them — see [a run keeps its
+  id across rounds](#a-run-keeps-its-id-across-rounds-so-a-resolution-had-to-name-its-questions).
 
 The lock that comes with identity is deliberately half a lock: a
 thread whose first run carries a chain binds {segment head, provider}

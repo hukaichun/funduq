@@ -615,12 +615,18 @@ async def reopen_run(
     """Puts `run_id` back to "queued" with fresh input, returning whether a row
     changed. With `expected_status`, the update only applies while the run is
     still in that status — the guard that makes two concurrent replies to one
-    paused run resolve to a single reopen instead of both winning."""
+    paused run resolve to a single reopen instead of both winning.
+
+    Clears `interrupts` on the way: it means *what this run is asking now*,
+    and the moment it reopens it is asking nothing. Left behind, a finished
+    run's record still read as though it were waiting on questions that had
+    been answered rounds ago."""
     values: dict[str, Any] = {
         "status": "queued",
         "input_json": input_json,
         "last_activity_at": _utcnow(),
     }
+    metadata = {**(metadata or {}), "interrupts": None}
     if metadata:
         values["metadata"] = await _merge_run_metadata(session, run_id, metadata)
     where = [runs.c.run_id == run_id]

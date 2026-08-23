@@ -154,10 +154,19 @@ thread is never retroactively locked against its own opener.
 - **Answering is authority.** A paused ask records, at pause time, its
   authority set from its run's chain: {segment head, the provider's own
   key}. A resolution is signed over
-  `funduq-resolve:{run_id}:{timestamp}` — a singular act, so the
-  timestamp family, checked against the 60s window; the status-guarded
-  reopen consumes the signature with the win. Who resolved, under whose
-  authority, is recorded.
+  `funduq-resolve:{run_id}:{id=decision,…}` — the run, then every
+  question the ask is asking and what was decided on each, sorted so the
+  listing order cannot change the bytes. **No timestamp.** A clock was
+  there first, and it was the wrong bound: a run keeps its id across
+  rounds, so one signature collected inside the window answered a
+  second, different ask. Naming the questions is what makes a stale
+  signature stale — the ask expires, not the clock. A partial answer is
+  refused rather than accepted, because a reopen ends the whole pause
+  and the unnamed questions would be dropped in silence. Who resolved,
+  under whose authority, and what was decided is recorded on the thread
+  message the answer arrived as, in the same transaction as the
+  status-guarded reopen — and announced on the reopened run as a
+  `funduq.resolved` CUSTOM event.
 - **Stopping is the same authority.** Asking a provider to stop one of a
   bound thread's runs takes a signature from that same set, over
   `funduq-cancel:{run_id}:{timestamp}` — its own tag, so a resolution

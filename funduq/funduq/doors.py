@@ -5,11 +5,13 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Literal
 
 from funduq import repo
-from ag_ui.core import RunErrorEvent, RunStartedEvent
+from ag_ui.core import CustomEvent, RunErrorEvent, RunStartedEvent
 
 from funduq.agui import build_run_agent_input
+from funduq.broker import RelayEvent
 from funduq.errors import InvalidRunInput, LlmProviderNotFound
 from funduq.identity import (
+    InvalidResolution,
     verify_actor_chain,
     verify_cancel,
     verify_delegation,
@@ -17,7 +19,12 @@ from funduq.identity import (
 )
 from funduq.kyok import KyokBinding, KyokOptIn, parse_kyok_opt_in, strip_kyok_context
 from funduq.models import AgentRef
-from funduq.props import RESERVED_METADATA_KEYS, build_forwarded_props
+from funduq.props import (
+    RESERVED_METADATA_KEYS,
+    RESOLVED_EVENT_NAME,
+    RESOLVED_METADATA_KEY,
+    build_forwarded_props,
+)
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
@@ -28,7 +35,10 @@ __all__ = [
     "InboundRun",
     "Opened",
     "PendingAsk",
+    "Resolved",
+    "answers_of",
     "authorize_cancel",
+    "pending_interrupt_ids",
     "dispatch",
     "offline_events",
     "open_run",
@@ -128,6 +138,17 @@ class InboundRun:
         return self.kyok.llm_provider if self.kyok is not None else None
 
 
+def _unstamped(message: dict[str, Any]) -> dict[str, Any]:
+    """`message` without funduq's resolution stamp, whoever put it there."""
+    metadata = message.get("metadata")
+    if not isinstance(metadata, dict) or RESOLVED_METADATA_KEY not in metadata:
+        return message
+    return {
+        **message,
+        "metadata": {k: v for k, v in metadata.items() if k != RESOLVED_METADATA_KEY},
+    }
+
+
 async def dispatch(
     funduq: "Funduq",
     session: "AsyncSession",
@@ -136,6 +157,7 @@ async def dispatch(
     thread_id: str,
     run_id: str,
     starting_seq: int,
+    resolved: "Resolved | None" = None,
 ) -> bool:
     """Appends the inbound messages to the thread, builds the provider's AG-UI input, commits,
     and hands the run to the broker. Returns False without enqueuing if the agent is registered
@@ -148,8 +170,34 @@ async def dispatch(
     binding is established after the commit for the same reason it always
     was: it is in-memory state about a run that must exist first.
     """
+    # `funduq/resolved` is funduq's handwriting on a message, and only
+    # funduq writes it. Stripped from every inbound message before anything
+    # is stamped: without this a caller plants the key on an ordinary
+    # utterance and the thread carries a resolution, naming an authority
+    # nobody ever proved. Same defense as the reserved run-metadata keys,
+    # on the record messages live in.
+    inbound_messages = [_unstamped(m) for m in inbound.messages]
+    if resolved is not None:
+        # An answer belongs in the conversation it answers. The caller's own
+        # words carry it when there are any (A2A's answer *is* a message); an
+        # AG-UI resume says everything in its entries and nothing in prose, so
+        # funduq records a wordless turn rather than inventing words for it.
+        # Either way the decisions and the authority ride in the metadata,
+        # written in the same transaction as the guard that picked this
+        # answer over any other.
+        if not inbound_messages:
+            inbound_messages = [{"role": "user", "content": ""}]
+        first = dict(inbound_messages[0])
+        first["metadata"] = {
+            **(first.get("metadata") or {}),
+            RESOLVED_METADATA_KEY: {
+                "answers": resolved.answers,
+                "authority": resolved.authority,
+            },
+        }
+        inbound_messages[0] = first
     messages = await repo.append_thread_messages(
-        session, thread_id, run_id, inbound.messages
+        session, thread_id, run_id, inbound_messages
     )
 
     if not funduq.is_serving(inbound.agent):
@@ -199,19 +247,55 @@ async def dispatch(
     funduq.enqueue_run(
         run_id, inbound.agent, thread_id, input_json, inbound.protocol, seq=starting_seq
     )
+    if resolved is not None:
+        # The update, as distinct from the record: whoever is watching learns
+        # that the ask was answered and under whose authority. Where it lands
+        # in the stream does not matter — the record is the thread message
+        # above, so this is free to arrive whenever the run's own lane gets
+        # to it.
+        funduq.broker.push(
+            run_id,
+            RelayEvent(
+                CustomEvent(
+                    name=RESOLVED_EVENT_NAME,
+                    value={
+                        "runId": run_id,
+                        "messageId": messages[0]["id"] if messages else None,
+                        "answers": resolved.answers,
+                        "authority": resolved.authority,
+                    },
+                ).model_dump(mode="json", by_alias=True, exclude_none=True)
+            ),
+        )
     return True
 
 
 @dataclass(frozen=True)
 class PendingAsk:
-    """The paused run a result would land on, and the key authorized to answer it.
+    """The paused run a result would land on: the key authorized to answer it,
+    and the questions it is actually asking.
 
     Each door finds this its own way — that lookup is the door's grammar,
-    not funduq's — and hands it over in this one shape.
+    not funduq's — and hands it over in this one shape. The ids are what a
+    resolution names, so an answer to one ask cannot be spent on the next.
     """
 
     run_id: str
     head_key: str | None
+    interrupt_ids: frozenset[str] = frozenset()
+
+
+@dataclass(frozen=True)
+class Resolved:
+    """What answering an ask established, once the reopen was won.
+
+    Kept because it is the fact the chain exists to produce — who said yes to
+    what — and because nothing else records it: the signature that proved it
+    is evidence, and evidence is not the thing proved.
+    """
+
+    answers: dict[str, str]
+    authority: str | None
 
 
 @dataclass(frozen=True)
@@ -221,6 +305,29 @@ class Opened:
     run_id: str
     starting_seq: int
     landed_on_ask: bool
+    resolved: Resolved | None = None
+
+
+def pending_interrupt_ids(record: Any) -> frozenset[str]:
+    """The ids of the questions a paused run is asking, read off its record."""
+    metadata = (record.get("metadata") if isinstance(record, dict) else record.metadata) or {}
+    return frozenset(
+        i["id"] for i in (metadata.get("interrupts") or []) if isinstance(i, dict) and i.get("id")
+    )
+
+
+def answers_of(resume: list[dict[str, Any]] | None) -> dict[str, str]:
+    """`{interrupt id: decision}` for the entries a request is submitting.
+
+    AG-UI's own shape and its own two words (`resolved` / `cancelled`), read
+    off `RunAgentInput.resume` — which is what the provider will receive
+    whichever door the answer arrived by.
+    """
+    return {
+        entry["interruptId"]: entry.get("status", "")
+        for entry in (resume or [])
+        if isinstance(entry, dict) and entry.get("interruptId")
+    }
 
 
 def authorize_cancel(run: Any, metadata: dict[str, Any]) -> None:
@@ -268,6 +375,7 @@ async def open_run(
     metadata: dict[str, Any],
     head_key: str | None,
     protocol: str,
+    answers: dict[str, str] | None = None,
 ) -> Opened | None:
     """Resolves a request to the run it belongs on: the pending ask it answers, or a new run
     queued on the thread. Returns None only for a declared **result** that found no ask to land
@@ -293,10 +401,19 @@ async def open_run(
     checked before the reopen, so a failed signature cannot consume the win.
     """
     if ask is not None:
+        answers = answers or {}
+        authority = None
         if ask.head_key is not None:
-            verify_resolution(
+            if answers.keys() != ask.interrupt_ids:
+                raise InvalidResolution(
+                    "a resolution must name every question this ask is asking "
+                    f"({sorted(ask.interrupt_ids)}), and only those — a reopen ends the "
+                    "whole pause, so an unnamed question is dropped rather than left waiting"
+                )
+            authority = verify_resolution(
                 metadata.get("resolution") or {},
                 ask.run_id,
+                answers,
                 {ask.head_key, agent.provider_key},
                 metadata.get("delegation"),
             )
@@ -307,10 +424,14 @@ async def open_run(
             metadata=metadata,
             expected_status="input-required",
         ):
+            # Only the winner gets here — the reopen is status-guarded — so
+            # this is the one place an answer can be recorded without racing
+            # a second one, and it is in the same transaction as the guard.
             return Opened(
                 run_id=ask.run_id,
                 starting_seq=await repo.get_last_event_seq(session, ask.run_id),
                 landed_on_ask=True,
+                resolved=Resolved(answers=answers, authority=authority) if answers else None,
             )
 
     if entrance == "result":

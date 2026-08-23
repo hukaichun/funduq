@@ -13,15 +13,18 @@ test keeps it that way.
 `ProviderIdentity` wraps the Ed25519 keypair (generate, or load-or-create
 from a key file so a restarted process keeps its identity; `public_key`
 is the 64-char hex). Around it, builders for every payload the provider
-signs: registration and deletion (timestamped), the link-open connect
-proof (challenge-answered — `sign_connect` over the pinned funduq key,
-funduq's nonce, the provider's own nonce, and the names to serve, so the
-proof names its recipient and cannot be relayed to another funduq), the
-per-call KYOK signature, and the two singular acts on a bound thread's
-run — `sign_resolution` to answer its ask, `sign_cancel` to ask that it
-stop, each under its own tag so neither is ever the other. Each builder is the independent twin of funduq's, and
-reproduces the published vectors byte-for-byte, deterministic signatures
-included.
+signs: the link-open connect proof (challenge-answered — `sign_connect`
+over the ticket funduq issued to this key, the provider's own nonce, and
+the funduq key it means to connect to, so the proof names its recipient
+and cannot be relayed to another funduq), the per-call KYOK signature,
+the session delegation certificate, a chain hop, and the two acts on a
+bound thread's run — `sign_resolution(run_id, answers)` to answer its
+ask, naming every question and its `resolved`/`cancelled` decision, and
+`sign_cancel(run_id)` to ask that the run stop, timestamped. Each act has
+its own tag, so neither is ever the other. Registration and deletion sign
+nothing: they happen on the open link, which already proved the key. Each
+builder is the independent twin of funduq's, and reproduces the published
+vectors byte-for-byte, deterministic signatures included.
 
 ## The port and the worker
 

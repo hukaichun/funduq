@@ -81,11 +81,23 @@ def delegation_payload(delegate_public_key: str, expires_at: int) -> bytes:
     return f"funduq-delegate:{delegate_public_key}:{expires_at}".encode()
 
 
-def resolve_payload(run_id: str, timestamp: int) -> bytes:
-    """The bytes an authority signs to answer a paused (input-required) run. The independent
-    twin of `funduq.identity.resolve_signing_payload`; `timestamp` is checked against funduq's
-    60s freshness window."""
-    return f"funduq-resolve:{run_id}:{timestamp}".encode()
+def resolve_payload(run_id: str, answers: dict[str, str]) -> bytes:
+    """The bytes an authority signs to answer a paused ask: on this run, these
+    questions, these decisions.
+
+    `answers` maps each interrupt's id (AG-UI's `Interrupt.id`, which comes
+    back as `ResumeEntry.interrupt_id`) to its decision — `resolved` or
+    `cancelled`. Sorted and joined, so the order they are listed in cannot
+    change the bytes. The independent twin of
+    `funduq.identity.resolve_signing_payload`.
+
+    No timestamp: naming the questions is what makes a stale signature stale,
+    since a run keeps its id across rounds but its asks do not. Name **every**
+    question the ask is asking — a reopen ends the whole pause, so funduq
+    refuses a partial answer rather than dropping the rest silently.
+    """
+    joined = ",".join(f"{k}={answers[k]}" for k in sorted(answers))
+    return f"funduq-resolve:{run_id}:{joined}".encode()
 
 
 def cancel_payload(run_id: str, timestamp: int) -> bytes:
@@ -180,13 +192,10 @@ class ProviderIdentity:
             "signature": self.sign(delegation_payload(delegate_public_key, expires_at)),
         }
 
-    def sign_resolution(self, run_id: str, timestamp: int | None = None) -> tuple[str, int]:
-        """Signs the resolution of a paused run: `(signature, timestamp)` over
-        `resolve_payload(run_id, timestamp)`. Singular operation, timestamp family — funduq
-        checks the timestamp against its 60s freshness window and the status-guarded reopen
-        consumes the signature with the win."""
-        timestamp = int(time.time()) if timestamp is None else timestamp
-        return self.sign(resolve_payload(run_id, timestamp)), timestamp
+    def sign_resolution(self, run_id: str, answers: dict[str, str]) -> str:
+        """Signs `resolve_payload(run_id, answers)` — the questions this answer
+        decides and what it decides about each."""
+        return self.sign(resolve_payload(run_id, answers))
 
     def sign_cancel(self, run_id: str, timestamp: int | None = None) -> tuple[str, int]:
         """Signs a request that a run be stopped: `(signature, timestamp)` over

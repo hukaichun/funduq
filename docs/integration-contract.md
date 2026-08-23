@@ -37,7 +37,8 @@ a thread whose first run carries an actor chain binds the chain's head
 at birth — thereafter only the head or the serving provider may write
 to it, and a paused ask on a chained run is answered only with a
 signature from those keys (`metadata.resolution`, the
-`funduq-resolve:{run_id}:{timestamp}` payload), and **stopping one of
+`funduq-resolve:{run_id}:{id=decision,…}` payload — the answer names
+every question the ask is asking, and what was decided on each), and **stopping one of
 its runs takes the same authority** (`metadata.cancel`, the
 `funduq-cancel:{run_id}:{timestamp}` payload — A2A's `CancelTaskRequest`
 carries `metadata` even though it carries no message, so a standard
@@ -50,9 +51,12 @@ The mechanics are in
 
 One small carve-out keeps the record honest: the metadata keys funduq
 itself writes into a run's record (`verifiedActorChain`,
-`interrupts`, `failureReason`, and `funduq`, held in reserve) are stripped from caller-supplied metadata at the doors. A
-caller cannot plant a forged verification summary — or a fake failure
-reason — wearing funduq's handwriting; everything else passes through
+`interrupts`, `failureReason`, and `funduq`, held in reserve) are stripped from caller-supplied metadata at the doors, and
+`funduq/resolved` — funduq's stamp naming who answered a paused ask —
+is stripped from every inbound *message* the same way. A
+caller cannot plant a forged verification summary, a fake failure
+reason, or a resolution under an authority it never proved, wearing
+funduq's handwriting; everything else passes through
 untouched.
 
 ## Agent providers: speak AG-UI shapes, funduq opens the doors
@@ -135,14 +139,28 @@ client author needs them.
 
 - **Addressing a paused task over A2A rides `taskId`, not
   `elicitationId`.** A message whose `taskId` names the thread's
-  `input-required` task resumes it with whatever the message says —
-  funduq never checks that it answers the question; a redirection or an
-  overrule rides the same road, and the provider judges it from the
-  thread's shape. Who may do so is gated by nothing
-  more than knowing the id, the same capability-by-identifier trust
-  every thread reference carries today (a recorded contradiction, not a
-  position). When A2A v1.1's `elicitationId` lands, that is the marker
-  this interim rule yields to.
+  `input-required` task resumes it with whatever the message says — a
+  redirection or an overrule rides the same road, and the provider
+  judges it from the thread's shape. On an *unchained* thread, who may
+  do so is gated by nothing more than knowing the id, the same
+  capability-by-identifier trust every thread reference carries today (a
+  recorded contradiction, not a position). When A2A v1.1's
+  `elicitationId` lands, that is the marker this interim rule yields to.
+- **Answering the question, as opposed to speaking after it, is a
+  declared extension.** A2A v1.0 has no field on a reply that names the
+  question it answers — `Part` has no id, and a `Message` carries one
+  `message_id` for the whole thing. Under the resume extension
+  (`https://github.com/hukaichun/funduq/ext/resume/v1`), a caller puts
+  AG-UI's own `ResumeEntry` list — `{interruptId, status, payload}`,
+  with `status` one of `resolved` / `cancelled` — in the message's
+  `metadata` (or the request's) under `<uri>/resume`. funduq hands it to
+  the agent as AG-UI's `resume`, which is the one shape a provider has
+  to read whichever door the answer came in by. A chained ask
+  **requires** it: the resolution signature covers exactly those
+  entries' ids and decisions, and must name every question the ask is
+  asking — a reopen ends the whole pause, so a partial answer is refused
+  rather than accepted with the rest dropped. Yields to whatever
+  answer-addressing A2A ships.
 - **A message sent while a run is active becomes its own task,
   delivered alongside.** It is a new task on the thread — never merged
   into the active run and never dropped — and funduq offers it to the

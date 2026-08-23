@@ -11,6 +11,7 @@ open behavior — the whole mechanism is opt-in by carrying a chain.
 from __future__ import annotations
 
 import asyncio
+import time
 
 import pytest
 
@@ -19,6 +20,7 @@ from funduq.errors import ThreadMembershipRequired
 from funduq.identity import InvalidCancel, InvalidResolution
 from funduq.protocols.a2a import A2AAdapter
 from funduq.protocols.a2a_translate import CANCEL_REQUESTED_METADATA_KEY
+from funduq.props import RESUME_METADATA_KEY
 
 from tests.conftest import EchoAgent
 
@@ -157,34 +159,20 @@ async def test_a_chained_ask_is_resolved_only_by_its_authority(funduq, serve, ne
         )
 
     # A proof signed by the wrong key is refused.
-    bad_signature, bad_ts = impostor.sign_resolution(task_id)
     with pytest.raises(InvalidResolution):
         await A2AAdapter(funduq).send_task(
             agent,
             _message("forged answer", task_id=task_id),
             actor_chain=[head.sign_chain_hop()],
-            metadata={
-                "resolution": {
-                    "publicKey": impostor.public_key,
-                    "timestamp": bad_ts,
-                    "signature": bad_signature,
-                }
-            },
+            metadata=_answer(impostor, task_id),
         )
 
-    # The head's own signature over funduq-resolve:{run_id}:{timestamp} wins.
-    signature, timestamp = head.sign_resolution(task_id)
+    # The head's own signature over the run and the answers wins.
     answered = await A2AAdapter(funduq).send_task(
         agent,
         _message("the answer", task_id=task_id),
         actor_chain=[head.sign_chain_hop()],
-        metadata={
-            "resolution": {
-                "publicKey": head.public_key,
-                "timestamp": timestamp,
-                "signature": signature,
-            }
-        },
+        metadata=_answer(head, task_id),
     )
     assert answered.id == task_id
     assert answered.status.state == COMPLETED
@@ -214,19 +202,11 @@ async def test_a_session_key_resolves_to_its_durable_authority(funduq, serve, ne
     # A later session: new session key, new certificate, same durable rights.
     session_key_2 = new_identity()
     certificate_2 = durable.sign_delegation(session_key_2.public_key)
-    signature, timestamp = session_key_2.sign_resolution(task_id)
     answered = await A2AAdapter(funduq).send_task(
         agent,
         _message("the answer", task_id=task_id),
         actor_chain=[session_key_2.sign_chain_hop()],
-        metadata={
-            "delegation": certificate_2,
-            "resolution": {
-                "publicKey": session_key_2.public_key,
-                "timestamp": timestamp,
-                "signature": signature,
-            },
-        },
+        metadata=_answer(session_key_2, task_id, delegation=certificate_2),
     )
     assert answered.status.state == COMPLETED
 
@@ -243,18 +223,11 @@ async def test_the_provider_may_resolve_its_own_agents_ask(funduq, serve, new_id
     task_id = first.id
 
     keeper = served.identity
-    signature, timestamp = keeper.sign_resolution(task_id)
     answered = await A2AAdapter(funduq).send_task(
         agent,
         _message("the keeper answers", task_id=task_id),
         actor_chain=[keeper.sign_chain_hop()],
-        metadata={
-            "resolution": {
-                "publicKey": keeper.public_key,
-                "timestamp": timestamp,
-                "signature": signature,
-            }
-        },
+        metadata=_answer(keeper, task_id),
     )
     assert answered.status.state == COMPLETED
 
@@ -286,9 +259,9 @@ async def test_the_agui_door_guards_a_chained_resume_the_same_way(funduq, serve,
     assert any(e.get("type") == "RUN_FINISHED" for e in events)
     run_id = first.run_id
 
-    answer = [ResumeEntry.model_validate(
-        {"interruptId": "int_1", "status": "resolved", "payload": {"answer": 42}}
-    )]
+    answer = [
+        ResumeEntry.model_validate({**e, "payload": {"answer": 42}}) for e in _entries()
+    ]
 
     with pytest.raises(InvalidResolution):
         await adapter.run(
@@ -297,7 +270,6 @@ async def test_the_agui_door_guards_a_chained_resume_the_same_way(funduq, serve,
                   resume=answer),
         )
 
-    signature, timestamp = head.sign_resolution(run_id)
     resumed = await adapter.run(
         agent,
         _body(
@@ -305,11 +277,7 @@ async def test_the_agui_door_guards_a_chained_resume_the_same_way(funduq, serve,
             "the answer",
             {
                 "actorChain": [head.sign_chain_hop()],
-                "resolution": {
-                    "publicKey": head.public_key,
-                    "timestamp": timestamp,
-                    "signature": signature,
-                },
+                "resolution": _signed(head, run_id),
             },
             resume=answer,
         ),
@@ -342,6 +310,34 @@ def _was_asked_to_stop(task) -> bool:
     about is whether the request was accepted at all, and the state it comes
     back in depends on how far the run had got."""
     return CANCEL_REQUESTED_METADATA_KEY in task.metadata
+
+
+ANSWER = {"int_1": "resolved"}
+
+
+def _signed(identity, run_id, answers=ANSWER):
+    """A resolution proof: a signature over the run and the answers it stands
+    for. No timestamp — the ask it names is what expires."""
+    return {
+        "publicKey": identity.public_key,
+        "signature": identity.sign_resolution(run_id, answers),
+    }
+
+
+def _entries(answers=ANSWER):
+    return [{"interruptId": k, "status": v} for k, v in answers.items()]
+
+
+def _answer(identity, run_id, answers=ANSWER, **extra):
+    """A resolution as it travels the A2A door: the proof, and the answers it
+    signed, carried as AG-UI resume entries under funduq's resume extension.
+    The two must agree — a signature over questions the request does not
+    carry proves nothing about the request."""
+    return {
+        "resolution": _signed(identity, run_id, answers),
+        RESUME_METADATA_KEY: _entries(answers),
+        **extra,
+    }
 
 
 def _proof(identity, run_id):
@@ -386,16 +382,18 @@ async def test_a_resolution_signature_is_not_a_cancel_signature(funduq, serve, n
     head = new_identity()
     agent, run_id, _provider = await _live_bound_run(funduq, serve, head)
 
-    signature, timestamp = head.sign_resolution(run_id)
-    with pytest.raises(InvalidCancel):
+    # A cancel proof is bounded by a timestamp and a resolution carries none,
+    # so a fresh one is supplied here: with every other reason to refuse taken
+    # away, the tag inside the payload is the only thing left refusing.
+    with pytest.raises(InvalidCancel, match="signature does not verify"):
         await A2AAdapter(funduq).cancel_task(
             agent,
             run_id,
             metadata={
                 "cancel": {
                     "publicKey": head.public_key,
-                    "timestamp": timestamp,
-                    "signature": signature,
+                    "timestamp": int(time.time()),
+                    "signature": head.sign_resolution(run_id, ANSWER),
                 }
             },
         )
