@@ -621,24 +621,23 @@ class RunBroker:
             await self._hand_back(run)
             capacity = self._capacity.get(provider.public_key)
             if capacity is not None and capacity.has_room:
-                # Declining while claiming room is one abnormal event,
-                # whatever the declaration was — the tolerance in
-                # _note_abnormal decides when it adds up to withdrawal, the
-                # same judgment every provider gets (funduq#128). A declared
-                # limit is additionally treated as reached, that being the
-                # provider's own figure; an unlimited declaration has no
-                # figure to fall back to, so the run is simply re-offered
-                # and each further decline spends more of the allowance.
+                # Declining while claiming room is one abnormal event, and
+                # that is all it is. **A provider has whatever room it said it
+                # has**: `declared` is its own figure and the only capacity
+                # figure funduq has, so a decline does not revise it. The
+                # allowance decides when the contradiction adds up to
+                # withdrawal, the same judgment every provider gets
+                # (funduq#128), and the run is simply offered again when
+                # something changes.
                 self._note_abnormal(provider.public_key, "misdeclared")
-                if capacity.declared is not None:
-                    capacity.in_flight = capacity.declared
-                    logger.warning(
-                        "provider %s declined a run while funduq believed it had room "
-                        "(now %d/%s in flight); treating it as full",
-                        provider.public_key[:16],
-                        capacity.in_flight,
-                        capacity.declared,
-                    )
+                logger.warning(
+                    "provider %s declined run %s while funduq believed it had room "
+                    "(%d/%s in flight); counted, not believed",
+                    provider.public_key[:16],
+                    run.run_id,
+                    capacity.in_flight,
+                    capacity.declared,
+                )
             return
 
         self._take_claim(run, provider)

@@ -196,9 +196,29 @@ with a stake has the lever funduq does not need: the caller can cancel.
 
 `cancelling` is an **active** status, alongside `queued`, `offering`,
 `running` and `input-required`. It means funduq has passed the request on and is still
-relaying — not that the run stopped. It has no A2A equivalent, because
-A2A's `TASK_STATE_CANCELED` asserts an outcome funduq has not observed
-yet; only the settled `cancelled` maps to it.
+relaying — not that the run stopped.
+
+**A2A hears it as `working`, plus a marker saying the request is
+pending** (`funduq/cancelRequested`). `TASK_STATE_CANCELED` would assert
+an outcome funduq has not observed — the provider may finish normally,
+and its own output is what happened — so only the settled `cancelled`
+maps to it. But `working` is true: the run has not stopped. Saying
+nothing at all, which is what an unmapped status did, is not a smaller
+claim than `working`; it is an unreadable one, and a client got neither
+"your request landed" nor "something is still running" out of it.
+
+The marker rides on the **request**, not on the record. The run's own
+lane writes `cancelling` a moment after the A2A door asks, and a caller
+answered inside that window would otherwise read a plain `working` and
+learn nothing. A standard client that ignores metadata still reads
+`working`, which is why this is an annotation rather than an extension:
+nothing is asked of anyone.
+
+**A run that has already ended is refused, not humoured.** `tasks/cancel`
+on a terminal task raises A2A's own `TaskNotCancelableError`, which is
+what A2A's own server does in the same place. Returning the finished
+task as though the request had been accepted is the same unreadable
+answer in a different disguise.
 
 While a run is cancel-requested, a KYOK completion call naming it is
 refused. funduq stops funding work it has been asked to stop, which is the
@@ -225,6 +245,7 @@ would read it is the one who asked.
 
 Why this is shaped the way it is, and what it was shaped like first:
 
+- [Saying it in a vocabulary the other side has is not the same as lying](../design-records.md#saying-it-in-a-vocabulary-the-other-side-has-is-not-the-same-as-lying)
 - [An offer's answer is a receipt, and arrives promptly](../design-records.md#an-offers-answer-is-a-receipt-and-arrives-promptly)
 - [Dispatch was single-file, and the queue it blocked was everyone's](../design-records.md#dispatch-was-single-file-and-the-queue-it-blocked-was-everyones)
 - [Silence about a verdict funduq has reached is a bug](../design-records.md#silence-about-a-verdict-funduq-has-reached-is-a-bug)

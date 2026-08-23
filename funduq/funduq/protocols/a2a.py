@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING, Any
 from a2a.server.events import Event
 from a2a.types import a2a_pb2 as pb
 from a2a.utils.constants import PROTOCOL_VERSION_CURRENT, TransportProtocol
-from a2a.utils.errors import InvalidParamsError, TaskNotFoundError
+from a2a.utils.errors import InvalidParamsError, TaskNotCancelableError, TaskNotFoundError
 from google.protobuf.json_format import ParseDict, ParseError
 
 from funduq import repo
@@ -25,9 +25,11 @@ from funduq.identity import verify_resolution
 from funduq.props import ADDRESSED_RUN_METADATA_KEY
 from funduq.models import AgentRef
 from funduq.protocols.a2a_translate import (
+    TERMINAL_STATES,
     a2a_message_to_agui_messages,
     agui_event_to_a2a_update,
     build_task,
+    state_for_run_status,
     status_update_for_run_status,
 )
 
@@ -267,13 +269,34 @@ class A2AAdapter:
         )
 
     async def cancel_task(self, agent: AgentRef, task_id: str) -> pb.Task | None:
-        """Requests cancellation of the running task and returns its resulting `Task` (funduq
-        can only ask the provider to stop, not force it, so the returned status reflects
-        whatever the provider actually did). None if `task_id` doesn't belong to `agent`."""
+        """Asks the provider to stop and returns the task as it stands, marked with the
+        pending request. None if `task_id` doesn't belong to `agent`; raises
+        `TaskNotCancelableError` if it has already ended.
+
+        funduq can ask a provider to stop and cannot make it, so the returned
+        state is never `canceled` on the strength of the request — that would
+        assert an outcome funduq has not observed, and the provider's own
+        output may yet contradict it. What the caller gets instead is a state
+        it can read (`working`) plus
+        `a2a_translate.CANCEL_REQUESTED_METADATA_KEY`, which says the request
+        is in flight rather than ignored. The marker is attached from the
+        request itself, not from the run's status: the run's own lane writes
+        `cancelling` a moment later, and a caller answered inside that window
+        would otherwise see a plain `working` and learn nothing.
+
+        A run that has already ended raises rather than answering, which is
+        what a2a-python does in the same place. Returning the finished task as
+        though the cancel had been accepted is the same unreadable answer in a
+        different disguise.
+        """
         run = await self._run_of(agent, task_id)
         if run is None:
             return None
-        self._funduq.cancel_run(task_id)
+        if state_for_run_status(run.status) in TERMINAL_STATES:
+            raise TaskNotCancelableError(
+                f"task {task_id} is already {run.status} and cannot be cancelled"
+            )
+        asked = self._funduq.cancel_run(task_id)
         current = await self._funduq.get_run(task_id) or run
         return build_task(
             task_id,
@@ -281,6 +304,7 @@ class A2AAdapter:
             await self._display_name(agent),
             current.status,
             await self._funduq.get_run_events(task_id),
+            cancel_requested=asked,
         )
 
 

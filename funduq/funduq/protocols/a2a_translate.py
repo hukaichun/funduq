@@ -16,6 +16,14 @@ RUN_STATUS_TO_A2A_STATE = {
     "offering": pb.TaskState.TASK_STATE_SUBMITTED,
     "running": pb.TaskState.TASK_STATE_WORKING,
     "input-required": pb.TaskState.TASK_STATE_INPUT_REQUIRED,
+    # Working, plus a metadata marker (`CANCEL_REQUESTED_METADATA_KEY`).
+    # funduq has passed a cancel on and is still relaying: the run has not
+    # stopped, so "working" is the true thing A2A has a word for.
+    # `TASK_STATE_CANCELED` would assert an outcome funduq has not observed —
+    # the provider may finish normally, and its own output is what happened.
+    # Sending nothing at all, which is what an unmapped status did, is not a
+    # smaller claim than "working"; it is an unreadable one.
+    "cancelling": pb.TaskState.TASK_STATE_WORKING,
     "completed": pb.TaskState.TASK_STATE_COMPLETED,
     "failed": pb.TaskState.TASK_STATE_FAILED,
     "cancelled": pb.TaskState.TASK_STATE_CANCELED,
@@ -40,6 +48,14 @@ MAPPED_EVENT_TYPES = LIFECYCLE_EVENT_TYPES | TEXT_EVENT_TYPES
 OVERFLOW_METADATA_KEY = "agui_event"
 OVERFLOW_METADATA_LIST_KEY = "agui_events"
 
+# Set on a task funduq has been asked to cancel and is still relaying. It is
+# an annotation, not an extension: a client that ignores it reads `working`,
+# which is true, and nothing is asked of it. A client that reads it can tell
+# "asked, and the provider has not answered" from "nothing is happening" —
+# the distinction A2A has no state for, because in A2A's own server the agent
+# is in the same process and can simply be stopped.
+CANCEL_REQUESTED_METADATA_KEY = "funduq/cancelRequested"
+
 
 def is_mapped(event: dict[str, Any]) -> bool:
     """True if `event`'s AG-UI type has an A2A representation this module emits."""
@@ -47,17 +63,38 @@ def is_mapped(event: dict[str, Any]) -> bool:
 
 
 def state_for_run_status(run_status: str):
-    """Maps a funduq run status to its A2A `TaskState`, or `TASK_STATE_UNSPECIFIED` for a status
-    (e.g. `"cancelling"`) with no A2A equivalent."""
+    """Maps a funduq run status to its A2A `TaskState`. Every status funduq can
+    write has one; `TASK_STATE_UNSPECIFIED` is what a status this table has
+    never heard of would get, and a test asserts nothing reaches it."""
     return RUN_STATUS_TO_A2A_STATE.get(run_status, pb.TaskState.TASK_STATE_UNSPECIFIED)
 
 
 def status_update_for_run_status(
     task_id: str, context_id: str, run_status: str
 ) -> pb.TaskStatusUpdateEvent:
-    """Builds a `TaskStatusUpdateEvent` reflecting a run's persisted status, with no message or
-    metadata attached."""
-    return _status_update(task_id, context_id, state_for_run_status(run_status))
+    """Builds a `TaskStatusUpdateEvent` reflecting a run's persisted status, carrying the
+    pending-cancel marker when there is one and nothing else."""
+    return _status_update(
+        task_id,
+        context_id,
+        state_for_run_status(run_status),
+        metadata=_cancel_metadata(run_status),
+    )
+
+
+def _cancel_metadata(run_status: str, cancel_requested: bool = False) -> dict[str, Any] | None:
+    """`{CANCEL_REQUESTED_METADATA_KEY: True}` when funduq has been asked to cancel
+    this run and has not seen it end, else None.
+
+    Two sources, because the request outruns the record: the status is
+    `cancelling` once the run's own lane has written it, and `cancel_requested`
+    is what the A2A door passes when it has just made the request and has not
+    waited for that write. Answering "working" with nothing attached in that
+    window is exactly the gap this closes.
+    """
+    if run_status == "cancelling" or cancel_requested:
+        return {CANCEL_REQUESTED_METADATA_KEY: True}
+    return None
 
 
 def a2a_message_to_agui_messages(a2a_message: dict[str, Any]) -> list[dict[str, Any]]:
@@ -169,7 +206,13 @@ def _status_update(
 
 
 def build_task(
-    task_id: str, context_id: str, agent_name: str, run_status: str, run_events: list[dict[str, Any]]
+    task_id: str,
+    context_id: str,
+    agent_name: str,
+    run_status: str,
+    run_events: list[dict[str, Any]],
+    *,
+    cancel_requested: bool = False,
 ) -> pb.Task:
     """Builds an A2A `Task` from a run's stored status and event history, merging
     each message's text-content deltas (in event order) into one artifact per `messageId`, and
@@ -199,4 +242,7 @@ def build_task(
     )
     if overflow:
         task.metadata.update({OVERFLOW_METADATA_LIST_KEY: overflow})
+    pending_cancel = _cancel_metadata(run_status, cancel_requested)
+    if pending_cancel:
+        task.metadata.update(pending_cancel)
     return task

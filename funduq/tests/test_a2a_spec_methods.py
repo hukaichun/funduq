@@ -19,15 +19,18 @@ than in production.
 
 from __future__ import annotations
 
+import asyncio
+
 from typing import get_args
 
 import pytest
 from a2a.server.request_handlers.request_handler import RequestHandler
 from a2a.types import a2a_pb2 as pb
-from a2a.utils.errors import TaskNotFoundError
+from a2a.utils.errors import TaskNotCancelableError, TaskNotFoundError
 from google.protobuf.json_format import MessageToDict
 
 from funduq.protocols.a2a import PROTOCOL_VERSION, A2AAdapter, ServedInterface
+from funduq.protocols.a2a_translate import CANCEL_REQUESTED_METADATA_KEY
 
 from tests.conftest import EchoAgent
 
@@ -221,3 +224,50 @@ async def test_the_agent_card_carries_the_agents_own_version(funduq):
     card = await A2AAdapter(funduq).agent_card(registered.agents["versioned"])
 
     assert card.version == "3.1.4"
+
+
+class _NeverFinishes:
+    """Starts and then waits, so a cancel meets a run that is genuinely live."""
+
+    async def run_stream(self, agent_name: str, run_input):
+        yield {"type": "RUN_STARTED", "threadId": run_input.thread_id, "runId": run_input.run_id}
+        await asyncio.Event().wait()
+
+
+async def test_cancelling_a_live_task_answers_working_and_says_the_request_is_pending(
+    funduq, serve
+):
+    """funduq can ask a provider to stop and cannot make it, so the answer is
+    never `canceled` on the strength of the request. It used to be nothing at
+    all: `cancelling` had no A2A state, so `status` serialised empty and a
+    client reading `status.state` learned neither that its request had landed
+    nor that anything was still running (funduq#149).
+
+    `working` is the true thing A2A has a word for, and the marker is what
+    separates "asked, not yet answered" from "nothing is happening".
+    """
+    agent = (await serve(_NeverFinishes(), "slow")).agents["slow"]
+    adapter = A2AAdapter(funduq)
+
+    stream = await adapter.send_task_streaming(agent, _message("hi"))
+    opening = await stream.__anext__()
+    async with asyncio.timeout(5):
+        while (await funduq.get_run(opening.id)).status != "running":
+            await asyncio.sleep(0.005)
+
+    cancelled = await adapter.cancel_task(agent, opening.id)
+
+    assert cancelled.status.state == pb.TaskState.TASK_STATE_WORKING
+    assert _wire(cancelled)["metadata"][CANCEL_REQUESTED_METADATA_KEY] is True
+
+
+async def test_cancelling_a_task_that_already_ended_is_refused_in_a2as_words(funduq, callee):
+    """A2A's own server raises here, and returning the finished task as though
+    the request had been accepted is the same unreadable answer in a different
+    disguise."""
+    adapter = A2AAdapter(funduq)
+    done = await adapter.send_task(callee, _message("hi"))
+    assert done.status.state == pb.TaskState.TASK_STATE_COMPLETED
+
+    with pytest.raises(TaskNotCancelableError):
+        await adapter.cancel_task(callee, done.id)
