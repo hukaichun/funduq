@@ -130,7 +130,8 @@ Segment boundaries are therefore **derived, never registered**: a
 sub-thread carrying the same head is the same segment; a new head or no
 chain ends it. The forwarded-without-signing case keeps its existing
 meaning (a silent hop: the chain verifies, the forwarder erased itself
-— priced, not compelled).
+— priced where a consumer's policy knows the expected call graph, free
+where none does; see [Actor chain](actor-chain.md)).
 
 ## Lineage and responsibility are different layers
 
