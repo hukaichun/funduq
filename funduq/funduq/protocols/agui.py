@@ -64,7 +64,13 @@ class AGUIAdapter:
     def __init__(self, funduq: "Funduq") -> None:
         self._funduq = funduq
 
-    async def run(self, agent: AgentRef, body: RunAgentInput) -> EventStream | ThreadSnapshot:
+    async def run(
+        self,
+        agent: AgentRef,
+        body: RunAgentInput,
+        *,
+        presenter_key: str | None = None,
+    ) -> EventStream | ThreadSnapshot:
         """Starts (or resumes) an AG-UI run for `agent`. An unseen `body.thread_id` gets a new
         thread under a **funduq-minted id** — the caller's own id is deliberately not adopted, and
         the `threadId` on every returned event is the authoritative one to continue with (funduq
@@ -89,7 +95,7 @@ class AGUIAdapter:
             metadata = getattr(body, "metadata", None) or {}
             resume = [r.model_dump(mode="json", by_alias=True) for r in body.resume] if body.resume else None
 
-            metadata, head_key, actor_chain = await verify_caller(session, metadata)
+            metadata, head_key, actor_chain = await verify_caller(session, metadata, presenter_key=presenter_key)
             metadata, kyok = await resolve_kyok(session, metadata)
 
             thread_id = await repo.ensure_thread(

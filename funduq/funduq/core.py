@@ -931,6 +931,7 @@ class Funduq:
         run_input: dict[str, Any],
         thread_id: str | None = None,
         metadata: dict[str, Any] | None = None,
+        presenter_key: str | None = None,
     ) -> RunHandle:
         """Create (or reuse) a thread, open a queued run on it, and enqueue it for dispatch.
 
@@ -948,7 +949,7 @@ class Funduq:
         socket would — the same rule in-process providers live under.
         """
         async with self.session() as session:
-            caller_metadata, head_key, actor_chain = await verify_caller(session, metadata or {})
+            caller_metadata, head_key, actor_chain = await verify_caller(session, metadata or {}, presenter_key=presenter_key)
             caller_metadata, kyok = await resolve_kyok(session, caller_metadata)
             resolved_thread_id = await repo.ensure_thread(
                 session, agent, thread_id, metadata=caller_metadata,
@@ -1001,7 +1002,11 @@ class Funduq:
         )
 
     async def resume_run(
-        self, run_id: str, run_input: dict[str, Any], metadata: dict | None = None
+        self,
+        run_id: str,
+        run_input: dict[str, Any],
+        metadata: dict | None = None,
+        presenter_key: str | None = None,
     ) -> RunHandle:
         """Deliver a deferred call's result back into the run it suspended.
 
@@ -1028,7 +1033,7 @@ class Funduq:
                 )
             agent = AgentRef(provider_key=stored.provider_key, name=stored.agent_name)
 
-            caller_metadata, head_key, actor_chain = await verify_caller(session, metadata or {})
+            caller_metadata, head_key, actor_chain = await verify_caller(session, metadata or {}, presenter_key=presenter_key)
             caller_metadata, kyok = await resolve_kyok(session, caller_metadata)
 
             opened = await open_run(

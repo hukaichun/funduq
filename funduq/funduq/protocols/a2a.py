@@ -142,6 +142,7 @@ class A2AAdapter:
         *,
         actor_chain: list[str] | None = None,
         metadata: dict[str, Any] | None = None,
+        presenter_key: str | None = None,
     ) -> pb.Task:
         """Sends `message` to `agent` as a new (or continuing, via `context_id`/`task_id`) A2A
         task, waits for it to settle, and returns the resulting `Task`. Behind A2A's
@@ -156,7 +157,7 @@ class A2AAdapter:
         """
         with _in_a2as_words():
             run_id, thread_id, is_live = await self._start_run(
-                agent, _params(message, actor_chain, metadata)
+                agent, _params(message, actor_chain, metadata), presenter_key=presenter_key
             )
         if is_live and self._funduq.broker.get(run_id) is not None:
             async for _ in self._funduq.broker.subscribe(run_id):
@@ -177,6 +178,7 @@ class A2AAdapter:
         *,
         actor_chain: list[str] | None = None,
         metadata: dict[str, Any] | None = None,
+        presenter_key: str | None = None,
     ) -> AsyncIterator[Event]:
         """Like `send_task` but yields A2A stream events as the run progresses instead of
         waiting for it to settle. If the run turns out not to be live (e.g. it was already
@@ -191,7 +193,7 @@ class A2AAdapter:
         """
         with _in_a2as_words():
             run_id, thread_id, is_live = await self._start_run(
-                agent, _params(message, actor_chain, metadata)
+                agent, _params(message, actor_chain, metadata), presenter_key=presenter_key
             )
         live = is_live and self._funduq.broker.get(run_id) is not None
         events = self._funduq.broker.subscribe(run_id) if live else None
@@ -341,7 +343,9 @@ class A2AAdapter:
         record = await self._funduq.get_agent(agent)
         return record.name if record else agent.name
 
-    async def _start_run(self, agent: AgentRef, params: dict) -> tuple[str, str, bool]:
+    async def _start_run(
+        self, agent: AgentRef, params: dict, *, presenter_key: str | None = None
+    ) -> tuple[str, str, bool]:
         """Resolves `params` (a `contextId`/`taskId`/message envelope) to a thread and run,
         creating or reopening whichever is needed, and returns `(run_id, thread_id, is_live)`.
         A message addressed (via `taskId`) to the thread's paused `input-required` task resumes
@@ -364,7 +368,7 @@ class A2AAdapter:
             parent_thread_id = await _lineage_parent(session, params)
             context_id = params.get("contextId") or await _context_of_task(session, params.get("taskId"))
 
-            metadata, head_key, actor_chain = await verify_caller(session, metadata)
+            metadata, head_key, actor_chain = await verify_caller(session, metadata, presenter_key=presenter_key)
 
             thread_id = await repo.ensure_thread(
                 session, agent, context_id, parent_thread_id,

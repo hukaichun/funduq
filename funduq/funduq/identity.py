@@ -311,6 +311,18 @@ class ChainResult:
         """The first hop's signer: the responsibility segment's authority."""
         return self.actor_public_keys[0]
 
+    @property
+    def presenter(self) -> str:
+        """The last hop's signer: the party offering this chain.
+
+        Named, rather than left as `actor_public_keys[-1]`, because this is
+        the key an authenticating seat's principal is compared against and
+        the two ends are easy to confuse — comparing `head` instead lets a
+        provider replay its caller's chain, which is the whole attack
+        (`scripts/probes/probe_a_provider_can_speak_as_the_caller.py`).
+        """
+        return self.actor_public_keys[-1]
+
 
 class InvalidActorChain(ValueError):
     pass

@@ -244,6 +244,13 @@ class VerifiedChain:
         """The first hop's signer: the responsibility segment's authority."""
         return self.actor_public_keys[0]
 
+    @property
+    def presenter(self) -> str:
+        """The last hop's signer: the party offering this chain. The head
+        answers for the work; the presenter is who handed it over just now,
+        and they are only the same party on a chain nobody extended."""
+        return self.actor_public_keys[-1]
+
 
 def verify_chain(chain: list[str]) -> VerifiedChain:
     """Verifies an actor chain without funduq: each hop's signature under its own embedded key and `prevHash` linkage. A hop has no expiry to check — freshness is the authenticating seat's job, not this verifier's — so no expiry is read here, whatever a signer chose to stamp.

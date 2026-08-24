@@ -88,3 +88,19 @@ def test_a_hop_is_exactly_two_claims(new_identity):
     for hop in (hop0, hop1):
         claims = jwt.decode(hop, options={"verify_signature": False})
         assert set(claims) == {"actorPublicKey", "prevHash"}
+
+
+def test_the_presenter_is_the_last_hop_not_the_head(new_identity):
+    """`head` answers for the work; `presenter` handed it over just now. They
+    are the same party only on a chain nobody extended, and confusing them is
+    the whole replay: a provider presenting its caller's chain has the
+    caller's head and its own presenter."""
+    caller, provider = new_identity(), new_identity()
+    hop0 = caller.sign_chain_hop()
+    chain = [hop0, provider.sign_chain_hop(prev_token=hop0)]
+
+    result = verify_actor_chain(chain)
+
+    assert result.head == caller.public_key
+    assert result.presenter == provider.public_key
+    assert verify_actor_chain([hop0]).presenter == caller.public_key

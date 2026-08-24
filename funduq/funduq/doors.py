@@ -10,6 +10,7 @@ from ag_ui.core import RunErrorEvent, RunStartedEvent
 from funduq.agui import build_run_agent_input
 from funduq.errors import InvalidRunInput, LlmProviderNotFound
 from funduq.identity import (
+    InvalidActorChain,
     verify_actor_chain,
     verify_cancel,
     verify_delegation,
@@ -37,11 +38,38 @@ __all__ = [
 ]
 
 
-async def verify_caller(session: "AsyncSession", metadata: dict) -> tuple[dict, str | None, Any]:
+async def verify_caller(
+    session: "AsyncSession", metadata: dict, *, presenter_key: str | None = None
+) -> tuple[dict, str | None, Any]:
     """Verifies `metadata["actorChain"]` if present and returns
     `(metadata stripped of funduq's reserved keys, the chain's head key, the raw chain)` —
     `(metadata, None, None)` when no chain is attached. Raises `InvalidActorChain` if the
     chain is tampered: a bad chain is refused at the door, never carried.
+
+    `presenter_key` is the key an authenticating seat in front of this door
+    proved belongs to whoever is calling, and it is the answer to **a chain
+    proves origin, not possession**. A chain is not a secret — funduq relays
+    it to the serving provider verbatim — so holding one is no evidence of
+    being its head, and a provider can otherwise present its caller's chain
+    back here for work the caller never asked for
+    (`scripts/probes/probe_a_provider_can_speak_as_the_caller.py`). When a
+    key is supplied it must equal the chain's **presenter** (the last hop's
+    signer, never the head — comparing the head is exactly the mistake that
+    lets the replay through), and a mismatch is refused rather than
+    downgraded: presenting a chain is a claim, and a claim that cannot be
+    backed is not the same act as making no claim at all.
+
+    funduq compares; it never authenticates. A door receives bytes, not a
+    connection, so establishing who is calling needs the live channel the
+    seat has and core does not. Supplying the key is therefore the
+    embedder's, and **omitting it changes nothing**: the chain is verified,
+    relayed and its head copied exactly as before. This is an extension for
+    a deployment that has an authenticating seat, not a new requirement —
+    withdrawing authority from every caller who has no seat in front of them
+    would be compelling participation, which funduq does not do. It also
+    means a deployment that supplies no key is exactly as exposed as it was,
+    and that is a deployment invariant rather than a setting: core's caller
+    doors are not independently safe.
 
     funduq's whole part in caller identity is four verbs — verify, copy the
     head, relay, refuse — and this is the verify. No summary is produced:
@@ -63,7 +91,14 @@ async def verify_caller(session: "AsyncSession", metadata: dict) -> tuple[dict, 
     actor_chain = metadata.get("actorChain")
     if not actor_chain:
         return metadata, None, None
-    head = verify_actor_chain(actor_chain).head
+    verified = verify_actor_chain(actor_chain)
+    if presenter_key is not None and presenter_key != verified.presenter:
+        raise InvalidActorChain(
+            "the chain's last hop was signed by "
+            f"{verified.presenter[:16]}…, but the caller authenticated as "
+            f"{presenter_key[:16]}… — extend the chain with your own key to present it"
+        )
+    head = verified.head
     delegation = metadata.get("delegation")
     if delegation is not None:
         authority = verify_delegation(delegation)
