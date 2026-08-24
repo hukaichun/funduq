@@ -48,6 +48,45 @@ challenge-response: the verifier contributes the nonce.
 See [Identity](mechanisms/identity.md) →
 [full record](https://github.com/hukaichun/funduq/blob/d78d0638c0ec2126167240c62471651b5468d35b/design/trust-and-identity.md#opening-a-link-the-verifier-chooses-the-freshness)
 
+### A chain hop carries no time
+
+An actor-chain hop used to carry `iat`/`exp`, with expiry enforced on the
+last hop (300s). That single field was doing two incompatible jobs —
+bounding replay of a presented chain, and bounding how long an
+authorization stays true — so every value was wrong for one of them:
+lengthen it and a captured chain stays usable, shorten it and work that
+pauses on a human dies. The field is removed rather than split.
+
+The reason it can be removed is not that something else took over the
+window. It is that **core cannot answer the question the window was
+pretending to answer.** A verifier sees bytes; it cannot tell a signature
+made now from one replayed by whoever held the chain — and providers hold
+it by design, since the chain reaches them verbatim in `forwardedProps`.
+Liveness needs a live channel, so it belongs to the authenticating seat in
+front of the door, never to core. A timestamp at core's layer is core
+pretending to check something it cannot see. This is the same lesson as
+[The verifier chooses the freshness](#the-verifier-chooses-the-freshness),
+applied one layer up: there the fix was to let the verifier contribute a
+nonce; here the verifier has no live channel at all, so it stops claiming
+to check.
+
+Consequences, stated plainly so nothing rests on a misreading: a chain
+does not expire, and **possession of one is not evidence its presenter is
+its head**. A chain proves origin, not possession. Core's caller doors are
+therefore not independently safe — a deployment must put an
+authenticating seat in front of them (see the operational limits page),
+and removing the TTL did not open that hole, it stopped disguising it: a
+provider replaying a caller's chain was already unstoppable inside the
+window, and the window's only real effect was to make the gap look
+guarded.
+
+Two things also fall out: the hop format loses its last non-key field, so
+"the chain is only keys" is now literally true; and funduq signing its own
+dispatches — parked because funduq's hop would have been the stale last
+hop — is unblocked.
+
+See [Actor chain](mechanisms/actor-chain.md)
+
 ### Wrapping an unknown event in `RawEvent` is quiet corruption
 
 Measured against the installed `ag-ui-protocol`: an unknown event *type*

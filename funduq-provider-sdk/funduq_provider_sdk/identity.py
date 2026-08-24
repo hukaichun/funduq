@@ -10,8 +10,6 @@ import jwt
 from cryptography.exceptions import InvalidSignature
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey, Ed25519PublicKey
 
-ACTOR_CHAIN_TTL_SECONDS = 300
-
 _KYOK_CALL = "funduq-kyok-call"
 
 
@@ -194,27 +192,24 @@ class ProviderIdentity:
         timestamp = int(time.time()) if timestamp is None else timestamp
         return self.sign(cancel_payload(run_id, timestamp)), timestamp
 
-    def sign_hop(
-        self, prev_token: str | None = None, ttl: int = ACTOR_CHAIN_TTL_SECONDS
-    ) -> str:
-        """Issues a JWT (EdDSA) hop under this identity's public key, optionally chained to `prev_token` via its sha256 in `prevHash`, expiring after `ttl` seconds.
+    def sign_hop(self, prev_token: str | None = None) -> str:
+        """Issues a JWT (EdDSA) hop under this identity's public key, optionally chained to `prev_token` via its sha256 in `prevHash`.
 
-        A chain carries keys and nothing else — the first hop's signer is
-        the segment's head/authority; whom a key represents is a separate,
-        opt-in disclosure (a voucher), never a hop field.
+        A chain carries keys and nothing else — no expiry, no timestamp: the
+        first hop's signer is the segment's head/authority; whom a key
+        represents is a separate, opt-in disclosure (a voucher), never a hop
+        field. Freshness of a presentation is the authenticating seat's job,
+        not the hop's, so a hop carries no time.
         `funduq.identity.verify_actor_chain` is the verifier these hops must
         satisfy; it builds the same claim format independently, and any
         change here must stay verifiable by it.
         """
-        now = int(time.time())
         return jwt.encode(
             {
                 "actorPublicKey": self.public_key,
                 "prevHash": hashlib.sha256(prev_token.encode()).hexdigest()
                 if prev_token is not None
                 else None,
-                "iat": now,
-                "exp": now + ttl,
             },
             self._private_key,
             algorithm="EdDSA",
@@ -235,7 +230,7 @@ class ProviderIdentity:
 
 
 class InvalidChain(Exception):
-    """An actor chain that fails verification: forged, reordered, truncated, spliced, expired, or malformed."""
+    """An actor chain that fails verification: forged, reordered, truncated, spliced, or malformed."""
 
 
 @dataclass(frozen=True)
@@ -251,7 +246,7 @@ class VerifiedChain:
 
 
 def verify_chain(chain: list[str]) -> VerifiedChain:
-    """Verifies an actor chain without funduq: each hop's signature under its own embedded key, `prevHash` linkage, expiry enforced on the last hop only.
+    """Verifies an actor chain without funduq: each hop's signature under its own embedded key and `prevHash` linkage. A hop has no expiry to check — freshness is the authenticating seat's job, not this verifier's — so no expiry is read here, whatever a signer chose to stamp.
 
     The independent twin of `funduq.identity.verify_actor_chain` — same rules,
     pinned to each other by interop tests. Unlike funduq's, it does not resolve
@@ -279,17 +274,15 @@ def verify_chain(chain: list[str]) -> VerifiedChain:
         except ValueError as e:
             raise InvalidChain(f"hop {i}: malformed actorPublicKey: {e}") from e
 
-        is_last_hop = i == len(chain) - 1
         try:
             payload = jwt.decode(
                 token,
                 key=public_key,
                 algorithms=["EdDSA"],
-                options={"verify_exp": is_last_hop},
+                options={"verify_exp": False},
             )
         except jwt.PyJWTError as e:
-            reason = "signature/expiry check failed" if is_last_hop else "signature check failed"
-            raise InvalidChain(f"hop {i}: {reason}: {e}") from e
+            raise InvalidChain(f"hop {i}: signature check failed: {e}") from e
 
         expected_prev_hash = (
             hashlib.sha256(prev_token.encode()).hexdigest() if prev_token is not None else None

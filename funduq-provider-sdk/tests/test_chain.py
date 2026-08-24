@@ -45,8 +45,6 @@ def test_a_legacy_hop_still_stamping_subject_verifies():
             "subject": {"type": "user", "id": "employee_x"},
             "actorPublicKey": a.public_key,
             "prevHash": None,
-            "iat": now,
-            "exp": now + 300,
         },
         a._private_key,
         algorithm="EdDSA",
@@ -54,12 +52,18 @@ def test_a_legacy_hop_still_stamping_subject_verifies():
     assert verify_chain([legacy]).head == a.public_key
 
 
-def test_an_expired_last_hop_is_rejected_but_expired_middle_hops_are_fine():
+def test_a_hop_is_exactly_two_claims():
+    """The chain is only keys: a hop carries the signer's key and the link to
+    the hop before it, and nothing else — no `subject`, and no time. Freshness
+    is the authenticating seat's job, not a hop's, so there is no expiry here
+    to enforce, honour, or work around. The independent twin of funduq's own
+    format test."""
+    import jwt
+
     a, b = ProviderIdentity.generate(), ProviderIdentity.generate()
-    stale = a.sign_hop(ttl=-10)
+    hop0 = a.sign_hop()
+    hop1 = b.sign_hop(prev_token=hop0)
 
-    with pytest.raises(InvalidChain, match="expiry"):
-        verify_chain([stale])
-
-    fresh_on_top = [stale, b.sign_hop(prev_token=stale)]
-    assert verify_chain(fresh_on_top).actor_public_keys == [a.public_key, b.public_key]
+    for hop in (hop0, hop1):
+        claims = jwt.decode(hop, options={"verify_signature": False})
+        assert set(claims) == {"actorPublicKey", "prevHash"}

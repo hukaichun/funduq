@@ -268,17 +268,11 @@ def verify_cancel(
     )
 
 
-ACTOR_CHAIN_TTL_SECONDS = 300
-
-
 def _sign_hop(private_key: Ed25519PrivateKey, prev_token: str | None) -> str:
-    now = int(time.time())
     return jwt.encode(
         {
             "actorPublicKey": private_key.public_key().public_bytes_raw().hex(),
             "prevHash": _hop_hash(prev_token) if prev_token is not None else None,
-            "iat": now,
-            "exp": now + ACTOR_CHAIN_TTL_SECONDS,
         },
         private_key,
         algorithm="EdDSA",
@@ -332,11 +326,14 @@ def verify_actor_chain(chain: list[str]) -> ChainResult:
     Each hop's signature must verify under its own embedded public key, and
     each hop after the first must link to the previous hop via a matching
     `prevHash` — reordering, truncating, or splicing in a hop from a
-    different chain breaks this and is rejected. Only the last hop's expiry
-    is enforced; earlier hops may have expired since they were signed.
-    Unknown claims on a hop are ignored (a chain from a signer still
-    stamping the retired `subject` field verifies; the field carries no
-    meaning). Raises `InvalidActorChain` on any of these failures,
+    different chain breaks this and is rejected. A hop has no expiry to
+    check: freshness is not a question this verifier can answer — it sees
+    bytes, not a live presenter — so proving a presentation live belongs to
+    the authenticating seat in front of the door, and no expiry is read
+    here, whatever a signer chose to stamp. Unknown claims are ignored (a
+    chain from a signer still stamping the retired `subject` field
+    verifies; the field carries no meaning). Raises `InvalidActorChain` on
+    any of these failures,
     including an empty chain or an unparseable/forged token.
 
     Hops also arrive from out-of-process providers:
@@ -364,17 +361,15 @@ def verify_actor_chain(chain: list[str]) -> ChainResult:
         except ValueError as e:
             raise InvalidActorChain(f"hop {i}: malformed actorPublicKey: {e}") from e
 
-        is_last_hop = i == len(chain) - 1
         try:
             payload = jwt.decode(
                 token,
                 key=public_key,
                 algorithms=["EdDSA"],
-                options={"verify_exp": is_last_hop},
+                options={"verify_exp": False},
             )
         except jwt.PyJWTError as e:
-            reason = "signature/expiry check failed" if is_last_hop else "signature check failed"
-            raise InvalidActorChain(f"hop {i}: {reason}: {e}") from e
+            raise InvalidActorChain(f"hop {i}: signature check failed: {e}") from e
 
         expected_prev_hash = _hop_hash(prev_token) if prev_token is not None else None
         if payload.get("prevHash") != expected_prev_hash:
