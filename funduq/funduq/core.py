@@ -966,6 +966,7 @@ class Funduq:
                 run_input=run_input,
                 metadata=caller_metadata,
                 head_key=head_key,
+                actor_chain=actor_chain,
                 protocol="ag-ui",
             )
             live = await dispatch(
@@ -1045,6 +1046,7 @@ class Funduq:
                 run_input=run_input,
                 metadata=caller_metadata,
                 head_key=head_key,
+                actor_chain=actor_chain,
                 protocol=stored.protocol or "ag-ui",
             )
             if opened is None:

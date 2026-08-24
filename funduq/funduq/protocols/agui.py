@@ -154,6 +154,7 @@ class AGUIAdapter:
                 run_input=input_dump,
                 metadata=metadata,
                 head_key=head_key,
+                actor_chain=actor_chain,
                 protocol="ag-ui",
             )
             if opened is None:

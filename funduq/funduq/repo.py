@@ -574,6 +574,7 @@ async def create_run(
     input_json: dict[str, Any],
     metadata: dict[str, Any] | None = None,
     head_key: str | None = None,
+    actor_chain: list[str] | None = None,
 ) -> dict[str, str]:
     run_id = new_id("run")
     await session.execute(
@@ -585,6 +586,7 @@ async def create_run(
             protocol=protocol,
             status="queued",
             head_key=head_key,
+            actor_chain=actor_chain,
             input_json=input_json,
             metadata=metadata or {},
             last_activity_at=_utcnow(),

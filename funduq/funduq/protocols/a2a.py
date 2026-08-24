@@ -429,7 +429,7 @@ class A2AAdapter:
                 )
                 created = await repo.create_run(
                     session, thread_id, agent, "a2a", run_input,
-                    metadata=metadata, head_key=head_key,
+                    metadata=metadata, head_key=head_key, actor_chain=actor_chain,
                 )
                 run_id = created["run_id"]
                 starting_seq = 0

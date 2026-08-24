@@ -156,12 +156,22 @@ async def main() -> int:
         async with funduq.session() as session:
             run = await repo.get_run(session, handle.run_id)
         findings.record(
-            "the record shows the hands the work passed through",
+            "the record keeps the chain that was presented",
+            run.actor_chain == branched,
+            f"run {handle.run_id[:8]}… keeps all {len(run.actor_chain or [])} hop(s) it "
+            f"arrived with, under head_key {(run.head_key or '')[:16]}… — so an auditor can "
+            "at least read the path that was claimed, which was impossible while only the "
+            "head was stored"
+            if run.actor_chain == branched
+            else f"stored {run.actor_chain!r}, presented {branched!r}",
+        )
+        findings.record(
+            "the record shows the hands the work actually passed through",
             False,
-            f"run {handle.run_id[:8]}… is recorded under head_key {(run.head_key or '')[:16]}… "
-            "— the caller — and funduq stores no chain at all, only the head. So even the "
-            "hops that did survive the branch are not in the record: A's absence cannot be "
-            "noticed later because nothing was kept to notice it against",
+            "the stored chain is the branched one: A is absent from it exactly as A was "
+            "absent from what B presented. Keeping the chain makes the claim auditable, "
+            "not the erasure detectable — nothing on the record contradicts a chain that "
+            "never mentioned A",
         )
 
         # --- 4. what the design does guarantee

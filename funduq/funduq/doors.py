@@ -303,6 +303,7 @@ async def open_run(
     metadata: dict[str, Any],
     head_key: str | None,
     protocol: str,
+    actor_chain: Any = None,
 ) -> Opened | None:
     """Resolves a request to the run it belongs on: the pending ask it answers, or a new run
     queued on the thread. Returns None only for a declared **result** that found no ask to land
@@ -354,7 +355,7 @@ async def open_run(
     await repo.ensure_queue_room(session, thread_id, funduq.settings.thread_queue_limit)
     created = await repo.create_run(
         session, thread_id, agent, protocol, run_input,
-        metadata=metadata, head_key=head_key,
+        metadata=metadata, head_key=head_key, actor_chain=actor_chain,
     )
     return Opened(run_id=created["run_id"], starting_seq=0, landed_on_ask=False)
 

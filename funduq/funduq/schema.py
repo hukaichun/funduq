@@ -121,6 +121,15 @@ runs = Table(
     # resolution); NULL = anonymous. A paused run's ask may be resolved only
     # by this key or the agent's own provider key.
     Column("head_key", String, nullable=True),
+    # The chain exactly as presented, hops and all; NULL = none was carried.
+    # The head answers "who answers for this" and is what authority is read
+    # from — this answers "through whose hands", which nothing else can. A
+    # chain can be branched (a party rebuilds it without the hands between
+    # the head and itself, forging nothing), and without the presented chain
+    # on the record that erasure is not merely unprovable at verification
+    # time, it is unnoticeable afterwards: nothing was kept to notice it
+    # against.
+    Column("actor_chain", _JSON, nullable=True),
     Column("input_json", _JSON, nullable=False),
     Column("started_at", _TS, nullable=True),
     Column("completed_at", _TS, nullable=True),
