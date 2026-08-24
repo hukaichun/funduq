@@ -29,59 +29,148 @@ staleness is not a property a hop has.
 
 ## What a chain proves — and deliberately does not
 
-Verification proves nobody rewrote the hops that exist. Two things it
-does not prove, by design:
+Verification proves nobody rewrote the hops that exist. That is a narrower
+statement than it looks, and the gaps below are load-bearing: two of them
+have probes under `scripts/probes/` that are red on purpose.
 
-- **The first hop is a claim.** The subject is asserted by whoever signed
-  hop zero; funduq cannot know how that party came to trust it. The
-  weakness closes where the verifier *is* the subject — in KYOK's
-  personal-key deployment, the party verifying the chain knows which
-  first-hop key is genuinely its own agency.
-- **A silent hop is an omission, not a break.** A party that forwards a
-  chain without extending it produces a chain that still verifies — it
-  has merely erased itself from the path. funduq does not force anyone to
-  sign, and takes no position on whether it should have: whether the full
-  chain must be carried at every hop is a convention the agent providers
-  and LLM providers involved agree between themselves. funduq carries and
-  verifies whatever chain arrives, and leaves what to accept to the
-  parties.
+- **A chain proves origin, not possession.** It proves the head's key
+  signed hop zero. It does not prove that whoever is *presenting* it now
+  holds that key — and a chain is not a secret: funduq relays it to the
+  serving provider verbatim in `forwardedProps.actorChain`, deliberately,
+  so the agent can verify for itself instead of trusting a summary funduq
+  wrote. The provider therefore holds, in full, the thing a door reads to
+  decide authority, and can present it back at a door for work the caller
+  never asked for. `probe_a_provider_can_speak_as_the_caller.py` does
+  exactly that; the run is accepted under the caller's head key and the
+  record cannot tell the two apart. The answer is the presenter check
+  below, and it is not built yet.
 
-funduq verifies chains and relays them; it never signs on anyone's behalf
-and never vouches for a subject.
+- **Completeness is not provable.** Signatures and links prove nobody was
+  *inserted*, *reordered*, or *spliced in from another chain*. They never
+  prove nobody was *removed*. A party holding `caller → A → B` can rebuild
+  it as `caller → B`: it has hop zero's full token, so it hashes it and
+  signs its own hop pointing at that hash. Nothing is forged, and the
+  result reads exactly like a chain A was never on — see
+  `probe_a_chain_can_be_branched.py`. If A is the hand that misbehaved, A
+  is the hand that disappears.
+
+- **Whom a key represents is not on the chain.** Hop zero asserts a key
+  and nothing more, so there is no identity claim on a chain to be wrong
+  about — and equally none to rely on. Translating a key to a person is a
+  separate, opt-in disclosure (a voucher, signed by the party who actually
+  knows), never a hop field. See
+  [responsibility chains](responsibility-chains.md).
+
+What does resist, and is asserted in the probes so it cannot be lost
+quietly: **the head cannot be dropped** — a first hop carrying a
+`prevHash` is refused, so truncation only runs from the tail backwards —
+and **a hop from another chain cannot be grafted on**. So a branch can
+only be built from hops the branching party genuinely received, and only
+by erasing parties *between* the head and itself.
+
+### A silent hop
+
+A party that forwards a chain without extending it produces a chain that
+still verifies — it has merely erased itself from the path. funduq does
+not force anyone to sign and takes no position on whether it should have.
+
+The design record calls this **priced, not compelled**, and that phrase
+needs its condition stated: the price is *the consumer's*, and it exists
+only where a consumer's policy knows the expected call graph and controls
+something worth withholding. KYOK is the worked example — an agent whose
+chain does not match gets no completions. In an ordinary delegation tree
+there is no such consumer, so there is no price: a receiving agent that
+sees `[A]` cannot tell whether a hop is missing. Silence is free there,
+and the branching case above is the same erasure aimed at someone else.
+
+## The record keeps the head, not the path
+
+funduq stores the **head key** on what needs an authority (a thread's
+binding, a paused ask) and **does not store the chain**. Its part in
+caller identity is four verbs — verify, copy the head, relay, refuse —
+and keeping is not one of them.
+
+The consequence is worth stating plainly because it was never weighed:
+after the fact, funduq's own records answer "who answers for this" and
+cannot answer "through whose hands". A branch is therefore not merely
+unprovable at verification time; it is unnoticeable later, because
+nothing was kept to notice it against.
+
+## The presenter check — **not implemented yet**
+
+> **Status: decided direction, no code.** Tracked here so the gap is
+> visible. `probe_a_provider_can_speak_as_the_caller.py` is its acceptance
+> test and is red until it lands.
+
+funduq cannot authenticate a presenter: a door receives bytes, not a
+connection. The seat in front of it can — the gateway that authenticated
+the caller by SSO, mTLS, or a credential it issued, none of which a
+provider holds. So the seat hands in the key it authenticated, and funduq
+**compares** it against the chain's last-hop signer, refusing a chain
+signed by anyone else at the tail.
+
+The division is the point: authentication needs a live channel and stays
+outside; the comparison belongs in core, where it is tested once and
+pinned by vectors rather than reimplemented by every deployment —
+comparing the chain's *head* instead of its *last hop* passes the exact
+attack it is meant to stop.
+
+Two consequences follow without new machinery. A provider that extends
+honestly still passes, because it signed the tail — so delegation is
+untouched and the delegator is named on the path. And when no key is
+handed in, no head is recorded and the run is simply **unbound**, which is
+already what a run carrying no chain is. Nothing is compelled: a caller
+that wants none of this loses nothing it had. What is refused is a claim
+the presenter cannot back.
+
+**Core's caller doors are therefore not independently safe.** A
+deployment that exposes them with no authenticating seat in front is
+exposed, and that is a deployment invariant, not a setting.
 
 ## funduq signs as an identity too — **not implemented yet**
 
-> **Status: decided direction, no code.** Tracked here so the gap is
-> visible. The hop-expiry semantics that used to block it are gone (a hop
-> now carries no time), so the old blocker is cleared; what remains is
-> implementation.
+> **Status: decided direction, no code.** The hop-expiry semantics that
+> used to block it are gone (a hop now carries no time), so the old
+> blocker is cleared; what remains is implementation.
 
 funduq is an identity like any other (`FunduqIdentity`, the key providers
 already pin), so it can bear the same responsibility on a chain that a
-provider does: append one standard hop, signed with its own key, each
-time it dispatches a run — no new claim, no role marker, no format
-extension. What that buys:
+provider does: append one hop, signed with its own key, each time it
+dispatches a run. What that buys:
 
 - **"Routed through funduq" becomes verifiable.** A consumer that pins a
   funduq key can require its hops in the path; a chain that bypassed funduq,
   or was fabricated whole, doesn't have them.
-- **A silent hop becomes structurally visible.** With funduq signing every
-  dispatch, a fully-signed chain alternates funduq and provider hops; a
-  provider that forwarded without signing leaves two consecutive funduq
-  hops — witnessed, without funduq naming anyone.
+- **Erasure becomes detectable** — but only if funduq's hop names *the
+  agent it dispatched to*. An agent is addressed as `(provider_key, name)`
+  (`AgentRef`), and the provider half of that pair is the same key that
+  signs the next hop when that provider extends. So the hop and its
+  successor are checkable against each other: funduq said it dispatched to
+  P, therefore the hop after funduq's must be signed by P. A branch breaks
+  that relation — the hop says P and the next hop is signed by someone
+  else — and dropping funduq's hop instead leaves a gap a consumer
+  requiring funduq hops can refuse. Without the field, the branch
+  `caller → funduq → B` is indistinguishable from an honest direct
+  dispatch. This is the one thing that reaches the completeness gap; the
+  presenter check does not, because a branching party does not lie about
+  who it is.
 - **Federation needs no extra design.** A chain crossing several funduqs
   carries each funduq's own hops; consumers pin the funduqs they trust, the
-  same act as pinning one.
+  same act as pinning one. (This is the only mention of federation in these
+  docs, and it sits in an unimplemented section — one funduq handing work
+  to another has no chapter yet.)
 
-What used to block it — hop-expiry semantics — is resolved. funduq's hop
-would often be the last hop at delivery time, and when verification
-enforced expiry on the last hop, a chain read again late in a long run
-would have failed on funduq's own stale hop. A hop no longer carries any
-expiry, so that failure mode is gone; the mechanism is now only waiting on
-being built.
+Deliberately *not* carried on that hop: the run id. Anything riding inside
+a chain is defeated by not attaching the chain at all, so it buys nothing
+against a party that wants to erase the link, and for cooperating parties
+querying both funduqs already answers the question. The dispatch target
+earns its place for a different reason — it makes a *presented* chain
+contradict itself.
 
 ## Design records
 
 Why this is shaped the way it is, and what it was shaped like first:
 
 - [A silent hop is priced, not compelled](../design-records.md#a-silent-hop-is-priced-not-compelled)
+- [A chain hop carries no time](../design-records.md#a-chain-hop-carries-no-time)
+- [A chain proves origin, not possession](../design-records.md#a-chain-proves-origin-not-possession)

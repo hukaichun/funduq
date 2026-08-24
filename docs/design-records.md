@@ -29,6 +29,19 @@ policy knows the expected call graph. In KYOK that consumer controls the
 money: an agent whose chain does not match gets no completions. Signing
 is not compelled, it is **priced**.
 
+**The condition in that sentence is load-bearing and was read as universal
+for too long.** A price needs a consumer whose policy knows the expected
+call graph *and* who controls something worth withholding. KYOK has one.
+An ordinary delegation tree does not: a receiving agent that sees `[A]`
+cannot tell whether a hop is missing, so there is no price, and silence is
+free. Two things narrow it further. The general case is not
+self-erasure — a party can erase *someone else* between the head and
+itself, and the result reads exactly like a chain that party was never on
+(see [A chain proves origin, not possession](#a-chain-proves-origin-not-possession)).
+And under the presenter check, forwarding a chain whose tail is not yours
+stops being available at all: not priced, gone. The honest options —
+extend, or break — both stay free.
+
 See [Actor chain](mechanisms/actor-chain.md) →
 [full record](https://github.com/hukaichun/funduq/blob/d78d0638c0ec2126167240c62471651b5468d35b/design/trust-and-identity.md#actor-chains-provenance-hop-by-hop)
 
@@ -84,6 +97,58 @@ Two things also fall out: the hop format loses its last non-key field, so
 "the chain is only keys" is now literally true; and funduq signing its own
 dispatches — parked because funduq's hop would have been the stale last
 hop — is unblocked.
+
+See [Actor chain](mechanisms/actor-chain.md)
+
+### A chain proves origin, not possession
+
+A chain proves the head's key signed hop zero. It does not prove that
+whoever presents it now holds that key, and the two were treated as one
+thing for as long as a door accepted a chain on the strength of its
+signatures alone.
+
+The gap is not theoretical and not narrow: funduq relays the chain to the
+serving provider verbatim (`forwardedProps.actorChain`) so the agent can
+verify for itself, which means the provider holds, in full, the thing a
+door reads to decide authority. It can present it back for work the caller
+never asked for; the run is accepted under the caller's head key, and the
+two rows are identical in every field that carries authority
+(`probe_a_provider_can_speak_as_the_caller.py`, red on purpose).
+
+The hop expiry removed in [A chain hop carries no time](#a-chain-hop-carries-no-time)
+did not open this. A provider inside the old 300s window could always do
+it; the window's only real effect was to make the gap look guarded — which
+is why removing it was the honest move even though the hole stayed.
+
+**The fix is a comparison, not an authentication.** funduq cannot
+authenticate a presenter — a door receives bytes, not a connection — but
+the seat in front of it can, and hands in the key it authenticated;
+funduq refuses a chain whose last hop was signed by anyone else.
+Authentication needs a live channel and stays outside. The comparison
+belongs in core, tested once and pinned by vectors rather than
+reimplemented per deployment: comparing the chain's *head* instead of its
+*last hop* passes this exact attack, and an integrator building from the
+only worked example has reproduced a replay hole here before (#75).
+
+Nothing is compelled by it. No key handed in means no head recorded and
+an unbound run, which is what a run carrying no chain already is; a
+provider that extends honestly still passes, because it signed the tail.
+What is refused is a claim the presenter cannot back. The standing
+consequence is a deployment invariant, not a setting: **core's caller
+doors are not independently safe.**
+
+A second gap sits beside it and this fix does not touch it: verification
+proves nobody was inserted, reordered, or spliced in, never that nobody
+was *removed*. A party holding `caller → A → B` can rebuild it as
+`caller → B` from hop zero's own token, forging nothing
+(`probe_a_chain_can_be_branched.py`). A branching party does not lie about
+who it is, so the presenter check passes it. Only funduq signing each
+dispatch **with the agent it dispatched to** makes a presented chain
+contradict itself: an agent is `(provider_key, name)`, and that provider
+key is exactly the key that signs the next hop when the provider extends,
+so funduq's hop and its successor can be checked against each other. And
+funduq keeps no chain today, only the head key, so the erasure is also
+unnoticeable afterwards.
 
 See [Actor chain](mechanisms/actor-chain.md)
 
