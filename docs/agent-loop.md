@@ -61,9 +61,15 @@ hooks … to send a retry prompt back to the model asking it to try again」。
 外面的東西不會剛好落在 ● 上，所以一定先在某處等。那段等待是空隙，它有方向：
 
 - **入向空隙** — 訊息抵達 → 迴圈下次走到 ①
-- **出向空隙** — 迴圈停在 ② → 外面的人回答
+- **出向空隙** — 迴圈停在 ②／③ → 外面的人回答
 
 空隙一旦存在，四題就不能不答。沒答的實作是把答案藏在行為裡。
+
+**下面兩張表是決定，不是觀察。** 這頁其餘的每一句都能被「讀套件、跑探針」
+推翻；這八格只能被 funduq 自己改變主意推翻。所以每一格只寫結論，論證留在它
+連到的設計記錄裡——決定改變時爛掉的是論證，旁邊那些觀察不受影響。
+
+### 入向空隙
 
 | | 問題 | funduq 的答案 |
 | --- | --- | --- |
@@ -72,9 +78,25 @@ hooks … to send a retry prompt back to the model asking it to try again」。
 | 過期 | 消費得太晚還算數嗎 | 降級成普通的下一輪 |
 | 放棄 | 迴圈先結束了呢 | 同上 |
 
-`Interrupt.expires_at`（AG-UI）是出向空隙的過期欄位。入向空隙的對應物兩個
-協定都沒有；funduq 用 [`addressedRunId`](mechanisms/requests.md) 頂著，並在
-註解裡寫明會讓位給 A2A 日後的載體。
+### 出向空隙
+
+| | 問題 | funduq 的答案 |
+| --- | --- | --- |
+| 持有者 | 誰拿著 | funduq 自己。run 停在 `input-required`，提問記在 `runs.metadata`：② 在 `interrupts`，③ 在 `pendingToolCalls` |
+| 排序 | 兩個答案搶同一個提問 | reopen 是 status-guarded 的，恰好一個贏；輸的那個拿到 thread 的現況，不會改裝成一次發言 |
+| 過期 | 等太久還算數嗎 | 算。**funduq 不讀鐘**——見[一個 funduq 沒問的問題不歸 funduq 逾時](design-records.md#a-question-funduq-did-not-ask-is-not-funduqs-to-time-out) |
+| 放棄 | 沒有人要答呢 | 就一直等，不失敗。同上 |
+
+`Interrupt.expires_at` 是 AG-UI 給出向空隙的過期欄位，而 funduq 只轉不讀：
+它原樣留在 `runs.metadata` 那筆 interrupt 上，判斷屬於提問的 provider 和欠
+答案的呼叫端。入向空隙的對應物兩個協定都沒有；funduq 用
+[`addressedRunId`](mechanisms/requests.md) 頂著，並在註解裡寫明會讓位給 A2A
+日後的載體。
+
+**兩種提問走兩條回程，不能互換。** ② 的答案是 `RunAgentInput.resume` 裡的一筆
+`ResumeEntry`，③ 的答案是 `messages` 裡的一則 `ToolMessage`。把 ② 的提問用
+`ToolMessage` 回答，pydantic-ai 不出聲地丟掉它，run 以 `RUN_FINISHED`／
+`success` 結束而什麼都沒執行——量出來的，所以 funduq 不把那算成答案。
 
 ## AG-UI 的操作點
 
@@ -93,8 +115,27 @@ hooks … to send a retry prompt back to the model asking it to try again」。
 | — | **④ 准不准再跑：無** |
 | — | **中止：無** |
 
-出向：`Interrupt{tool_call_id, response_schema, expires_at}` 掛在
-`RunFinishedEvent.outcome` 上——**問一次就結束一輪**。
+出向：**問一次就結束一輪**。AG-UI 沒有「暫停」這種事件——迴圈要問東西，做法
+就是結束這一輪，`RUN_FINISHED`，把問題掛在結束事件上。
+
+而它只掛得住其中一種。`Interrupt{id, reason, message, tool_call_id,
+response_schema, expires_at, metadata}` 描述的是 ② 的提問；停在 ③ 等結果的那
+種**沒有任何出向標記**，`outcome` 照樣是 `{"type": "success"}`：
+
+```
+② 等准駁   RUN_FINISHED {"outcome":{"type":"interrupt","interrupts":[…]}}
+③ 等結果   RUN_FINISHED {"outcome":{"type":"success"}}
+```
+
+兩筆都是活模型經 pydantic-ai 的 AG-UI adapter 跑出來的；它的 `_build_outcome`
+只讀 `DeferredToolRequests.approvals`。而 `outcome` 本身是 0.1.19 才有的欄位，
+provider 釘在更舊的版本時整個不送，連 ② 都沒有標記。
+
+所以**一個 run 結束了沒有，讀不出 `RUN_FINISHED`**——那個事件說的是「我這條
+stream 結束了」，這是它唯一宣稱過的事。缺的那個 ③ 出向標記由 funduq 從自己的
+事件紀錄重建：announce 過的 `TOOL_CALL_START` 減掉有 `TOOL_CALL_RESULT` 的，
+剩下的就是還欠答案的呼叫。這是數，不是推斷——執行過的呼叫一定帶結果，包括
+tool 自己拋例外的（錯誤就是那個結果，會送回模型）和 `ModelRetry` 放棄後的。
 
 ## A2A 的操作點
 
@@ -193,6 +234,11 @@ SDK 自己的 docstring 已經承認這個限制。講 `AUTH_REQUIRED` 的時候
 以 `pydantic-ai 2.33.0` 為準。它是對照組：框架自己持有迴圈，所以它有能力
 把每一個點都開出來。看它開了哪些，兩個協定缺的就讀得出是選擇還是疏漏。
 
+這裡的 hook 名稱會隨版本漂——pydantic-ai 不是 funduq 的相依，沒有東西把它釘
+住，所以引用前先 grep 手上那一版。**落點不會漂**：迴圈的形狀決定四個點，一個
+框架能做的是關掉其中幾個（原生工具在模型端執行，②③ 就結構上不存在），不是
+長出第五個。
+
 | 操作 | 落點 |
 | --- | --- |
 | `user_prompt` / `message_history` | ① messages |
@@ -280,16 +326,18 @@ funduq 拿著。上面那四題不是 funduq 多做的功能，是站在這個�
 | thread queue（`thread_queue_limit`，預設 8） | **入向空隙的持有者** |
 | `addressedRunId`（插話擴充） | 入向空隙，帶宣告的意圖——funduq 只轉，判斷在 agent 自己的迴圈裡 |
 | `parentRunId`（AG-UI 自己的欄位） | 接在後面，下一輪 |
-| `input-required` ＋ `resume`／`ResumeEntry` | ②／③——結果落在待決的那個問題上 |
-| `Interrupt.expires_at`、`paused_no_resume` | **出向空隙**的過期 |
+| `input-required` ＋ `resume`／`ResumeEntry` | **②**——准駁落在待決的那個提問上 |
+| `input-required` ＋ `messages` 裡的 `ToolMessage` | **③**——結果落在它 `toolCallId` 指名的那個呼叫上；那個 id 就是宣告，同 A2A 的 `taskId`，只是指的是提問不是 run |
+| `runs.metadata` 的 `interrupts`／`pendingToolCalls` | 出向空隙的持有者——②③ 各自欠什麼 |
+| `Interrupt.expires_at` | **出向空隙**的過期，只轉不讀 |
 | `cancel_run`／`CancelTask` | 中止，不屬於任何 ● |
-| `run_events`（存下來的 AG-UI 事件流） | 出向觀察，**也是兩個出口唯一的翻譯來源** |
+| `run_events`（存下來的 AG-UI 事件流） | 出向觀察，**也是兩個出口唯一的翻譯來源**——以及 ③ 的出向標記從哪裡重建 |
 | — | **④：看不到，也不該看到** |
 
 最後一列是這個座位的邊界。`check(...)` 在 provider 的盒子裡，所以一個 run
 裡有幾次 ① 對 funduq 不可觀察——run ≠ turn，funduq 因此不去定址「這一輪」。
 它不 pace 對話（[the thread gate is
-retired](design-records.md#the-thread-gate-is-retired-funduq-does-not-pace-a-providers-conversation)），
+retired](design-records.md#the-thread-gate-is-retired--funduq-does-not-pace-a-providers-conversation)），
 不猜一個插話該不該進得去（目標的 agent 才是判斷者），對 ④ 沒有任何意見。
 
 ### 由此得出 core 的邊界

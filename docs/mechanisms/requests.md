@@ -10,7 +10,7 @@ only ask, watch what happens, and record exactly that.
 
 A queued run is *offered* to its agent's provider in arrival order, head
 of the queue first — arrival order is the one sequencing funduq owns, and
-[the thread gate is retired](../design-records.md#the-thread-gate-is-retired-funduq-does-not-pace-a-providers-conversation),
+[the thread gate is retired](../design-records.md#the-thread-gate-is-retired--funduq-does-not-pace-a-providers-conversation),
 so a sibling utterance is offered as soon as it reaches the head whether
 or not the previous turn is still running. The provider answers with one
 of three values:
@@ -167,8 +167,7 @@ Runs that never reach that funnel are failed with a reason instead: an
 agent with no attached provider (`agent_offline`), a queued run whose
 agent went unserved past its window (`no_provider_took_it`), a claimed
 run whose provider stopped serving while still holding it
-(`provider_left_holding_it`), a paused run nobody answered before its
-deadline (`paused_no_resume`), a permanent refusal, and a malformed
+(`provider_left_holding_it`), a permanent refusal, and a malformed
 event — one whose known AG-UI `type` fails
 validation, or one with no `type` string at all. An event whose `type`
 is a string funduq merely does not recognise is not malformed: it is a
@@ -178,18 +177,20 @@ is the caller's decision, never the relay's.
 A run recorded `failed` that never emitted its own `RUN_ERROR` gets one
 synthesized, persisted and relayed, so a caller can tell failure from an
 agent with nothing to say — including runs the broker no longer tracks
-when the verdict lands (a stale pause reaped as `paused_no_resume`, an
-orphan reaped at startup), whose event is appended to the record
-directly since no stream is left to relay it to. A run that already
-reported its own is left alone.
+when the verdict lands (an orphan reaped at startup), whose event is
+appended to the record directly since no stream is left to relay it to.
+A run that already reported its own is left alone.
 
-That holds for every run the broker still tracks. **It does not hold for
-a paused run failed as `paused_no_resume`**: the broker forgot the run
-when it paused, so there is no stream left to push a terminal event
-onto, and the status changes in the database with nothing said. A caller
-watching the stream sees it simply stop after the `RUN_FINISHED` that
-asked the question. That is the same silence the synthesized `RUN_ERROR`
-exists to prevent, and it is a gap rather than a decision.
+A paused run is not among them, and the gap this paragraph used to
+describe closed with the thing that caused it. funduq had a deadline of
+its own on an unanswered pause, and failing a run the broker had already
+forgotten changed a status with nothing said — a caller watching the
+stream saw it simply stop after the `RUN_FINISHED` that asked the
+question. The deadline is gone (see [the design
+record](../design-records.md#a-question-funduq-did-not-ask-is-not-funduqs-to-time-out)),
+so nothing now fails a paused run behind the caller's back: it waits,
+and the `RUN_FINISHED` that asked is the last word until somebody
+answers.
 
 ## Silence is not a verdict
 
