@@ -135,18 +135,16 @@
   "chains": [
     {
       "kind": "actor-chain",
-      "note": "a two-hop actor chain both verifiers (funduq.identity.verify_actor_chain and funduq_provider_sdk.verify_chain) must accept, yielding exactly these actor keys in order \u2014 the first is the chain's head, the responsibility segment's authority. A chain carries keys and nothing else. exp is far-future so the vector stays valid; iat is fixed; EdDSA is deterministic, so an implementation with the keys can reproduce the hops byte-for-byte. Hop keys: a5*32 (the test key) and b6*32.",
+      "note": "a two-hop actor chain both verifiers (funduq.identity.verify_actor_chain and funduq_provider_sdk.verify_chain) must accept, yielding exactly these actor keys in order \u2014 the first is the chain's head, the responsibility segment's authority. A chain carries keys and nothing else: a hop is {actorPublicKey, prevHash} with no iat/exp \u2014 freshness is the authenticating seat's job, not the hop's, so a hop carries no time and never expires. EdDSA is deterministic, so an implementation with the keys can reproduce the hops byte-for-byte. Hop keys: a5*32 (the test key) and b6*32.",
       "inputs": {
         "hop_private_keys_hex": [
           "a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5",
           "b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6"
-        ],
-        "iat": 1755500000,
-        "exp": 9999999999
+        ]
       },
       "chain": [
-        "eyJhbGciOiJFZERTQSIsInR5cCI6IkpXVCJ9.eyJhY3RvclB1YmxpY0tleSI6IjI5ZTU4MzNhOTE1YTY0MjlhNGUzYTc5NDg0NzVjMzM4ZWY0MzZlYjgyYmU4OWM5MmYwNTk3MDQ0MDNkYjlkNTUiLCJwcmV2SGFzaCI6bnVsbCwiaWF0IjoxNzU1NTAwMDAwLCJleHAiOjk5OTk5OTk5OTl9.Z2YdJcLmX1G1MjU-rWtXLbX8Ek9DocWYOErm4b8Em4nS-mmf6smwVtwuHNF-seDRfEAarly37uRT3iK1P4ScCg",
-        "eyJhbGciOiJFZERTQSIsInR5cCI6IkpXVCJ9.eyJhY3RvclB1YmxpY0tleSI6IjgwNTQ0MGVlNDgwNTFmYzgyZWE2NGQ5MDVhY2FiZmYwZDIxNzgwZjdmY2FiYTY5MDBlMGU0MTM4N2IxZDRhNTciLCJwcmV2SGFzaCI6IjYwZTdmNDFmZDc2NTgwZGE5OTk0YWVlYjI4NzNkNTc0OWVlMmQ5ZDdiMzZhZDdiM2NjYzY1YzM2ZjY5ZDlhNmIiLCJpYXQiOjE3NTU1MDAwMDAsImV4cCI6OTk5OTk5OTk5OX0.hgbQovYevw5IFomv-oVf0XqqSZnD3l2bh5uLQeCuZQR4TXmjQ6H7H6vKTS7Oe4FEQR4dLVf-I5aSB4cagDEQDw"
+        "eyJhbGciOiJFZERTQSIsInR5cCI6IkpXVCJ9.eyJhY3RvclB1YmxpY0tleSI6IjI5ZTU4MzNhOTE1YTY0MjlhNGUzYTc5NDg0NzVjMzM4ZWY0MzZlYjgyYmU4OWM5MmYwNTk3MDQ0MDNkYjlkNTUiLCJwcmV2SGFzaCI6bnVsbH0.UdDNsBBdWnD09-_qQoH1SYv-APhcYZUCJS6gGml2YakXq-I3pLsHBn4zDmG0MZTFVLfZnEOj5XNiD_dTHPkLBg",
+        "eyJhbGciOiJFZERTQSIsInR5cCI6IkpXVCJ9.eyJhY3RvclB1YmxpY0tleSI6IjgwNTQ0MGVlNDgwNTFmYzgyZWE2NGQ5MDVhY2FiZmYwZDIxNzgwZjdmY2FiYTY5MDBlMGU0MTM4N2IxZDRhNTciLCJwcmV2SGFzaCI6ImUxYTliMmVhNjQ3ZWExNzFjOTNkMjhkMTc0ZmI0MzY0N2Q2ZGU1YmUyZmJiZWI4Y2RhYWNiN2IxY2Y0ZGUwM2QifQ.BiPx2kQy-o2hQjDuAeUHDrrGbFcVc5O0wLdTlHV9Fbti2QCBsKz7bl4np2RCA78C2Fxoijt_F2BCwhnX6jQRDg"
       ],
       "actor_public_keys": [
         "29e5833a915a6429a4e3a7948475c338ef436eb82be89c92f059704403db9d55",

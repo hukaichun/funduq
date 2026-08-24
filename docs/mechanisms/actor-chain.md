@@ -3,24 +3,29 @@
 Part of [funduq's mechanisms](../mechanisms.md).
 
 A chain answers "on whose behalf, through whose hands". Each hop is an
-EdDSA JWT carrying the `subject` the chain vouches for, the signer's own
-`actorPublicKey`, a `prevHash` — the sha256 of the previous hop's full
-JWT, null on the first — and `iat`/`exp`. Each hop is signed by the key
-it names; extending a chain appends a hop that carries the subject
-forward unchanged and hash-links to the tail. The existing hops are never
-modified.
+EdDSA JWT carrying exactly two things — the signer's own `actorPublicKey`
+and a `prevHash`, the sha256 of the previous hop's full JWT, null on the
+first. A chain carries keys and nothing else: no `subject` (retired — it
+was the signer's own unverifiable claim), and **no time** — no `iat`, no
+`exp`. Each hop is signed by the key it names; extending a chain appends a
+hop that hash-links to the tail. The existing hops are never modified.
 
 ## Verification
 
 Both sides verify independently — `funduq.identity.verify_actor_chain` in
 core, `funduq_provider_sdk.verify_chain` in the SDK — under the same rules:
-every hop's signature under its own embedded key, the hash linkage, one
-subject throughout, and expiry enforced **on the last hop only**. Earlier
-hops are provenance, not standing authorization, so a run paused on a
-human longer than a hop's TTL stays resumable. Rejected: a forged hop, a
-spliced or reordered chain, a subject swapped partway. A fixed-time chain
-in [`contract-vectors.json`](../contract-vectors.json) pins both
-verifiers byte-for-byte.
+every hop's signature under its own embedded key, and the hash linkage.
+Rejected: a forged hop, a spliced or reordered chain. A chain in
+[`contract-vectors.json`](../contract-vectors.json) pins both verifiers
+byte-for-byte.
+
+**A hop carries no expiry, by design.** Whether a *presentation* of a
+chain is live is not a question either verifier can answer — it sees
+bytes, not a live presenter — so proving a presentation live is the
+authenticating seat's job (the door / gateway that has the live channel),
+never the hop's. A run paused on a human for hours is therefore resumable
+on the chain it started with: the chain never went stale, because
+staleness is not a property a hop has.
 
 ## What a chain proves — and deliberately does not
 
@@ -47,7 +52,9 @@ and never vouches for a subject.
 ## funduq signs as an identity too — **not implemented yet**
 
 > **Status: decided direction, no code.** Tracked here so the gap is
-> visible; the TTL semantics below block it and are deliberately parked.
+> visible. The hop-expiry semantics that used to block it are gone (a hop
+> now carries no time), so the old blocker is cleared; what remains is
+> implementation.
 
 funduq is an identity like any other (`FunduqIdentity`, the key providers
 already pin), so it can bear the same responsibility on a chain that a
@@ -66,12 +73,12 @@ extension. What that buys:
   carries each funduq's own hops; consumers pin the funduqs they trust, the
   same act as pinning one.
 
-What blocks it: hop-expiry semantics. funduq's hop would often be the last
-hop at delivery time, and verification enforces expiry on the last hop —
-a chain read again late in a long run would fail on funduq's own stale
-hop. (The edge exists today for provider hops too; funduq signing every
-dispatch would make it constant.) That discussion is parked; the
-mechanism waits for it.
+What used to block it — hop-expiry semantics — is resolved. funduq's hop
+would often be the last hop at delivery time, and when verification
+enforced expiry on the last hop, a chain read again late in a long run
+would have failed on funduq's own stale hop. A hop no longer carries any
+expiry, so that failure mode is gone; the mechanism is now only waiting on
+being built.
 
 ## Design records
 

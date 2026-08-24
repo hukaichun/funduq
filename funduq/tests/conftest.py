@@ -92,8 +92,8 @@ class Identity(ProviderIdentity):
     def __init__(self) -> None:
         super().__init__(Ed25519PrivateKey.generate())
 
-    def sign_chain_hop(self, prev_token: str | None = None, exp_offset: int = 300) -> str:
-        return self.sign_hop(prev_token, ttl=exp_offset)
+    def sign_chain_hop(self, prev_token: str | None = None) -> str:
+        return self.sign_hop(prev_token)
 
 
 

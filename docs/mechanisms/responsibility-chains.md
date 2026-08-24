@@ -67,8 +67,10 @@ say so explicitly).
 
 ## The chain is only keys
 
-A hop carries `{actorPublicKey, prevHash, iat, exp}` and a signature —
-**no `subject`**. The shipped format's `subject` field was a self-claim:
+A hop carries `{actorPublicKey, prevHash}` and a signature — **no
+`subject`, and no time** (`iat`/`exp` are gone: freshness is the
+authenticating seat's job, not the hop's, so a hop never expires). The
+shipped format's `subject` field was a self-claim:
 the signer asserting whom the key represents, which funduq could record
 but never verify — an assertion wearing the record's clothes. It is
 removed from the design.

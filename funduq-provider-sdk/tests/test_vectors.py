@@ -81,8 +81,6 @@ def test_the_published_chain_verifies_here_too_and_can_be_reproduced():
         {
             "actorPublicKey": vector["actor_public_keys"][0],
             "prevHash": None,
-            "iat": vector["inputs"]["iat"],
-            "exp": vector["inputs"]["exp"],
         },
         first_key,
         algorithm="EdDSA",

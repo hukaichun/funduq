@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import time
 
 import jwt
 import pytest
@@ -36,14 +35,8 @@ def test_a_chain_survives_several_hops():
 
 def test_a_forged_hop_is_rejected():
     victim, forger = _key(), _key()
-    now = int(time.time())
     forged = jwt.encode(
-        {
-            "actorPublicKey": _hex(victim),
-            "prevHash": None,
-            "iat": now,
-            "exp": now + 300,
-        },
+        {"actorPublicKey": _hex(victim), "prevHash": None},
         forger,
         algorithm="EdDSA",
     )
@@ -61,31 +54,6 @@ def test_a_spliced_chain_is_rejected():
         verify_actor_chain([*real, grafted])
 
 
-def test_only_the_last_hop_has_to_be_fresh():
-    agency, a = _key(), _key()
-    now = int(time.time())
-    stale_origin = jwt.encode(
-        {"actorPublicKey": _hex(agency), "prevHash": None,
-         "iat": now - 7200, "exp": now - 3600},
-        agency,
-        algorithm="EdDSA",
-    )
-    chain = extend_actor_chain(a, [stale_origin])
-
-    assert verify_actor_chain(chain).head == _hex(agency)
-
-
-def test_an_expired_last_hop_is_rejected():
-    agency = _key()
-    now = int(time.time())
-    expired = jwt.encode(
-        {"actorPublicKey": _hex(agency), "prevHash": None,
-         "iat": now - 7200, "exp": now - 3600},
-        agency,
-        algorithm="EdDSA",
-    )
-    with pytest.raises(InvalidActorChain):
-        verify_actor_chain([expired])
 
 
 def test_extending_nothing_is_an_error():

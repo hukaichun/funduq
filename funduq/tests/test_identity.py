@@ -67,8 +67,6 @@ def test_a_legacy_hop_still_stamping_subject_verifies(new_identity):
             "subject": {"type": "user", "id": "employee_x"},
             "actorPublicKey": identity.public_key,
             "prevHash": None,
-            "iat": now,
-            "exp": now + 300,
         },
         identity._private_key,
         algorithm="EdDSA",
@@ -76,28 +74,17 @@ def test_a_legacy_hop_still_stamping_subject_verifies(new_identity):
     assert verify_actor_chain([legacy]).head == identity.public_key
 
 
-def test_historical_hop_expiry_is_ignored(new_identity):
+def test_a_hop_is_exactly_two_claims(new_identity):
+    """The chain is only keys: a hop carries the signer's key and the link to
+    the hop before it, and nothing else — no `subject`, and no time. Freshness
+    is the authenticating seat's job, not a hop's, so there is no expiry here
+    to enforce, honour, or work around."""
+    import jwt
+
     a, b = new_identity(), new_identity()
-    expired_hop0 = a.sign_chain_hop(exp_offset=-3600)
-    fresh_hop1 = b.sign_chain_hop(prev_token=expired_hop0, exp_offset=300)
+    hop0 = a.sign_chain_hop()
+    hop1 = b.sign_chain_hop(prev_token=hop0)
 
-    result = verify_actor_chain([expired_hop0, fresh_hop1])
-
-    assert result.head == a.public_key
-
-
-def test_last_hop_expiry_is_enforced(new_identity):
-    a, b = new_identity(), new_identity()
-    hop0 = a.sign_chain_hop(exp_offset=300)
-    expired_hop1 = b.sign_chain_hop(prev_token=hop0, exp_offset=-3600)
-
-    with pytest.raises(InvalidActorChain, match="expiry"):
-        verify_actor_chain([hop0, expired_hop1])
-
-
-def test_single_expired_hop_chain_rejected(new_identity):
-    identity = new_identity()
-    chain = [identity.sign_chain_hop(exp_offset=-60)]
-
-    with pytest.raises(InvalidActorChain, match="expiry"):
-        verify_actor_chain(chain)
+    for hop in (hop0, hop1):
+        claims = jwt.decode(hop, options={"verify_signature": False})
+        assert set(claims) == {"actorPublicKey", "prevHash"}
