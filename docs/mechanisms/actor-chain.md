@@ -86,21 +86,22 @@ and the branching case above is the same erasure aimed at someone else.
 ## The record keeps the head, not the path
 
 funduq stores the **head key** on what needs an authority (a thread's
-binding, a paused ask) and **does not store the chain**. Its part in
-caller identity is four verbs — verify, copy the head, relay, refuse —
-and keeping is not one of them.
+binding, a paused ask), and `runs.actor_chain` keeps the chain as
+presented. The head answers "who answers for this"; the chain answers
+"through whose hands", and nothing else on the record can.
 
-The consequence is worth stating plainly because it was never weighed:
-after the fact, funduq's own records answer "who answers for this" and
-cannot answer "through whose hands". A branch is therefore not merely
-unprovable at verification time; it is unnoticeable later, because
-nothing was kept to notice it against.
+Keeping it makes the *claim* auditable, not the erasure detectable: the
+stored chain is whatever was presented, so a branch is stored exactly as
+branched. What contradicts a branch is funduq's own dispatch hop, below.
+Before both existed, a branch was not merely unprovable at verification
+time — it was unnoticeable afterwards, because nothing was kept to notice
+it against.
 
-## The presenter check — **not implemented yet**
+## The presenter check
 
-> **Status: decided direction, no code.** Tracked here so the gap is
-> visible. `probe_a_provider_can_speak_as_the_caller.py` is its acceptance
-> test and is red until it lands.
+`presenter_key` on every door, defaulting to None.
+`probe_a_provider_can_speak_as_the_caller.py` was written red as its
+acceptance test and is green.
 
 funduq cannot authenticate a presenter: a door receives bytes, not a
 connection. The seat in front of it can — the gateway that authenticated
@@ -127,22 +128,21 @@ the presenter cannot back.
 deployment that exposes them with no authenticating seat in front is
 exposed, and that is a deployment invariant, not a setting.
 
-## funduq signs as an identity too — **not implemented yet**
-
-> **Status: decided direction, no code.** The hop-expiry semantics that
-> used to block it are gone (a hop now carries no time), so the old
-> blocker is cleared; what remains is implementation.
+## funduq signs as an identity too
 
 funduq is an identity like any other (`FunduqIdentity`, the key providers
-already pin), so it can bear the same responsibility on a chain that a
-provider does: append one hop, signed with its own key, each time it
-dispatches a run. What that buys:
+already pin), so it bears the same responsibility on a chain that a
+provider does: `FunduqIdentity.dispatch_hop` appends one hop, signed with
+its own key, each time it dispatches a run — an *extension* only, never a
+new chain, because a request that carried none gets none and funduq
+starting one would make itself the segment's head, which it is not. What
+it buys:
 
 - **"Routed through funduq" becomes verifiable.** A consumer that pins a
   funduq key can require its hops in the path; a chain that bypassed funduq,
   or was fabricated whole, doesn't have them.
-- **Erasure becomes detectable** — but only if funduq's hop names *the
-  agent it dispatched to*. An agent is addressed as `(provider_key, name)`
+- **Erasure becomes detectable**, because the hop names *the agent it
+  dispatched to* (`dispatchedTo`). An agent is addressed as `(provider_key, name)`
   (`AgentRef`), and the provider half of that pair is the same key that
   signs the next hop when that provider extends. So the hop and its
   successor are checkable against each other: funduq said it dispatched to

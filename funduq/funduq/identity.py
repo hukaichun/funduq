@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+from typing import TYPE_CHECKING
 
 import hashlib
 import time
@@ -9,6 +10,9 @@ from dataclasses import dataclass
 import jwt
 from cryptography.exceptions import InvalidSignature
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey, Ed25519PublicKey
+
+if TYPE_CHECKING:
+    from funduq.models import AgentRef
 
 
 SESSION_TOKEN_TTL_SECONDS = 3600
@@ -268,15 +272,44 @@ def verify_cancel(
     )
 
 
-def _sign_hop(private_key: Ed25519PrivateKey, prev_token: str | None) -> str:
-    return jwt.encode(
-        {
-            "actorPublicKey": private_key.public_key().public_bytes_raw().hex(),
-            "prevHash": _hop_hash(prev_token) if prev_token is not None else None,
-        },
-        private_key,
-        algorithm="EdDSA",
-    )
+def _sign_hop(
+    private_key: Ed25519PrivateKey,
+    prev_token: str | None,
+    dispatched_to: dict[str, str] | None = None,
+) -> str:
+    claims: dict[str, object] = {
+        "actorPublicKey": private_key.public_key().public_bytes_raw().hex(),
+        "prevHash": _hop_hash(prev_token) if prev_token is not None else None,
+    }
+    if dispatched_to is not None:
+        claims["dispatchedTo"] = dispatched_to
+    return jwt.encode(claims, private_key, algorithm="EdDSA")
+
+
+def _dispatch_hop(private_key: Ed25519PrivateKey, prev_chain: list[str], agent: "AgentRef") -> list[str]:
+    """Extends `prev_chain` with a hop recording that this key dispatched the
+    run to `agent`, as `{"providerKey", "name"}` under `dispatchedTo`.
+
+    This is the one thing that reaches a chain's **completeness**. Signatures
+    and links prove nobody was inserted, reordered or spliced in; never that
+    nobody was *removed*, and a party holding `caller → A → B` can rebuild it
+    as `caller → B` forging nothing. What breaks that is naming the
+    destination: an agent is addressed as `(provider_key, name)`, and the
+    provider half is exactly the key that signs the next hop when that
+    provider extends. So a hop and its successor check against each other —
+    this one says it went to P, therefore the next must be signed by P — and
+    a branch cannot satisfy both. Dropping the hop instead leaves a gap a
+    consumer requiring funduq's hops can refuse.
+
+    Only ever an *extension*: a request that carried no chain gets none, and
+    funduq starting one would make itself the segment's head, which it is
+    not. The presenter check is what stops this hop from being spendable —
+    presenting a chain whose tail funduq signed would mean authenticating as
+    funduq, and funduq is nobody's caller.
+    """
+    return [*prev_chain, _sign_hop(
+        private_key, prev_chain[-1], {"providerKey": agent.provider_key, "name": agent.name}
+    )]
 
 
 def new_actor_chain(private_key: Ed25519PrivateKey) -> list[str]:
@@ -419,6 +452,11 @@ class FunduqIdentity:
     def __init__(self, private_key: Ed25519PrivateKey) -> None:
         self._private_key = private_key
         self.public_key = private_key.public_key().public_bytes_raw().hex()
+
+    def dispatch_hop(self, prev_chain: list[str], agent: "AgentRef") -> list[str]:
+        """Extends `prev_chain` with this funduq's hop for a dispatch to `agent`.
+        See `_dispatch_hop` for what naming the destination buys."""
+        return _dispatch_hop(self._private_key, prev_chain, agent)
 
     @classmethod
     def from_hex(cls, private_key_hex: str) -> "FunduqIdentity":

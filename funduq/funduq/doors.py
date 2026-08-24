@@ -196,6 +196,16 @@ async def dispatch(
 
     kyok_ref = inbound.kyok_ref
 
+    # funduq bears the same responsibility on a chain that a provider does, so
+    # it signs one hop for the dispatch it is making, naming where the run
+    # went. Only ever an extension: a run that carried no chain gets none —
+    # starting one would make funduq the segment's head, which it is not.
+    relayed_chain = (
+        funduq.identity.dispatch_hop(inbound.actor_chain, inbound.agent)
+        if inbound.actor_chain
+        else inbound.actor_chain
+    )
+
     try:
         input_json = build_run_agent_input(
             thread_id,
@@ -210,7 +220,7 @@ async def dispatch(
                 inbound.agent,
                 kyok_ref is not None,
                 inbound.forwarded_props,
-                inbound.actor_chain,
+                relayed_chain,
                 addressed_run_id=inbound.addressed_run_id,
                 delegation=inbound.metadata.get("delegation"),
             ),

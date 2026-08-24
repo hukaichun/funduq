@@ -3,10 +3,12 @@ from __future__ import annotations
 import time
 
 import pytest
+import jwt
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
 from funduq.identity import (
     InvalidActorChain,
+    verify_actor_chain,
     extend_actor_chain,
     new_actor_chain,
 )
@@ -52,7 +54,7 @@ async def test_delegate_without_building_a_json_rpc_envelope(funduq, serve):
     assert task.id.startswith("run_")
 
 
-async def test_the_callers_chain_reaches_the_agent_verbatim_on_both_roads(funduq, serve):
+async def test_the_callers_own_hops_reach_the_agent_untouched_on_both_roads(funduq, serve):
     from ag_ui.core import RunAgentInput, UserMessage
 
     from funduq.protocols.agui import AGUIAdapter
@@ -78,10 +80,20 @@ async def test_the_callers_chain_reaches_the_agent_verbatim_on_both_roads(funduq
         pass
     await A2AAdapter(funduq).send_task(a2a_served.agents["a2a-callee"], _message("hi"), actor_chain=chain)
 
-    # No funduq-authored digest exists: both doors relay the caller's own
-    # chain, byte-identical, and the agent verifies it for itself.
-    assert agui_served.provider.seen_chain == chain
-    assert a2a_served.provider.seen_chain == chain
+    # No funduq-authored digest exists: the caller's own hops arrive
+    # byte-identical and the agent verifies them for itself. What funduq adds
+    # is a hop of its own, signed and appended — bearing the same
+    # responsibility on the chain that a provider does, and naming where it
+    # dispatched, which is what lets a consumer notice an erased hand later.
+    for served, name in ((agui_served, "agui-callee"), (a2a_served, "a2a-callee")):
+        seen = served.provider.seen_chain
+        assert seen[: len(chain)] == chain, "the caller's hops, unmodified"
+        assert len(seen) == len(chain) + 1, "plus funduq's own"
+        assert verify_actor_chain(seen).presenter == funduq.identity_public_key
+        assert jwt.decode(seen[-1], options={"verify_signature": False})["dispatchedTo"] == {
+            "providerKey": served.identity.public_key,
+            "name": name,
+        }
 
 
 async def test_identity_is_carried_through_an_in_process_hop(funduq, serve):
@@ -93,15 +105,19 @@ async def test_identity_is_carried_through_an_in_process_hop(funduq, serve):
 
     await A2AAdapter(funduq).send_task(callee, _message("hi"), actor_chain=chain)
 
-    assert provider.seen_chain == chain
     from funduq_provider_sdk import verify_chain
 
     result = verify_chain(provider.seen_chain)
     assert result.actor_public_keys == [
         agency.public_key().public_bytes_raw().hex(),
         relaying_agent.public_key().public_bytes_raw().hex(),
-    ]
-    assert result.head == agency.public_key().public_bytes_raw().hex()
+        funduq.identity_public_key,
+    ], "the agency, the agent that relayed on its behalf, and funduq's own dispatch"
+    assert result.head == agency.public_key().public_bytes_raw().hex(), (
+        "extending is provenance — funduq's hop no more takes the head than the "
+        "relaying agent's did"
+    )
+    assert result.presenter == funduq.identity_public_key
 
 
 async def test_a_tampered_chain_is_rejected_on_this_path_too(funduq, serve):
