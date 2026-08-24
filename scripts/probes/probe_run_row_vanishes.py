@@ -46,6 +46,7 @@ from sqlalchemy import delete
 
 from funduq import repo
 from funduq.config import CoreSettings
+from funduq.identity import FunduqIdentity
 from funduq.core import Funduq
 from funduq.identity import provider_connect_signing_payload
 from funduq.schema import agents, run_events, runs, thread_messages, threads
@@ -92,7 +93,11 @@ class _Taker:
 
 async def main() -> int:
     migrate()
-    funduq = Funduq(CoreSettings(database_url=URL, token_signing_secret="probe"))
+    funduq = Funduq(CoreSettings(
+        database_url=URL,
+        token_signing_secret="probe",
+        identity_private_key=FunduqIdentity.generate_hex(),
+    ))
     await funduq.start()
     key = Ed25519PrivateKey.generate()
     public_key = key.public_key().public_bytes_raw().hex()

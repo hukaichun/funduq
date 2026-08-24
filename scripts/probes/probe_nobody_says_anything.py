@@ -32,6 +32,7 @@ from sqlalchemy import delete
 
 from funduq.broker import RunBroker
 from funduq.config import CoreSettings
+from funduq.identity import FunduqIdentity
 from funduq.core import Funduq
 
 from funduq.models import AgentRef
@@ -108,7 +109,11 @@ class Findings:
 async def main() -> int:
     migrate()
     findings = Findings()
-    funduq = Funduq(CoreSettings(database_url=URL, token_signing_secret="probe"))
+    funduq = Funduq(CoreSettings(
+        database_url=URL,
+        token_signing_secret="probe",
+        identity_private_key=FunduqIdentity.generate_hex(),
+    ))
     await funduq.start()
 
     # --- 1. a name this key never registered (a typo, a wrong config)
@@ -134,7 +139,11 @@ async def main() -> int:
     # --- 2. a caller's run for an agent nobody is serving
     print("[2] a run is started for an agent no provider is attached to")
     quick = Funduq(
-        CoreSettings(database_url=URL, token_signing_secret="probe"),
+        CoreSettings(
+            database_url=URL,
+            token_signing_secret="probe",
+            identity_private_key=FunduqIdentity.generate_hex(),
+        ),
         broker=RunBroker(unserved_timeout_seconds=0.05),
     )
     await quick.start()

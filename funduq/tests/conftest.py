@@ -14,6 +14,7 @@ from sqlalchemy.engine import make_url
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from funduq.config import CoreSettings
+from funduq.identity import FunduqIdentity
 from funduq.core import Funduq
 from funduq.models import AgentRef
 from funduq.migrate import migrate as funduq_migrate
@@ -39,7 +40,11 @@ _TABLES_CHILD_FIRST = (
 
 @pytest.fixture(scope="session")
 def settings() -> CoreSettings:
-    return CoreSettings(database_url=DATABASE_URL, token_signing_secret=TEST_SIGNING_SECRET)
+    return CoreSettings(
+        database_url=DATABASE_URL,
+        token_signing_secret=TEST_SIGNING_SECRET,
+        identity_private_key=FunduqIdentity.generate_hex(),
+    )
 
 
 @pytest.fixture(scope="session")

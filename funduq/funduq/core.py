@@ -219,10 +219,8 @@ class _Roster(abc.ABC):
             raise InvalidRegistration(
                 f"invalid connect proof for {self.party} '{connection.public_key}'"
             )
-        answer = (
-            self._funduq.sign(funduq_connect_signing_payload(ticket, provider_nonce or ""))
-            if self._funduq.identity is not None
-            else None
+        answer = self._funduq.sign(
+            funduq_connect_signing_payload(ticket, provider_nonce or "")
         )
         confirm = getattr(connection, "confirm_connect", None)
         if callable(confirm):
@@ -391,11 +389,7 @@ class Funduq:
 
     def __init__(self, settings: CoreSettings | None = None, broker: RunBroker | None = None) -> None:
         self.settings = settings or CoreSettings()
-        self.identity = (
-            FunduqIdentity.from_hex(self.settings.identity_private_key)
-            if self.settings.identity_private_key
-            else None
-        )
+        self.identity = FunduqIdentity.from_hex(self.settings.identity_private_key)
         self.engine = _create_engine(self.settings)
         self.sessionmaker = async_sessionmaker(self.engine, expire_on_commit=False)
         self.broker = broker or RunBroker(
@@ -420,8 +414,8 @@ class Funduq:
 
 
     @property
-    def identity_public_key(self) -> str | None:
-        return self.identity.public_key if self.identity is not None else None
+    def identity_public_key(self) -> str:
+        return self.identity.public_key
 
     def issue_ticket(self, public_key: str) -> str:
         """Mint a single-use ticket admitting `public_key` to open a link, and
@@ -476,12 +470,7 @@ class Funduq:
         return True
 
     def sign(self, payload: bytes) -> str:
-        """Sign `payload` with this funduq's identity key, or raise if none is configured."""
-        if self.identity is None:
-            raise RuntimeError(
-                "this funduq has no identity: set identity_private_key "
-                "(FUNDUQ_IDENTITY_PRIVATE_KEY) to a hex-encoded Ed25519 seed"
-            )
+        """Sign `payload` with this funduq's identity key."""
         return self.identity.sign(payload)
 
 

@@ -262,6 +262,7 @@ async def tight(settings):
         CoreSettings(
             database_url=settings.database_url,
             token_signing_secret=settings.token_signing_secret,
+            identity_private_key=settings.identity_private_key,
             thread_queue_limit=1,
         )
     )

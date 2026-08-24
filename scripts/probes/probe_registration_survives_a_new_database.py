@@ -41,6 +41,7 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 from sqlalchemy import delete
 
 from funduq.config import CoreSettings
+from funduq.identity import FunduqIdentity
 from funduq.core import Funduq
 
 from funduq.schema import agents, providers, run_events, runs, thread_messages, threads
@@ -74,7 +75,11 @@ class Provider:
 
 async def main() -> int:
     migrate()
-    funduq = Funduq(CoreSettings(database_url=URL, token_signing_secret="probe"))
+    funduq = Funduq(CoreSettings(
+        database_url=URL,
+        token_signing_secret="probe",
+        identity_private_key=FunduqIdentity.generate_hex(),
+    ))
     await funduq.start()
     identity = ProviderIdentity(Ed25519PrivateKey.generate())
     key, public_key = identity._private_key, identity.public_key

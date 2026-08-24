@@ -40,6 +40,7 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
 from funduq import repo
 from funduq.config import CoreSettings
+from funduq.identity import FunduqIdentity
 from funduq.core import Funduq
 from funduq.identity import InvalidActorChain, new_actor_chain
 from funduq.models import AgentRef
@@ -119,7 +120,11 @@ class Findings:
 async def main() -> int:
     migrate()
     findings = Findings()
-    funduq = Funduq(CoreSettings(database_url=URL, token_signing_secret="probe"))
+    funduq = Funduq(CoreSettings(
+        database_url=URL,
+        token_signing_secret="probe",
+        identity_private_key=FunduqIdentity.generate_hex(),
+    ))
     await funduq.start()
 
     caller_key = Ed25519PrivateKey.generate()
