@@ -4,7 +4,11 @@
 [![License: Apache 2.0](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE)
 [![Protocol: AG-UI & A2A](https://img.shields.io/badge/Protocols-AG--UI%20%7C%20A2A-blue.svg)](docs/integration-contract.md)
 
-**A network-free core library, and the SDKs that speak to it, for making AI agents callable by standard [AG-UI](https://docs.ag-ui.com/) and [A2A](https://a2a-protocol.org/) clients — wherever the agents run.** An agent on a laptop, behind NAT, or in a private VPC connects *outbound* to a funduq gateway and becomes reachable; no public IP, no open ingress port, no tunnel service.
+**funduq is not an agent framework.** It does not write your agent, choose your model, or run your prompts. There is no chain, no graph, and no opinion about how an agent thinks.
+
+**It is the seat between a caller and an agent provider.** It holds the run, records who asked and through whose hands the work passed, and hands the work to whoever is serving — over standard [AG-UI](https://docs.ag-ui.com/) or [A2A](https://a2a-protocol.org/), while implementing neither transport itself. An agent on a laptop, behind NAT, or in a private VPC connects *outbound* and becomes reachable; no public IP, no open ingress port, no tunnel service.
+
+That seat is not a category anyone invented for this. A 2026 survey of agentic-web infrastructure ([arXiv 2606.20570](https://arxiv.org/pdf/2606.20570)) lists as still-unsolved exactly three things: an intermediary between callers and agent providers, responsibility tracked across delegation hops, and a run's lifecycle held by someone other than the two parties.
 
 ---
 
@@ -18,7 +22,7 @@ Concretely, a funduq gateway gives you:
 - **Two protocols on one HTTP surface.** AG-UI for human-facing event streaming (SSE) and A2A v1.0 for agent-to-agent JSON-RPC. Both wire vocabularies come from the official packages (`ag-ui-protocol`, `a2a-sdk`) — no field name, enum value, or method name is hand-written, so a spec rename fails at import instead of rotting silently.
 - **Keypair identity, no accounts.** Each provider generates a local Ed25519 keypair; registration verifies ownership of the key and issues short-lived session tokens. A caller can confirm it is talking to the same key as last time. There is no user database and no central authority vouching for what an agent *does*.
 - **Signed delegation chains.** When agents delegate to agents, each hop carries an EdDSA-signed JWT bound to the previous hop's hash — the delegation path is tamper-evident and auditable.
-- **Signing, not transport.** What core guarantees is signing and verification (registration, session tokens, actor chains, KYOK's two-part authorization), all bounded by a 60-second freshness window that only helps on an encrypted path — TLS termination, and why it is mandatory off localhost, is the gateway's job and funduq-server's documentation.
+- **Signing, not transport.** What core guarantees is signing and verification: opening a link answers a single-use challenge, and singular acts (answering a paused run, asking one to stop) carry a signature over the act itself within a 60-second window. An actor-chain hop carries **no time at all** — whether a presentation is live is not a question core can answer, since it sees bytes rather than a live caller, so that belongs to the authenticating seat in front of the door. See [what a deployment has to know](docs/operational-limits.md).
 - **Durable threads, runs, and human-in-the-loop.** Persistent conversation state with native `input-required` pause and resume. SQLite by default with zero configuration; one `FUNDUQ_DATABASE_URL` switch moves the same code path to Postgres for multi-writer deployments.
 - **Keep Your Own Key** *(experimental)*: a relay that lets callers fund LLM inference with their own API keys without handing the raw credential to agent hosts. See [Keep your own key](docs/mechanisms/kyok.md).
 - **A static directory UI** (`funduq-directory`, in funduq-server) to browse registered agents and chat with them live.

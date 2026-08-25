@@ -1,6 +1,6 @@
 [project]
 name = "funduq"
-version = "0.1.0"
+version = "0.0.1"
 description = "funduq core — the network-free library: agents, threads, runs, and the protocol adapters"
 requires-python = ">=3.12"
 license = "Apache-2.0"
@@ -25,7 +25,7 @@ classifiers = [
 # nouns — see tests/test_core_is_network_free.py.
 dependencies = [
     # The bytes both sides sign, written once — see funduq-contract.
-    "funduq-contract>=0.1.0,<0.2",
+    "funduq-contract>=0.0.1,<0.1",
     "sqlalchemy[asyncio]>=2.0",
     # SQLite is funduq's zero-config default backend (see funduq/config.py's
     # database_url), so its async driver is a core dependency — a plain
@@ -90,7 +90,7 @@ dev = [
     # of provider live in one distribution now, so the `llm` extra is what
     # brings the completion half — and asking for it here is also how the
     # suite proves the extra actually carries what it claims.
-    "funduq-provider-sdk[llm]>=0.1.0,<0.2",
+    "funduq-provider-sdk[llm]>=0.0.1,<0.1",
     "pytest>=8.3",
     "pytest-asyncio>=0.24",
     "psycopg[binary,pool]>=3.2",
