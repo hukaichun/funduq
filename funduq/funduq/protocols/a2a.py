@@ -394,6 +394,9 @@ class A2AAdapter:
             # target's state.
             task_id = params.get("taskId")
             addressed = await repo.get_run(session, task_id) if task_id else None
+            # None all the way through for an unbound run: there is no
+            # authority set to check against, so there is none to record.
+            answered_by = None
             if (
                 addressed is not None
                 and addressed.thread_id == thread_id
@@ -402,7 +405,7 @@ class A2AAdapter:
             ):
                 # A chained ask names its authorities; the resolution must be
                 # signed by one of them. Raises InvalidResolution otherwise.
-                verify_resolution(
+                answered_by = verify_resolution(
                     metadata.get("resolution") or {},
                     task_id,
                     {addressed.head_key, agent.provider_key},
@@ -418,6 +421,7 @@ class A2AAdapter:
                     run_input,
                     metadata=metadata,
                     expected_status="input-required",
+                    answered_by=answered_by,
                 )
             )
             if reopened:

@@ -268,8 +268,9 @@ class Opened:
     landed_on_ask: bool
 
 
-def authorize_cancel(run: Any, metadata: dict[str, Any]) -> None:
-    """Refuses a cancel that carries no authority over a run whose thread is bound.
+def authorize_cancel(run: Any, metadata: dict[str, Any]) -> str | None:
+    """Refuses a cancel that carries no authority over a run whose thread is bound,
+    and returns the authority that asked (`None` for an unbound run).
 
     Stopping someone else's run is a rights question, and it was left
     outside when writing a bound thread became a membership act: a complete
@@ -289,11 +290,17 @@ def authorize_cancel(run: Any, metadata: dict[str, Any]) -> None:
     authority at birth has none to check against, and inventing one here
     would make funduq the authority instead of the caller.
 
+    The returned key is the *effective* authority, not the key that signed:
+    a session key presented with a delegation certificate stands for the
+    durable key behind it. That distinction is the whole reason this is
+    returned rather than left to be read back out of the stored proof —
+    the proof records the glove, and the record needs the hand.
+
     Raises `InvalidCancel`; a no-op for an unbound run.
     """
     if run.head_key is None:
-        return
-    verify_cancel(
+        return None
+    return verify_cancel(
         metadata.get("cancel") or {},
         run.run_id,
         {run.head_key, run.provider_key},
@@ -339,8 +346,9 @@ async def open_run(
     checked before the reopen, so a failed signature cannot consume the win.
     """
     if ask is not None:
+        answered_by = None
         if ask.head_key is not None:
-            verify_resolution(
+            answered_by = verify_resolution(
                 metadata.get("resolution") or {},
                 ask.run_id,
                 {ask.head_key, agent.provider_key},
@@ -352,6 +360,7 @@ async def open_run(
             run_input,
             metadata=metadata,
             expected_status="input-required",
+            answered_by=answered_by,
         ):
             return Opened(
                 run_id=ask.run_id,

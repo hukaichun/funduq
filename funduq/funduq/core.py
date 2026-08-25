@@ -1106,12 +1106,21 @@ class Funduq:
         authority first, then whether the act is possible at all. Answering
         "not cancellable" to a caller who holds no authority over the run
         would tell them the run's state for free.
+
+        Who asked is written down before the request goes anywhere, and it
+        is written even for a run that turns out not to be cancellable: the
+        asking happened either way, and a record that kept only the asks
+        that worked would be a record of outcomes wearing the shape of a
+        record of acts. What is never written here is the run's *ending* —
+        funduq relays a stop, it does not perform one.
         """
         async with self.session() as session:
             stored = await repo.get_run(session, run_id)
         if stored is None:
             return False
-        authorize_cancel(stored, metadata or {})
+        requested_by = authorize_cancel(stored, metadata or {})
+        async with self.session() as session:
+            await repo.record_cancel_request(session, run_id, requested_by=requested_by)
         if stored.status == "input-required":
             raise RunNotCancellable(
                 f"run '{run_id}' is paused waiting for a result; no provider is "
