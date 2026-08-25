@@ -80,7 +80,7 @@ async def test_a_resume_does_not_replace_the_chain_the_run_was_opened_under(
     because the signature it had to produce is kept in the run's metadata. A
     chain says who stood on the path; that signature is bound to this act by
     this key."""
-    from funduq.identity import resolve_signing_payload
+    from funduq.identity import resolve_payload
 
     from .test_facade import PausingProvider, _register, _until
 
@@ -110,7 +110,7 @@ async def test_a_resume_does_not_replace_the_chain_the_run_was_opened_under(
             "resolution": {
                 "publicKey": caller.public_key,
                 "timestamp": timestamp,
-                "signature": caller.sign(resolve_signing_payload(handle.run_id, timestamp)),
+                "signature": caller.sign(resolve_payload(handle.run_id, timestamp)),
             },
         },
         presenter_key=answerer.public_key,

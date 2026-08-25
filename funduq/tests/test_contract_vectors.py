@@ -4,30 +4,30 @@ import json
 from pathlib import Path
 
 from funduq.identity import (
-    delegation_signing_payload,
-    cancel_signing_payload,
-    resolve_signing_payload,
-    provider_connect_signing_payload,
-    funduq_connect_signing_payload,
-    kyok_call_signing_payload,
+    delegation_payload,
+    cancel_payload,
+    resolve_payload,
+    provider_connect_payload,
+    funduq_connect_payload,
+    kyok_call_payload,
     verify_signature,
 )
 
 VECTORS = json.loads((Path(__file__).parent.parent.parent / "docs" / "contract-vectors.json").read_text())
 
 BUILDERS = {
-    "provider-connect": lambda i: provider_connect_signing_payload(
+    "provider-connect": lambda i: provider_connect_payload(
         i["funduq_public_key"], i["funduq_nonce"], i["provider_nonce"]
     ),
-    "funduq-connect": lambda i: funduq_connect_signing_payload(i["funduq_nonce"], i["provider_nonce"]),
-    "kyok-call": lambda i: kyok_call_signing_payload(
+    "funduq-connect": lambda i: funduq_connect_payload(i["funduq_nonce"], i["provider_nonce"]),
+    "kyok-call": lambda i: kyok_call_payload(
         i["bearer"], i["timestamp"], i["body_sha256_hex"]
     ),
-    "delegation": lambda i: delegation_signing_payload(
+    "delegation": lambda i: delegation_payload(
         i["delegate_public_key"], i["expires_at"]
     ),
-    "resolution": lambda i: resolve_signing_payload(i["run_id"], i["timestamp"]),
-    "cancel": lambda i: cancel_signing_payload(i["run_id"], i["timestamp"]),
+    "resolution": lambda i: resolve_payload(i["run_id"], i["timestamp"]),
+    "cancel": lambda i: cancel_payload(i["run_id"], i["timestamp"]),
 }
 
 
@@ -106,11 +106,11 @@ def test_the_published_wire_frames_are_what_the_ports_translate_to():
 
 
 def test_the_published_chain_verifies_and_names_exactly_the_published_actors():
-    from funduq.identity import verify_actor_chain
+    from funduq.identity import verify_chain
 
     (vector,) = [c for c in VECTORS["chains"] if c["kind"] == "actor-chain"]
 
-    result = verify_actor_chain(vector["chain"])
+    result = verify_chain(vector["chain"])
 
     assert result.actor_public_keys == vector["actor_public_keys"]
     assert result.head == vector["actor_public_keys"][0]
@@ -126,7 +126,7 @@ def test_both_sides_props_twins_validate_the_same_frame():
     from funduq_provider_sdk import KyokForwardedProps as SdkKyok
     from funduq_provider_sdk import verify_chain
 
-    from funduq.identity import verify_actor_chain
+    from funduq.identity import verify_chain
     from funduq.kyok import KyokForwardedProps
 
     (frame,) = [w["frame"] for w in VECTORS["wire"] if w["kind"] == "delivered-run"]
@@ -137,6 +137,6 @@ def test_both_sides_props_twins_validate_the_same_frame():
     assert ours == theirs == props["kyok"]
     # The chain is relayed verbatim, not modeled: both verifiers must agree on it.
     assert (
-        verify_actor_chain(props["actorChain"]).actor_public_keys
+        verify_chain(props["actorChain"]).actor_public_keys
         == verify_chain(props["actorChain"]).actor_public_keys
     )

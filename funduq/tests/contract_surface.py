@@ -105,16 +105,33 @@ def _typing_surface() -> list[str]:
     return sorted(f"{p.name}:{'typed' if (p / 'py.typed').exists() else 'untyped'}" for p in packages)
 
 
+def _without_prose(value: Any) -> Any:
+    """Drops `note` and `comment` keys, at any depth.
+
+    The vectors file explains itself as it goes, and those explanations are
+    not contract: rewording one must not force a revision. This exists
+    because the first version hashed them and a rename in the prose turned
+    the suite red — the mechanism catching its own author is the argument
+    for having it.
+    """
+    if isinstance(value, dict):
+        return {k: _without_prose(v) for k, v in value.items() if k not in {"note", "comment"}}
+    if isinstance(value, list):
+        return [_without_prose(item) for item in value]
+    return value
+
+
 def _vectors_surface() -> Any:
-    """The vectors file itself, minus its own `contract` block.
+    """The vectors file, minus its own `contract` block and minus prose.
 
     The block records the revision and the fingerprint, so hashing it would
-    make the fingerprint depend on itself. Everything else — every signing
-    payload, every wire frame, the chain — is contract by construction: this
-    file exists so an implementation in another language can replay it.
+    make the fingerprint depend on itself. What is left — every signing
+    payload, every signature, every wire frame, the chain — is contract by
+    construction: this file exists so an implementation in another language
+    can replay it.
     """
     document = json.loads(CONTRACT_VECTORS.read_text())
-    return {key: value for key, value in document.items() if key != "contract"}
+    return _without_prose({key: value for key, value in document.items() if key != "contract"})
 
 
 def surface() -> dict[str, Any]:

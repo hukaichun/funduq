@@ -48,7 +48,7 @@ from funduq import repo
 from funduq.config import CoreSettings
 from funduq.identity import FunduqIdentity
 from funduq.core import Funduq
-from funduq.identity import provider_connect_signing_payload
+from funduq.identity import provider_connect_payload
 from funduq.schema import agents, run_events, runs, thread_messages, threads
 
 DB = Path(tempfile.gettempdir()) / "funduq_probe_vanish.db"
@@ -87,7 +87,7 @@ class _Taker:
         self, funduq_public_key: str, funduq_nonce: str, provider_nonce: str
     ) -> str:
         return self._key.sign(
-            provider_connect_signing_payload(funduq_public_key, funduq_nonce, provider_nonce)
+            provider_connect_payload(funduq_public_key, funduq_nonce, provider_nonce)
         ).hex()
 
 

@@ -6,10 +6,10 @@ import pytest
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
 from funduq.identity import (
-    InvalidActorChain,
-    extend_actor_chain,
-    new_actor_chain,
-    verify_actor_chain,
+    InvalidChain,
+    extend_chain,
+    new_chain,
+    verify_chain,
 )
 
 
@@ -24,11 +24,11 @@ def _hex(key: Ed25519PrivateKey) -> str:
 def test_a_chain_survives_several_hops():
     agency, a, b = _key(), _key(), _key()
 
-    chain = new_actor_chain(agency)
-    chain = extend_actor_chain(a, chain)
-    chain = extend_actor_chain(b, chain)
+    chain = new_chain(agency)
+    chain = extend_chain(a, chain)
+    chain = extend_chain(b, chain)
 
-    result = verify_actor_chain(chain)
+    result = verify_chain(chain)
     assert result.actor_public_keys == [_hex(agency), _hex(a), _hex(b)]
     assert result.head == _hex(agency), "the originating signer is the segment's head"
 
@@ -40,51 +40,42 @@ def test_a_forged_hop_is_rejected():
         forger,
         algorithm="EdDSA",
     )
-    with pytest.raises(InvalidActorChain):
-        verify_actor_chain([forged])
+    with pytest.raises(InvalidChain):
+        verify_chain([forged])
 
 
 def test_a_spliced_chain_is_rejected():
     agency, a = _key(), _key()
-    real = new_actor_chain(agency)
-    elsewhere = new_actor_chain(_key())
-    grafted = extend_actor_chain(a, elsewhere)[-1]
+    real = new_chain(agency)
+    elsewhere = new_chain(_key())
+    grafted = extend_chain(a, elsewhere)[-1]
 
-    with pytest.raises(InvalidActorChain):
-        verify_actor_chain([*real, grafted])
+    with pytest.raises(InvalidChain):
+        verify_chain([*real, grafted])
 
 
 
 
 def test_extending_nothing_is_an_error():
     with pytest.raises(ValueError):
-        extend_actor_chain(_key(), [])
+        extend_chain(_key(), [])
 
 
-def test_the_sdk_verifier_agrees_with_core_in_both_directions(new_identity):
-    from funduq_provider_sdk import InvalidChain, verify_chain
+def test_a_chain_built_across_the_custody_boundary_verifies(new_identity):
+    """A hop signed through `ProviderIdentity` and one signed with a bare key
+    link and verify together.
 
-    core_key, sdk_identity = _key(), new_identity()
-
-    core_chain = extend_actor_chain(core_key, [sdk_identity.sign_chain_hop()])
-    ours, theirs = verify_actor_chain(core_chain), verify_chain(core_chain)
-    assert ours.actor_public_keys == theirs.actor_public_keys
-
-    foreign = new_actor_chain(_key())
-    grafted = extend_actor_chain(core_key, foreign)[-1]
-    tampered = [*core_chain, grafted]
-    with pytest.raises(InvalidActorChain):
-        verify_actor_chain(tampered)
-    with pytest.raises(InvalidChain):
-        verify_chain(tampered)
-
-
-def test_core_and_sdk_produce_interoperable_chains(new_identity):
+    This used to be two tests, one of which compared core's verifier against
+    the SDK's. There is one verifier now, so that comparison became
+    `f(x) == f(x)` and was deleted rather than left to look like coverage.
+    What survives is the part that was never about the twins: the two sides
+    hold their keys differently, and a chain still links across that.
+    """
     remote = new_identity()
     sdk_chain = [remote.sign_chain_hop()]
 
     in_process = _key()
-    chain = extend_actor_chain(in_process, sdk_chain)
+    chain = extend_chain(in_process, sdk_chain)
 
-    result = verify_actor_chain(chain)
+    result = verify_chain(chain)
     assert result.actor_public_keys == [remote.public_key, _hex(in_process)]

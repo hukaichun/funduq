@@ -49,8 +49,8 @@ from funduq.identity import (
     FunduqIdentity,
     SIGNATURE_FRESHNESS_WINDOW_SECONDS,
     is_timestamp_fresh,
-    provider_connect_signing_payload,
-    funduq_connect_signing_payload,
+    provider_connect_payload,
+    funduq_connect_payload,
     verify_signature,
 )
 from funduq.kyok import ConnectedLLMProvider, KyokRelay
@@ -176,7 +176,7 @@ class _Roster(abc.ABC):
     ) -> str | None:
         """Authenticate and open a link. **No names**: registering is what puts one live.
 
-        `proof` is a signature over `provider_connect_signing_payload(this
+        `proof` is a signature over `provider_connect_payload(this
         funduq's public key, ticket, provider_nonce)`, where `ticket` came
         from `Funduq.issue_ticket` **and names this key**. funduq chose it and
         destroys it here, so a recording is worthless; the payload names this
@@ -189,7 +189,7 @@ class _Roster(abc.ABC):
         any language implement it once against the published vectors.
 
         funduq answers in kind: the return value is its own signature over
-        `funduq_connect_signing_payload(ticket, provider_nonce)` — the proof a
+        `funduq_connect_payload(ticket, provider_nonce)` — the proof a
         provider checks against the funduq key it pinned — or None if this
         funduq has no identity configured and so cannot prove itself. A
         transport relays the answer to the far side; a connection exposing
@@ -212,7 +212,7 @@ class _Roster(abc.ABC):
                 f"connect proof for {self.party} '{connection.public_key}' does not answer "
                 "a live ticket funduq issued to that key"
             )
-        payload = provider_connect_signing_payload(
+        payload = provider_connect_payload(
             self._funduq.identity_public_key or "", ticket, provider_nonce or ""
         )
         if not verify_signature(connection.public_key, proof, payload):
@@ -220,7 +220,7 @@ class _Roster(abc.ABC):
                 f"invalid connect proof for {self.party} '{connection.public_key}'"
             )
         answer = self._funduq.sign(
-            funduq_connect_signing_payload(ticket, provider_nonce or "")
+            funduq_connect_payload(ticket, provider_nonce or "")
         )
         confirm = getattr(connection, "confirm_connect", None)
         if callable(confirm):

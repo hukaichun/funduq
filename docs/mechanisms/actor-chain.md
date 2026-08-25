@@ -12,7 +12,7 @@ hop that hash-links to the tail. The existing hops are never modified.
 
 ## Verification
 
-Both sides verify independently — `funduq.identity.verify_actor_chain` in
+Both sides verify independently — `funduq.identity.verify_chain` in
 core, `funduq_provider_sdk.verify_chain` in the SDK — under the same rules:
 every hop's signature under its own embedded key, and the hash linkage.
 Rejected: a forged hop, a spliced or reordered chain. A chain in

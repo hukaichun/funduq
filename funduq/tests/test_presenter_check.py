@@ -4,7 +4,7 @@ import pytest
 
 from funduq import repo
 from funduq.doors import verify_caller
-from funduq.identity import InvalidActorChain, extend_actor_chain, new_actor_chain
+from funduq.identity import InvalidChain, extend_chain, new_chain
 from funduq.models import AgentRef
 from funduq_provider_sdk import InProcessLink, ProviderRuntime
 
@@ -37,7 +37,7 @@ async def test_a_chain_presented_by_anyone_else_is_refused(session, new_identity
     caller, provider = new_identity(), new_identity()
     chain = [caller.sign_chain_hop()]
 
-    with pytest.raises(InvalidActorChain, match="last hop"):
+    with pytest.raises(InvalidChain, match="last hop"):
         await verify_caller(session, {"actorChain": chain}, presenter_key=provider.public_key)
 
 
@@ -46,9 +46,9 @@ async def test_the_head_is_not_what_the_presenter_is_compared_against(session, n
     check exists to stop, and both keys are on the same chain, so nothing but a
     test distinguishes the two implementations."""
     caller, provider = new_identity(), new_identity()
-    chain = extend_actor_chain(provider._private_key, new_actor_chain(caller._private_key))
+    chain = extend_chain(provider._private_key, new_chain(caller._private_key))
 
-    with pytest.raises(InvalidActorChain):
+    with pytest.raises(InvalidChain):
         await verify_caller(session, {"actorChain": chain}, presenter_key=caller.public_key)
 
     _metadata, head, _relayed = await verify_caller(
@@ -94,7 +94,7 @@ async def test_a_tampered_chain_is_refused_before_the_presenter_is_consulted(
     elsewhere = [forger.sign_chain_hop()]
     spliced = [*real, forger.sign_chain_hop(prev_token=elsewhere[-1])]
 
-    with pytest.raises(InvalidActorChain, match="prevHash"):
+    with pytest.raises(InvalidChain, match="prevHash"):
         await verify_caller(session, {"actorChain": spliced}, presenter_key=forger.public_key)
 
 
@@ -108,7 +108,7 @@ async def test_the_door_refuses_a_replayed_chain(funduq, new_identity):
         await publish_agents(funduq, InProcessLink(funduq, runtime), ["assistant"])
         agent = AgentRef(provider_key=provider_identity.public_key, name="assistant")
 
-        with pytest.raises(InvalidActorChain):
+        with pytest.raises(InvalidChain):
             await funduq.start_run(
                 agent,
                 {"messages": [{"id": "m1", "role": "user", "content": "transfer the budget"}]},

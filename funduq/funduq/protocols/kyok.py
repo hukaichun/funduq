@@ -16,7 +16,7 @@ from funduq import repo
 from funduq.errors import KyokRejected
 from funduq.identity import (
     is_timestamp_fresh,
-    kyok_call_signing_payload,
+    kyok_call_payload,
     verify_signature,
 )
 from funduq.kyok import CompletionRequest, KyokToken, verify_kyok_token
@@ -196,7 +196,7 @@ class KyokAdapter:
         if registered is None:
             raise KyokRejected(f"agent '{token.agent}' is not registered", status=403)
 
-        payload = kyok_call_signing_payload(
+        payload = kyok_call_payload(
             bearer, int(timestamp), hashlib.sha256(body).hexdigest()
         )
         if not verify_signature(token.agent.provider_key, signature, payload):

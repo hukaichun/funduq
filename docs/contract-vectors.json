@@ -1,8 +1,8 @@
 {
   "contract": {
     "revision": 2,
-    "fingerprint": "sha256:46729a418c3d0972fb1a49aa35cb87f827efd9739d62c500b010d4085a8473a3",
-    "note": "The revision an external implementation is written against, and a hash of the surface it depends on — the vectors below, plus what the contract_surface helper reads live from the code (CoreSettings fields and whether each is required, the provider link's verbs, the A2A protocol version and transport bindings, and whether each package ships its PEP 561 marker). A test recomputes the hash and fails when it differs from this one, so a contract change cannot land without bumping `revision` and adding a line to docs/contract-changelog.md. The fingerprint is not itself a compatibility statement: read the changelog to learn what moved."
+    "fingerprint": "sha256:099d2b43e2601641c83364c01c3b86dcc1cae0935897474bee7813ade7fa61cd",
+    "note": "The revision an external implementation is written against, and a hash of the surface it depends on — the vectors below, plus what the contract_surface helper reads live from the code (CoreSettings fields and whether each is required, the provider link's verbs, the A2A protocol version and transport bindings, and whether each package ships its PEP 561 marker). Prose (`note` and `comment` at any depth) is excluded, so rewording an explanation is not a contract change. A test recomputes the hash and fails when it differs from this one, so a contract change cannot land without bumping `revision` and adding a line to docs/contract-changelog.md. The fingerprint is not itself a compatibility statement: read the changelog to learn what moved."
   },
   "comment": "Authoritative byte-level vectors for the payloads funduq verifies signatures over. funduq's own test suites consume this file, so it cannot drift from the implementation; an external implementation in any language replays it: build each payload from `inputs`, assert the exact `payload_utf8` bytes, and check `signature_hex` verifies (or, since Ed25519 is deterministic, reproduce it) under the published test key. The test key is for vectors only — never accept it in a real deployment.",
   "test_key": {
@@ -140,7 +140,7 @@
   "chains": [
     {
       "kind": "actor-chain",
-      "note": "a two-hop actor chain both verifiers (funduq.identity.verify_actor_chain and funduq_provider_sdk.verify_chain) must accept, yielding exactly these actor keys in order — the first is the chain's head, the responsibility segment's authority. A chain carries keys and nothing else: a hop is {actorPublicKey, prevHash} with no iat/exp — freshness is the authenticating seat's job, not the hop's, so a hop carries no time and never expires. EdDSA is deterministic, so an implementation with the keys can reproduce the hops byte-for-byte. Hop keys: a5*32 (the test key) and b6*32.",
+      "note": "a two-hop actor chain both verifiers (funduq.identity.verify_chain and funduq_provider_sdk.verify_chain) must accept, yielding exactly these actor keys in order — the first is the chain's head, the responsibility segment's authority. A chain carries keys and nothing else: a hop is {actorPublicKey, prevHash} with no iat/exp — freshness is the authenticating seat's job, not the hop's, so a hop carries no time and never expires. EdDSA is deterministic, so an implementation with the keys can reproduce the hops byte-for-byte. Hop keys: a5*32 (the test key) and b6*32.",
       "inputs": {
         "hop_private_keys_hex": [
           "a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5",

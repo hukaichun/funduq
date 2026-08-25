@@ -56,8 +56,9 @@ def test_a_hop_is_exactly_two_claims():
     """The chain is only keys: a hop carries the signer's key and the link to
     the hop before it, and nothing else — no `subject`, and no time. Freshness
     is the authenticating seat's job, not a hop's, so there is no expiry here
-    to enforce, honour, or work around. The independent twin of funduq's own
-    format test."""
+    to enforce, honour, or work around. Asserted from the SDK's side because
+    this is the shape a provider author's own signing has to produce; the
+    format itself lives in funduq-contract."""
     import jwt
 
     a, b = ProviderIdentity.generate(), ProviderIdentity.generate()

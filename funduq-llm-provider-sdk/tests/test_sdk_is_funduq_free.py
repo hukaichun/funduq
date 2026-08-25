@@ -32,7 +32,8 @@ def test_sdk_module_does_not_import_funduq(module: Path) -> None:
         f"{module.name} imports {sorted(offenders)}. The SDK models an LLM provider "
         "that runs in a different process with no access to funduq's code; it may share "
         "only the wire contract, which each side computes independently so funduq's "
-        "suite stays a second opinion on the bytes. Re-state the contract here "
+        "boundary is core's weight, not the format — the bytes are funduq-contract's "
+        "and may be imported. Re-state nothing; depend on that instead of "
         "instead of importing it."
     )
 

@@ -24,19 +24,19 @@ if TYPE_CHECKING:
 from funduq_contract import (
     FINGERPRINT_HEX_LENGTH,
     ChainResult,
-    InvalidChain as InvalidActorChain,
-    cancel_payload as cancel_signing_payload,
-    delegation_payload as delegation_signing_payload,
+    InvalidChain as InvalidChain,
+    cancel_payload as cancel_payload,
+    delegation_payload as delegation_payload,
     dispatch_hop as _dispatch_hop,
-    extend_chain as extend_actor_chain,
-    funduq_connect_payload as funduq_connect_signing_payload,
+    extend_chain as extend_chain,
+    funduq_connect_payload as funduq_connect_payload,
     is_fingerprint,
-    kyok_call_payload as kyok_call_signing_payload,
-    new_chain as new_actor_chain,
-    provider_connect_payload as provider_connect_signing_payload,
+    kyok_call_payload as kyok_call_payload,
+    new_chain as new_chain,
+    provider_connect_payload as provider_connect_payload,
     provider_fingerprint,
-    resolve_payload as resolve_signing_payload,
-    verify_chain as verify_actor_chain,
+    resolve_payload as resolve_payload,
+    verify_chain as verify_chain,
     verify_signature,
 )
 
@@ -59,7 +59,7 @@ def verify_delegation(certificate: dict) -> str:
 
     `certificate` is `{"authorityPublicKey", "delegatePublicKey",
     "expiresAt", "signature"}`: the authority signed
-    `delegation_signing_payload(delegatePublicKey, expiresAt)`. Raises
+    `delegation_payload(delegatePublicKey, expiresAt)`. Raises
     `InvalidDelegation` if the signature fails or the certificate has
     expired. The certificate alone moves nothing — only the named delegate's
     own signatures gain the authority — so it is safe to store and to relay.
@@ -74,7 +74,7 @@ def verify_delegation(certificate: dict) -> str:
     if time.time() > expires_at:
         raise InvalidDelegation("delegation certificate has expired")
     if not verify_signature(
-        authority, signature, delegation_signing_payload(delegate, expires_at)
+        authority, signature, delegation_payload(delegate, expires_at)
     ):
         raise InvalidDelegation("delegation certificate signature does not verify")
     return authority
@@ -142,12 +142,12 @@ def verify_resolution(
 ) -> str:
     """Verifies a resolution proof for a paused run and returns the effective authority.
 
-    The signer signed `resolve_signing_payload(run_id, timestamp)`, and
+    The signer signed `resolve_payload(run_id, timestamp)`, and
     `allowed_keys` is the ask's authority set: the run's chain head and the
     agent's own provider key. Raises `InvalidResolution` on any failure.
     """
     return _verify_signed_act(
-        resolution, run_id, resolve_signing_payload,
+        resolution, run_id, resolve_payload,
         allowed_keys, delegation, InvalidResolution, "resolve",
     )
 
@@ -160,7 +160,7 @@ def verify_cancel(
 ) -> str:
     """Verifies a cancel proof for a run and returns the effective authority.
 
-    The signer signed `cancel_signing_payload(run_id, timestamp)`, and
+    The signer signed `cancel_payload(run_id, timestamp)`, and
     `allowed_keys` is the run's authority set — the same one an ask on it
     would have: its chain head and the agent's own provider key. Raises
     `InvalidCancel` on any failure.
@@ -173,7 +173,7 @@ def verify_cancel(
     segment answers to.
     """
     return _verify_signed_act(
-        cancel, run_id, cancel_signing_payload,
+        cancel, run_id, cancel_payload,
         allowed_keys, delegation, InvalidCancel, "cancel",
     )
 

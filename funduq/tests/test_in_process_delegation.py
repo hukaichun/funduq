@@ -7,10 +7,10 @@ import jwt
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
 from funduq.identity import (
-    InvalidActorChain,
-    verify_actor_chain,
-    extend_actor_chain,
-    new_actor_chain,
+    InvalidChain,
+    verify_chain,
+    extend_chain,
+    new_chain,
 )
 from funduq.protocols.a2a import A2AAdapter
 
@@ -61,7 +61,7 @@ async def test_the_callers_own_hops_reach_the_agent_untouched_on_both_roads(fund
 
     agui_served = await serve(EchoAgent(), "agui-callee")
     a2a_served = await serve(EchoAgent(), "a2a-callee")
-    chain = new_actor_chain(Ed25519PrivateKey.generate())
+    chain = new_chain(Ed25519PrivateKey.generate())
 
     stream = await AGUIAdapter(funduq).run(
         agui_served.agents["agui-callee"],
@@ -89,7 +89,7 @@ async def test_the_callers_own_hops_reach_the_agent_untouched_on_both_roads(fund
         seen = served.provider.seen_chain
         assert seen[: len(chain)] == chain, "the caller's hops, unmodified"
         assert len(seen) == len(chain) + 1, "plus funduq's own"
-        assert verify_actor_chain(seen).presenter == funduq.identity_public_key
+        assert verify_chain(seen).presenter == funduq.identity_public_key
         assert jwt.decode(seen[-1], options={"verify_signature": False})["dispatchedTo"] == {
             "providerKey": served.identity.public_key,
             "name": name,
@@ -101,7 +101,7 @@ async def test_identity_is_carried_through_an_in_process_hop(funduq, serve):
     callee, provider = served.agents["callee"], served.provider
 
     agency, relaying_agent = Ed25519PrivateKey.generate(), Ed25519PrivateKey.generate()
-    chain = extend_actor_chain(relaying_agent, new_actor_chain(agency))
+    chain = extend_chain(relaying_agent, new_chain(agency))
 
     await A2AAdapter(funduq).send_task(callee, _message("hi"), actor_chain=chain)
 
@@ -123,10 +123,10 @@ async def test_identity_is_carried_through_an_in_process_hop(funduq, serve):
 async def test_a_tampered_chain_is_rejected_on_this_path_too(funduq, serve):
     callee = (await serve(EchoAgent(), "callee")).agents["callee"]
 
-    chain = new_actor_chain(Ed25519PrivateKey.generate())
+    chain = new_chain(Ed25519PrivateKey.generate())
     tampered = [chain[0][:-4] + "AAAA"]
 
-    with pytest.raises(InvalidActorChain):
+    with pytest.raises(InvalidChain):
         await A2AAdapter(funduq).send_task(callee, _message("hi"), actor_chain=tampered)
 
 

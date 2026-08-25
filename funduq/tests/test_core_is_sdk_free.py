@@ -29,10 +29,11 @@ def _imported_roots(path: Path) -> set[str]:
 def test_core_module_imports_no_sdk(module: Path) -> None:
     offenders = _imported_roots(module) & FORBIDDEN_ROOTS
     assert not offenders, (
-        f"{module.name} imports {sorted(offenders)}. The SDKs model parties that run "
-        "in other processes; funduq shares only the wire contract with them, computed "
-        "independently on each side so this suite stays a second opinion on the "
-        "bytes. Re-state the contract in funduq instead of importing an SDK's copy."
+        f"{module.name} imports {sorted(offenders)}. The SDKs model parties that run in "
+        "other processes, and core must not reach into one: an SDK is free to change "
+        "shape for its own users, and core would then be following it. The bytes both "
+        "sides agree on are funduq-contract's, which core may import — that is the "
+        "difference this guards, and it is not about who wrote the format."
     )
 
 
