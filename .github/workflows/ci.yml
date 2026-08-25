@@ -71,6 +71,22 @@ jobs:
         env:
           FUNDUQ_TOKEN_SIGNING_SECRET: ci-test-secret
 
+  funduq-contract:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v3
+        with:
+          python-version: "3.12"
+      - run: uv sync --group dev
+        working-directory: funduq-contract
+      # The bytes both sides sign, and nothing else: cryptography and pyjwt.
+      # It holds no key, opens no socket and reads no database. If anything
+      # heavier appears in its lockfile, the package stopped being what core
+      # and the SDK are both allowed to depend on.
+      - run: uv run pytest -v
+        working-directory: funduq-contract
+
   funduq-provider-sdk:
     runs-on: ubuntu-latest
     steps:
@@ -78,6 +94,9 @@ jobs:
       - uses: astral-sh/setup-uv@v3
         with:
           python-version: "3.12"
+      # The dev group asks for the `llm` extra, so this one job covers both
+      # kinds of provider — the LLM half is `funduq_provider_sdk.llm` now,
+      # not a package of its own.
       - run: uv sync --group dev
         working-directory: funduq-provider-sdk
       # No transport here, and nothing to generate one with: this package
@@ -85,20 +104,6 @@ jobs:
       # lockfile, the boundary was not real.
       - run: uv run pytest -v
         working-directory: funduq-provider-sdk
-
-  funduq-llm-provider-sdk:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: astral-sh/setup-uv@v3
-        with:
-          python-version: "3.12"
-      - run: uv sync --group dev
-        working-directory: funduq-llm-provider-sdk
-      # openai is types-only here (the wire shapes), and funduq-provider-sdk
-      # supplies the keypair — still no transport this package uses itself.
-      - run: uv run pytest -v
-        working-directory: funduq-llm-provider-sdk
 
   # Everything else — the gateway, both SDKs, the reference providers and
   # the directory UI — lives in funduq-server, which carries its own CI,
