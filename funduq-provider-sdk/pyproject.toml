@@ -1,6 +1,6 @@
 [project]
 name = "funduq-provider-sdk"
-version = "0.1.0"
+version = "0.0.1"
 description = "What a provider and funduq agree on, from the provider's side: identity, the ports, and the provider's own worker loop — for an agent provider, or an LLM provider with the `llm` extra"
 requires-python = ">=3.12"
 license = "Apache-2.0"
@@ -35,7 +35,7 @@ dependencies = [
     # The bytes both sides sign, written once. This package used to carry its
     # own copy under its own names; the reason was that it must not depend on
     # *core*, which funduq-contract satisfies without the duplication.
-    "funduq-contract>=0.1.0,<0.2",
+    "funduq-contract>=0.0.1,<0.1",
     "cryptography>=42.0",
     # Actor-chain hops are JWTs. Signing, not transport.
     "pyjwt[crypto]>=2.9",

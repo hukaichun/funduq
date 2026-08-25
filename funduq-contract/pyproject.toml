@@ -1,6 +1,6 @@
 [project]
 name = "funduq-contract"
-version = "0.1.0"
+version = "0.0.1"
 description = "The bytes both sides of funduq sign and verify: signing payloads, actor-chain hops, and signature checking"
 requires-python = ">=3.12"
 license = "Apache-2.0"
