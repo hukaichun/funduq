@@ -54,9 +54,14 @@ def test_every_domain_tag_has_a_published_vector_family():
     """The completeness guard: an unpublished payload family fails here, not in an integrator's transport."""
     import re
 
-    from funduq import identity as identity_module
+    from funduq_contract import payloads as payloads_module
 
-    source = Path(identity_module.__file__).read_text()
+    # The tags live wherever the bytes are stated, which is funduq-contract
+    # now rather than core's identity module. Scanning the source rather than
+    # importing a list is the point: a family added without a vector is
+    # exactly what this catches, and a hand-kept list would be one more thing
+    # to forget.
+    source = Path(payloads_module.__file__).read_text()
     tags = set(re.findall(r'= "(funduq-[a-z-]+)"', source))
     assert tags, "no domain tags found — the scan is broken, not the contract"
     covered = {v["payload_utf8"].split(":", 1)[0] for v in VECTORS["vectors"]}

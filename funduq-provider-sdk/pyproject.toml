@@ -19,6 +19,10 @@ requires-python = ">=3.12"
 # names nothing checks. Pinned to the version funduq itself uses, so the two
 # cannot silently disagree on what a message looks like.
 dependencies = [
+    # The bytes both sides sign, written once. This package used to carry its
+    # own copy under its own names; the reason was that it must not depend on
+    # *core*, which funduq-contract satisfies without the duplication.
+    "funduq-contract",
     "cryptography>=42.0",
     # Actor-chain hops are JWTs. Signing, not transport.
     "pyjwt[crypto]>=2.9",
@@ -34,3 +38,6 @@ asyncio_mode = "auto"
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
+
+[tool.uv.sources]
+funduq-contract = { path = "../funduq-contract", editable = true }

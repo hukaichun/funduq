@@ -11,6 +11,8 @@ requires-python = ">=3.12"
 # (a2a-sdk ships httpx unconditionally); the defense forbids verbs, not
 # nouns — see tests/test_core_is_network_free.py.
 dependencies = [
+    # The bytes both sides sign, written once — see funduq-contract.
+    "funduq-contract",
     "sqlalchemy[asyncio]>=2.0",
     # SQLite is funduq's zero-config default backend (see funduq/config.py's
     # database_url), so its async driver is a core dependency — a plain
@@ -95,6 +97,7 @@ build-backend = "hatchling.build"
 packages = ["funduq"]
 
 [tool.uv.sources]
+funduq-contract = { path = "../funduq-contract", editable = true }
 # Editable, and that matters: a non-editable path install copies the SDK
 # into the venv, so its signing payloads freeze at sync time and a change to
 # them would not fail a local test run — only a fresh CI install. The copy is

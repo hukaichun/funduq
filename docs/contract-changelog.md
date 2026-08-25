@@ -24,6 +24,39 @@ after the first person was hurt.
 
 ---
 
+## Revision 2 — 2026-08-25
+
+**A fourth package, `funduq-contract`, holds the bytes both sides sign.**
+
+Core and the provider SDK each carried their own copy of the six signing
+payloads, the actor-chain format and signature verification — the same
+concepts under two sets of names (`resolve_signing_payload` on one side,
+`resolve_payload` on the other). There is one implementation now, and both
+depend on it.
+
+*For an implementation in Python*: import the payload builders and
+`verify_chain` from `funduq_contract` rather than from either side. The
+existing names still work — core and the SDK re-export them — but they are
+two vocabularies for one thing and only one of them is the contract's.
+
+*For an implementation in any other language*: nothing changes. The vectors
+are unchanged, and they are still the authority.
+
+The duplication had a recorded justification: it once caught a payload
+change 219 green tests had missed. That win is real and it is historical —
+it happened six hours before `contract-vectors.json` existed, and a frozen
+vector catches that same class against a single shared implementation.
+Checked rather than assumed, by changing a domain tag in the one
+implementation and watching `test_every_published_vector_is_what_this_
+implementation_computes` go red.
+
+`funduq-contract` is now part of the contract surface, which is why this
+revision exists at all: adding a package that implementers depend on is a
+contract change, and the fingerprint said so before anyone had to remember
+to.
+
+---
+
 ## Revision 1 — 2026-08-25
 
 The first recorded revision. It is not a description of an empty starting

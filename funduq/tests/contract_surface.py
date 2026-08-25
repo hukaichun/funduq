@@ -97,6 +97,7 @@ def _typing_surface() -> list[str]:
     """
     root = Path(__file__).resolve().parents[2]
     packages = (
+        root / "funduq-contract" / "funduq_contract",
         root / "funduq" / "funduq",
         root / "funduq-provider-sdk" / "funduq_provider_sdk",
         root / "funduq-llm-provider-sdk" / "funduq_llm_provider_sdk",

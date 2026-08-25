@@ -15,110 +15,39 @@ if TYPE_CHECKING:
     from funduq.models import AgentRef
 
 
+
+# The format is funduq-contract's, and these names are re-exported rather
+# than rewritten. Core used to carry its own copy of every payload and of the
+# chain format — a second opinion that was really an echo. What stays here is
+# what core actually decides: which keys an act is allowed to come from, and
+# how fresh a timestamp has to be. That is policy, not format.
+from funduq_contract import (
+    FINGERPRINT_HEX_LENGTH,
+    ChainResult,
+    InvalidChain as InvalidActorChain,
+    cancel_payload as cancel_signing_payload,
+    delegation_payload as delegation_signing_payload,
+    dispatch_hop as _dispatch_hop,
+    extend_chain as extend_actor_chain,
+    funduq_connect_payload as funduq_connect_signing_payload,
+    is_fingerprint,
+    kyok_call_payload as kyok_call_signing_payload,
+    new_chain as new_actor_chain,
+    provider_connect_payload as provider_connect_signing_payload,
+    provider_fingerprint,
+    resolve_payload as resolve_signing_payload,
+    verify_chain as verify_actor_chain,
+    verify_signature,
+)
+
+
 SESSION_TOKEN_TTL_SECONDS = 3600
 
 SIGNATURE_FRESHNESS_WINDOW_SECONDS = 60
 
 
-FINGERPRINT_HEX_LENGTH = 16
-
-
-def provider_fingerprint(public_key: str) -> str:
-    """Derives a short, deterministic identifier for a provider from its public key.
-
-    Two different providers registering under the same fingerprint is treated
-    as a collision (see `ProviderFingerprintTaken`); an agent can be resolved
-    by either its full public key or this fingerprint.
-    """
-    return hashlib.sha256(bytes.fromhex(public_key)).hexdigest()[:FINGERPRINT_HEX_LENGTH]
-
-
-def is_fingerprint(value: str) -> bool:
-    return len(value) == FINGERPRINT_HEX_LENGTH
-
-
 def is_timestamp_fresh(timestamp: int) -> bool:
     return abs(time.time() - timestamp) <= SIGNATURE_FRESHNESS_WINDOW_SECONDS
-
-
-_KYOK_CALL = "funduq-kyok-call"
-_CONNECT_PROVIDER = "funduq-connect-provider"
-_CONNECT_FUNDUQ = "funduq-connect-funduq"
-_DELEGATE = "funduq-delegate"
-_RESOLVE = "funduq-resolve"
-_CANCEL = "funduq-cancel"
-
-
-def provider_connect_signing_payload(
-    funduq_public_key: str, funduq_nonce: str, provider_nonce: str
-) -> bytes:
-    """Builds the canonical bytes a provider signs to authenticate opening a link.
-
-    Freshness is the verifier's: `funduq_nonce` is a ticket funduq issued to
-    this provider's key and destroys on use, so a recorded exchange is
-    worthless to whoever recorded it — and a ticket that leaks is worthless
-    too, since only the key it names can sign this. `provider_nonce` is the
-    provider's own challenge for funduq's answering proof.
-    `funduq_public_key` names the recipient: the funduq the provider means to
-    connect to (its pinned key; empty string for a funduq with no identity),
-    so a proof handed to one funduq cannot be relayed to attach at another —
-    the verifying funduq builds this payload with its *own* key and a
-    mismatch fails the signature. The role in the domain tag keeps this
-    proof and funduq's answering one from ever being the same bytes.
-
-    **What the provider will serve is not in here**, and does not need to
-    be: the names were bound in when the ticket was an anonymous nonce
-    anyone could answer, so that a captured proof could not be replayed to
-    serve a different agent. A single-use ticket naming one key cannot be
-    replayed at all. Opening a link and putting a name live are two acts
-    now, and the second one happens on the open link.
-
-    `funduq_provider_sdk.identity.provider_connect_payload` computes this same
-    payload independently on the provider side and both must agree
-    byte-for-byte.
-    """
-    return (
-        f"{_CONNECT_PROVIDER}:{funduq_public_key}:{funduq_nonce}:{provider_nonce}".encode()
-    )
-
-
-def funduq_connect_signing_payload(funduq_nonce: str, provider_nonce: str) -> bytes:
-    """Builds the canonical bytes funduq signs (with `FunduqIdentity`) to prove itself to a connecting provider.
-
-    Covers the provider's nonce (the provider chose the freshness) and
-    funduq's own, under a role tag distinct from the provider's proof so
-    neither can be reflected as the other. This is the payload behind
-    "letting a provider pin funduq by its public key": a provider verifies it
-    against the funduq key it pinned before producing anything worth
-    stealing. `funduq_provider_sdk.identity.funduq_connect_payload` computes
-    this same payload independently and both must agree byte-for-byte.
-    """
-    return f"{_CONNECT_FUNDUQ}:{funduq_nonce}:{provider_nonce}".encode()
-
-
-def kyok_call_signing_payload(bearer: str, timestamp: int, body_hash: str) -> bytes:
-    """Builds the canonical bytes the agent provider signs to prove it made a given KYOK completion call.
-
-    Binds the payload to the bearer token, timestamp, and a hash of the
-    request body, so a captured signature can't be replayed for a
-    different call. `funduq_provider_sdk.identity.kyok_call_payload`
-    computes this same payload independently on the provider side and
-    both must agree byte-for-byte.
-    """
-    return f"{_KYOK_CALL}:{bearer}:{timestamp}:{body_hash}".encode()
-
-
-def delegation_signing_payload(delegate_public_key: str, expires_at: int) -> bytes:
-    """The bytes a durable key signs to name a session key: "SK acts for me until T".
-
-    The session delegation certificate is custody's bridge (a passkey or an
-    SSO-custodied key signs once per session; the ephemeral key signs
-    everything after). It exists because chain *extension* is provenance
-    anyone may perform — delegating authority to a named key takes this
-    explicit statement. `expires_at` is the session's lifetime (hours), a
-    different layer from a hop's presentation freshness (minutes).
-    """
-    return f"{_DELEGATE}:{delegate_public_key}:{expires_at}".encode()
 
 
 class InvalidDelegation(ValueError):
@@ -149,29 +78,6 @@ def verify_delegation(certificate: dict) -> str:
     ):
         raise InvalidDelegation("delegation certificate signature does not verify")
     return authority
-
-
-def resolve_signing_payload(run_id: str, timestamp: int) -> bytes:
-    """The bytes an authority signs to answer a paused ask: "I resolve this run, now".
-
-    A resolution is singular — the status-guarded reopen picks one winner and
-    consumes the signature with it — so it belongs to the timestamp family
-    (like registration), not the challenge family: `timestamp` is checked
-    against the 60s freshness window, and a stored signature is spent by the
-    time anyone can read it.
-    """
-    return f"{_RESOLVE}:{run_id}:{timestamp}".encode()
-
-
-def cancel_signing_payload(run_id: str, timestamp: int) -> bytes:
-    """The bytes an authority signs to ask that a run be stopped: "I ask this run to stop, now".
-
-    Same family as a resolution, for the same reason: cancelling is a
-    singular act with a 60s freshness window, not a repeated one needing a
-    challenge. A separate tag so a resolution signature can never be
-    replayed as a cancel, or the reverse.
-    """
-    return f"{_CANCEL}:{run_id}:{timestamp}".encode()
 
 
 class InvalidResolution(ValueError):
@@ -272,174 +178,6 @@ def verify_cancel(
     )
 
 
-def _sign_hop(
-    private_key: Ed25519PrivateKey,
-    prev_token: str | None,
-    dispatched_to: dict[str, str] | None = None,
-) -> str:
-    claims: dict[str, object] = {
-        "actorPublicKey": private_key.public_key().public_bytes_raw().hex(),
-        "prevHash": _hop_hash(prev_token) if prev_token is not None else None,
-    }
-    if dispatched_to is not None:
-        claims["dispatchedTo"] = dispatched_to
-    return jwt.encode(claims, private_key, algorithm="EdDSA")
-
-
-def _dispatch_hop(private_key: Ed25519PrivateKey, prev_chain: list[str], agent: "AgentRef") -> list[str]:
-    """Extends `prev_chain` with a hop recording that this key dispatched the
-    run to `agent`, as `{"providerKey", "name"}` under `dispatchedTo`.
-
-    This is the one thing that reaches a chain's **completeness**. Signatures
-    and links prove nobody was inserted, reordered or spliced in; never that
-    nobody was *removed*, and a party holding `caller → A → B` can rebuild it
-    as `caller → B` forging nothing. What breaks that is naming the
-    destination: an agent is addressed as `(provider_key, name)`, and the
-    provider half is exactly the key that signs the next hop when that
-    provider extends. So a hop and its successor check against each other —
-    this one says it went to P, therefore the next must be signed by P — and
-    a branch cannot satisfy both. Dropping the hop instead leaves a gap a
-    consumer requiring funduq's hops can refuse.
-
-    Only ever an *extension*: a request that carried no chain gets none, and
-    funduq starting one would make itself the segment's head, which it is
-    not. The presenter check is what stops this hop from being spendable —
-    presenting a chain whose tail funduq signed would mean authenticating as
-    funduq, and funduq is nobody's caller.
-    """
-    return [*prev_chain, _sign_hop(
-        private_key, prev_chain[-1], {"providerKey": agent.provider_key, "name": agent.name}
-    )]
-
-
-def new_actor_chain(private_key: Ed25519PrivateKey) -> list[str]:
-    """Starts a new actor chain: a single hop signed by `private_key` — the signer is the
-    chain's head, the responsibility segment's authority. A chain carries keys and nothing
-    else; whom a key represents is a separate, opt-in disclosure (a voucher), never a field
-    on the chain."""
-    return [_sign_hop(private_key, None)]
-
-
-def extend_actor_chain(private_key: Ed25519PrivateKey, prev_chain: list[str]) -> list[str]:
-    """Appends a new hop signed by `private_key` to `prev_chain`.
-
-    The new hop links to the chain's last hop via a hash of that token, so
-    the chain records who acted downstream of whom, in order. Extending is
-    provenance, not authorization: the head stays the segment's authority.
-    Raises `ValueError` if `prev_chain` is empty.
-    """
-    if not prev_chain:
-        raise ValueError(
-            "extend_actor_chain requires a non-empty prev_chain — use new_actor_chain to originate one"
-        )
-    return [*prev_chain, _sign_hop(private_key, prev_chain[-1])]
-
-
-@dataclass
-class ChainResult:
-    actor_public_keys: list[str]
-
-    @property
-    def head(self) -> str:
-        """The first hop's signer: the responsibility segment's authority."""
-        return self.actor_public_keys[0]
-
-    @property
-    def presenter(self) -> str:
-        """The last hop's signer: the party offering this chain.
-
-        Named, rather than left as `actor_public_keys[-1]`, because this is
-        the key an authenticating seat's principal is compared against and
-        the two ends are easy to confuse — comparing `head` instead lets a
-        provider replay its caller's chain, which is the whole attack
-        (`scripts/probes/probe_a_provider_can_speak_as_the_caller.py`).
-        """
-        return self.actor_public_keys[-1]
-
-
-class InvalidActorChain(ValueError):
-    pass
-
-
-def _hop_hash(token: str) -> str:
-    return hashlib.sha256(token.encode()).hexdigest()
-
-
-def verify_actor_chain(chain: list[str]) -> ChainResult:
-    """Verifies an actor chain and returns each hop's actor key, in order (head first).
-
-    Each hop's signature must verify under its own embedded public key, and
-    each hop after the first must link to the previous hop via a matching
-    `prevHash` — reordering, truncating, or splicing in a hop from a
-    different chain breaks this and is rejected. A hop has no expiry to
-    check: freshness is not a question this verifier can answer — it sees
-    bytes, not a live presenter — so proving a presentation live belongs to
-    the authenticating seat in front of the door, and no expiry is read
-    here, whatever a signer chose to stamp. Unknown claims are ignored (a
-    chain from a signer still stamping the retired `subject` field
-    verifies; the field carries no meaning). Raises `InvalidActorChain` on
-    any of these failures,
-    including an empty chain or an unparseable/forged token.
-
-    Hops also arrive from out-of-process providers:
-    `funduq_provider_sdk.identity.ProviderIdentity.sign_hop` builds the same
-    JWT claim format independently, and any change here must keep verifying
-    what it signs.
-    """
-    if not chain:
-        raise InvalidActorChain("empty actor chain")
-
-    actor_public_keys: list[str] = []
-    prev_token: str | None = None
-
-    for i, token in enumerate(chain):
-        try:
-            unverified = jwt.decode(token, options={"verify_signature": False})
-        except jwt.PyJWTError as e:
-            raise InvalidActorChain(f"hop {i}: unparseable token: {e}") from e
-
-        actor_public_key = unverified.get("actorPublicKey")
-        if not isinstance(actor_public_key, str):
-            raise InvalidActorChain(f"hop {i}: missing actorPublicKey")
-        try:
-            public_key = Ed25519PublicKey.from_public_bytes(bytes.fromhex(actor_public_key))
-        except ValueError as e:
-            raise InvalidActorChain(f"hop {i}: malformed actorPublicKey: {e}") from e
-
-        try:
-            payload = jwt.decode(
-                token,
-                key=public_key,
-                algorithms=["EdDSA"],
-                options={"verify_exp": False},
-            )
-        except jwt.PyJWTError as e:
-            raise InvalidActorChain(f"hop {i}: signature check failed: {e}") from e
-
-        expected_prev_hash = _hop_hash(prev_token) if prev_token is not None else None
-        if payload.get("prevHash") != expected_prev_hash:
-            raise InvalidActorChain(f"hop {i}: prevHash doesn't match — chain reordered, truncated, or spliced")
-
-        actor_public_keys.append(actor_public_key)
-        prev_token = token
-
-    return ChainResult(actor_public_keys=actor_public_keys)
-
-
-def verify_signature(public_key_hex: str, signature_hex: str, payload: bytes) -> bool:
-    """Returns True if `signature_hex` is a valid Ed25519 signature by `public_key_hex` over `payload`.
-
-    Returns False (never raises) for a mismatched key, a mismatched
-    payload, or malformed hex in either the key or the signature.
-    """
-    try:
-        public_key = Ed25519PublicKey.from_public_bytes(bytes.fromhex(public_key_hex))
-        public_key.verify(bytes.fromhex(signature_hex), payload)
-        return True
-    except (InvalidSignature, ValueError):
-        return False
-
-
 class FunduqIdentity:
     """A funduq instance's own signing identity, distinct from any provider's.
 
@@ -455,8 +193,14 @@ class FunduqIdentity:
 
     def dispatch_hop(self, prev_chain: list[str], agent: "AgentRef") -> list[str]:
         """Extends `prev_chain` with this funduq's hop for a dispatch to `agent`.
-        See `_dispatch_hop` for what naming the destination buys."""
-        return _dispatch_hop(self._private_key, prev_chain, agent)
+
+        The `AgentRef` is unpacked here rather than handed on, because
+        funduq-contract does not know core's types and should not have to —
+        what the format needs is the pair `(provider_key, name)` an agent is
+        addressed by. See `funduq_contract.dispatch_hop` for what naming the
+        destination buys.
+        """
+        return _dispatch_hop(self._private_key, prev_chain, agent.provider_key, agent.name)
 
     @classmethod
     def from_hex(cls, private_key_hex: str) -> "FunduqIdentity":
