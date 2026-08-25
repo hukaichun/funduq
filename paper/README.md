@@ -11,6 +11,7 @@
 | **`input-required-routing.md`** | deferred call 的路由與決定權——**只放結論**：三分類、一個宣告推導出的五條、文獻空白、兩個給 A2A 的建議 | 推導過程中被推翻的說法 |
 | **`classical-mas-line.md`** | 古典 MAS 的 accountability/responsibility 線（AAMAS/JAAMAS，十年，七篇 LLM 論文零引用）＋ Accountability Horizon 的讀後 | LLM-agent 那一層的文獻 |
 | **`venues.md`** | 投稿場域的守備範圍、AAMAS 的 subject area 分工、四種貨幣 | 論文內容 |
+| **`draft-v0.md`** | 論文本身的第一版草稿：定稿的段落、`[STUB]` 標記的未定處、投稿硬約束（8 頁、LaTeX、double-blind）、送出前的檢查表 | 文獻導讀、掃查方法 |
 | **`retractions.md`** | 寫下又被推翻的說法，**按產生它們的形態分組**，每條記「寫了什麼 → 為什麼錯 → 判準」 | 還成立的結論 |
 
 ## 讀的順序
