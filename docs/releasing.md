@@ -1,16 +1,40 @@
 # Releasing
 
-Four distributions, published one at a time from
-[`.github/workflows/release.yml`](https://github.com/hukaichun/funduq/blob/main/.github/workflows/release.yml).
+Four distributions, one entrance:
+**a version bump reaching `main` is the release.**
+
+## Cutting one
+
+```bash
+cd funduq-contract && uv version --bump patch
+```
+
+Open that as a pull request, review it like any other diff, merge it. The
+workflow notices which `pyproject.toml` declares a new version, publishes
+that distribution, and writes the tag afterwards.
+
+Nothing else to remember, and nothing to keep in sync: the version lives in
+exactly one place a human writes, and the tag is derived from it after the
+upload succeeds. **A tag existing means that version is on PyPI.**
+
+If several move together, `funduq-contract` publishes first — the other two
+declare it as a dependency, and an install resolves nothing until it exists.
+
+## The gate is the environment
+
+Merging publishes, and PyPI is irreversible: a filename cannot be reused, so
+a wrong version is not something a later commit fixes. Give each of the three
+environments a **required reviewer** and every upload stops for a human
+first. That is the pause; there is no second one.
 
 ## There is no token
 
-PyPI trusts this repository, this workflow *file*, and one named environment
-per project; GitHub mints a short-lived OIDC token per run. Nothing
-long-lived is stored anywhere, and revoking a publisher is a click rather
-than a secret rotation.
+PyPI trusts this repository, this workflow *file*, and one environment per
+project; GitHub mints a short-lived OIDC token per run. Nothing long-lived is
+stored anywhere, and revoking a publisher is a click rather than a secret
+rotation.
 
-Three things are therefore part of the configuration and not free to change:
+Four things are load-bearing configuration and not free to change:
 
 | | |
 |---|---|
@@ -18,51 +42,30 @@ Three things are therefore part of the configuration and not free to change:
 | `release.yml` | the workflow **filename** |
 | `pypi-funduq`, `pypi-funduq-contract`, `pypi-funduq-provider-sdk` | one environment per project |
 
-Renaming any of them breaks publishing silently, and the error arrives at the
-worst moment. The environments are separate because PyPI refuses to register
-one `(owner, repo, workflow, environment)` against more than one project
-name — a rule worth keeping rather than working around, since one
-configuration able to publish several names is one thing to compromise for
-all of them.
+Renaming any of them breaks publishing silently. The environments are
+separate because PyPI refuses to register one
+`(owner, repo, workflow, environment)` against more than one project name —
+a rule worth keeping rather than working around, since one configuration able
+to publish several names is one thing to compromise for all of them.
 
-## Cutting a release
+## Two designs that look better and are not
 
-1. **Decide whether the contract moved.** If the surface changed, the suite
-   has already refused to go green without a revision bump and a
-   [changelog](contract-changelog.md) entry, so this is a question you have
-   answered rather than one to remember.
-2. **Set the version** in that distribution's `pyproject.toml`.
-3. **Tag it**, and the tag names the distribution:
+**Deriving the version from the tag** (hatch-vcs and friends) would remove
+the number from `pyproject.toml` entirely, so nothing could disagree. It
+fails here, and silently: it works by `git describe`, which finds the nearest
+reachable tag whatever its prefix. With three interleaved tag series in one
+repository, building `funduq-contract` just after a `funduq-provider-sdk`
+release yields the provider-sdk's version — measured, not guessed — and PyPI
+accepts it. A per-package `--match` pattern repairs it, at the price of a
+misconfiguration publishing a wrong version instead of failing.
 
-   ```
-   funduq-contract-v0.1.0
-   funduq-v0.1.0
-   funduq-provider-sdk-v0.1.0
-   ```
-
-   The workflow refuses a tag whose version disagrees with the package's own,
-   because PyPI does not allow reusing a filename: publishing 0.1.0 under a
-   `v0.2.0` tag is not something a later commit can fix.
-
-4. **`funduq-contract` goes first** when several go out together. The other
-   two declare it as a dependency, and an install resolves nothing until it
-   exists.
-
-## Rehearsing on TestPyPI
-
-`workflow_dispatch` takes a target. TestPyPI is a **separate site**, not a
-mode of this one, so it needs its own three pending publishers registered at
-test.pypi.org — same repository, same workflow filename, same environment
-names.
-
-Worth doing once before the first real publish, because it is the only thing
-that shows what someone else gets from `pip install`. Building a wheel
-locally proves it builds; it does not prove it installs, resolves its
-dependencies, or imports on a machine that has none of this checked out.
+**Tagging in one workflow and publishing on the tag in another** cannot work
+at all: events created with `GITHUB_TOKEN` do not start workflow runs, so the
+release would simply never happen. Detection and publication are one workflow
+for that reason, and no personal access token is needed anywhere.
 
 ## A name is not yours until you publish
 
 A pending publisher does **not** reserve a project name. Until the first
 upload, anyone may register it — including through a pending publisher of
-their own. That is the whole reason not to sit on a configured-but-unpublished
-state longer than necessary.
+their own.

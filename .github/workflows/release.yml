@@ -1,183 +1,176 @@
-# Publishing to PyPI, one distribution at a time.
+# Publishing to PyPI. One entrance: a version bump reaching main.
 #
 # There is no API token here and there is not meant to be. PyPI trusts this
-# repository, this workflow file and one named environment per project, and
-# GitHub mints a short-lived OIDC token for each run — so nothing long-lived
-# is stored anywhere, and revoking a publisher is a click rather than a secret
+# repository, this workflow *file* and one named environment per project, and
+# GitHub mints a short-lived OIDC token per run — so nothing long-lived is
+# stored anywhere, and revoking a publisher is a click rather than a secret
 # rotation. For a project whose subject is identity and keys, a password in a
 # repository secret would be the wrong first impression.
 #
-# **The name of this file is part of the configuration.** PyPI's publishers
-# name `release.yml`; renaming it silently breaks publishing, and the error
-# arrives at the worst moment. The same is true of the environment names
-# below and of `hukaichun/funduq` itself.
+# **The name of this file is part of the configuration**, as are the
+# environment names below and `hukaichun/funduq` itself. Renaming any of them
+# breaks publishing silently.
 #
 # One job per distribution, each with its own environment, because PyPI
 # refuses to register one (owner, repo, workflow, environment) against more
-# than one project name. That rule is worth understanding rather than working
-# around: a single configuration able to publish several names is a single
-# thing to compromise, so each target gets an entrance that can be revoked on
-# its own.
+# than one project name. Worth keeping rather than working around: one
+# configuration able to publish several names is one thing to compromise for
+# all of them, so each target gets an entrance revocable on its own.
 #
-# Tags decide what goes out:
+# ## Why the version in pyproject.toml is what triggers this
 #
-#     funduq-contract-v0.1.0      →  funduq-contract
-#     funduq-v0.1.0               →  funduq
-#     funduq-provider-sdk-v0.1.0  →  funduq-provider-sdk
+# A version lives in exactly one place a human writes, and it is reviewed as
+# part of a diff like anything else. The tag is written afterwards, by this
+# workflow, out of that same number — so the two cannot disagree, and a tag
+# existing means that version really went out.
 #
-# `funduq-contract` first, if several are going out together: the other two
-# declare it as a dependency, and an install resolves nothing until it exists.
+# The obvious alternative fails here, and not gently. Deriving the version
+# from the tag (hatch-vcs and friends) means `git describe`, which finds the
+# nearest reachable tag whatever its prefix: with three interleaved tag series
+# in one repository, building funduq-contract just after a provider-sdk
+# release yields the provider-sdk version, silently, and PyPI accepts it. Each
+# package can be given its own `--match` pattern, but the failure mode of
+# getting that wrong is a wrong version published rather than an error.
+#
+# The other obvious alternative — this workflow pushes a tag and a second
+# workflow publishes on it — cannot work at all: events created with
+# GITHUB_TOKEN do not start workflow runs. Publishing would simply never
+# happen, which is the worst way for a release to fail. Detection and
+# publication are therefore one workflow, and a personal access token is not
+# needed for anything.
+#
+# ## The gate
+#
+# Merging a version bump publishes, and PyPI is irreversible. The pause is
+# the environment: give each of the three a required reviewer and every
+# upload stops for a human first.
 
 name: release
 
 on:
   push:
-    tags:
-      - "funduq-v*"
-      - "funduq-contract-v*"
-      - "funduq-provider-sdk-v*"
-  workflow_dispatch:
-    inputs:
-      distribution:
-        description: Which distribution to publish
-        required: true
-        type: choice
-        options:
-          - funduq-contract
-          - funduq
-          - funduq-provider-sdk
-      version:
-        description: The version to publish, without a leading v
-        required: true
-        type: string
-      target:
-        description: >
-          Where to publish. TestPyPI needs its own three pending publishers,
-          registered on test.pypi.org with these same environment names — it
-          is a separate site, not a mode of this one.
-        required: true
-        default: testpypi
-        type: choice
-        options:
-          - testpypi
-          - pypi
+    branches: [main]
 
 jobs:
-  # Which distribution and version this run is for, decided once so that three
-  # publish jobs do not each re-derive it from a tag and disagree.
-  what:
+  # One place decides what is being released, so three publish jobs cannot
+  # each re-derive it and disagree.
+  detect:
     runs-on: ubuntu-latest
     outputs:
-      distribution: ${{ steps.decide.outputs.distribution }}
-      version: ${{ steps.decide.outputs.version }}
-      target: ${{ steps.decide.outputs.target }}
+      funduq-contract: ${{ steps.diff.outputs.funduq-contract }}
+      funduq: ${{ steps.diff.outputs.funduq }}
+      funduq-provider-sdk: ${{ steps.diff.outputs.funduq-provider-sdk }}
     steps:
-      - id: decide
-        run: |
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            echo "distribution=${{ inputs.distribution }}" >> "$GITHUB_OUTPUT"
-            echo "version=${{ inputs.version }}" >> "$GITHUB_OUTPUT"
-            echo "target=${{ inputs.target }}" >> "$GITHUB_OUTPUT"
-          else
-            tag='${{ github.ref_name }}'
-            # Longest prefix first: `funduq-v` would otherwise never be
-            # reached, and `funduq-contract-v0.1.0` would publish as funduq.
-            case "$tag" in
-              funduq-contract-v*)      dist=funduq-contract ;;
-              funduq-provider-sdk-v*)  dist=funduq-provider-sdk ;;
-              funduq-v*)               dist=funduq ;;
-              *) echo "::error::tag '$tag' names no distribution"; exit 1 ;;
-            esac
-            echo "distribution=$dist" >> "$GITHUB_OUTPUT"
-            echo "version=${tag##*-v}" >> "$GITHUB_OUTPUT"
-            echo "target=pypi" >> "$GITHUB_OUTPUT"
-          fi
+      - uses: actions/checkout@v4
+        with:
+          # This commit and the one before it: the whole question is what
+          # changed between them.
+          fetch-depth: 2
 
-  build:
-    needs: what
+      - id: diff
+        name: which distributions declare a new version
+        # An unreadable pyproject.toml must be an error, never a release
+        # signal. Written out rather than left to `set -e`: an empty `now`
+        # compares unequal to every previous version, so a malformed file
+        # would read as "the version changed" — correctness resting on a
+        # shell subtlety, for the one decision in this file that must not be
+        # wrong.
+        run: |
+          set -euo pipefail
+
+          for package in funduq-contract funduq funduq-provider-sdk; do
+            if ! now=$(python -c "
+          import tomllib
+          print(tomllib.load(open('$package/pyproject.toml','rb'))['project']['version'])
+          "); then
+              echo "::error::$package/pyproject.toml declares no readable version"
+              exit 1
+            fi
+
+            # A package added in this commit has no previous file at all, and
+            # that is the one absence which legitimately means "new".
+            if git cat-file -e "HEAD^:$package/pyproject.toml" 2>/dev/null; then
+              if ! before=$(git show "HEAD^:$package/pyproject.toml" | python -c "
+          import sys, tomllib
+          print(tomllib.loads(sys.stdin.read())['project']['version'])
+          "); then
+                echo "::error::$package/pyproject.toml was unreadable in the previous commit"
+                exit 1
+              fi
+            else
+              before=""
+              echo "$package: new in this commit"
+            fi
+
+            if [ "$now" != "$before" ]; then
+              echo "$package: ${before:-none} -> $now"
+              echo "$package=$now" >> "$GITHUB_OUTPUT"
+            else
+              echo "$package: unchanged at $now"
+              echo "$package=" >> "$GITHUB_OUTPUT"
+            fi
+          done
+
+  # funduq-contract goes first when several move together: the other two
+  # declare it as a dependency, and an install resolves nothing until it
+  # exists. The `always()` in the two below is what lets them run when this
+  # one was skipped rather than failed.
+  publish-funduq-contract:
+    needs: detect
+    if: needs.detect.outputs.funduq-contract != ''
     runs-on: ubuntu-latest
+    environment: pypi-funduq-contract
+    permissions:
+      id-token: write
+      contents: write
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v3
         with:
           python-version: "3.12"
-
-      # A tag is a claim about a version, and a claim is worth checking
-      # before it becomes an artifact nobody can take back: PyPI does not
-      # allow re-uploading a filename, so publishing 0.1.0 under a v0.2.0 tag
-      # is not something a later commit can fix.
-      - name: the tag and the package must agree
-        run: |
-          declared=$(python -c "
-          import tomllib
-          print(tomllib.load(open('${{ needs.what.outputs.distribution }}/pyproject.toml','rb'))['project']['version'])
-          ")
-          if [ "$declared" != "${{ needs.what.outputs.version }}" ]; then
-            echo "::error::${{ needs.what.outputs.distribution }} declares $declared, but this run says ${{ needs.what.outputs.version }}"
-            exit 1
-          fi
-
-      # The suite runs on every push already. What this repeats is the part a
-      # release cannot afford to have wrong, and it is cheap.
-      - name: the contract revision is recorded and described
-        run: uv run --group dev pytest -q tests/test_contract_revision.py tests/test_packages_are_publishable.py
-        working-directory: funduq
-
-      - run: uv build --wheel --sdist -o dist "${{ needs.what.outputs.distribution }}"
-
-      - uses: actions/upload-artifact@v4
-        with:
-          name: dist
-          path: dist/
-
-  # Three near-identical jobs rather than one with a computed environment.
-  # The environment is half of what PyPI is verifying, so it is written out
-  # literally: an expression there would be a claim assembled at runtime, and
-  # this is the one place where that is worth avoiding.
-  publish-funduq-contract:
-    needs: [what, build]
-    if: needs.what.outputs.distribution == 'funduq-contract'
-    runs-on: ubuntu-latest
-    environment: pypi-funduq-contract
-    permissions:
-      id-token: write
-    steps:
-      - uses: actions/download-artifact@v4
-        with:
-          name: dist
-          path: dist/
+      - run: uv build --wheel --sdist -o dist funduq-contract
       - uses: pypa/gh-action-pypi-publish@release/v1
-        with:
-          repository-url: ${{ needs.what.outputs.target == 'testpypi' && 'https://test.pypi.org/legacy/' || '' }}
+      # Last, and only on success: a tag here means that version is on PyPI.
+      # Written the other way round, a failed upload would leave a tag
+      # pointing at something nobody can install.
+      - run: |
+          git tag "funduq-contract-v${{ needs.detect.outputs.funduq-contract }}"
+          git push origin "funduq-contract-v${{ needs.detect.outputs.funduq-contract }}"
 
   publish-funduq:
-    needs: [what, build]
-    if: needs.what.outputs.distribution == 'funduq'
+    needs: [detect, publish-funduq-contract]
+    if: always() && !failure() && !cancelled() && needs.detect.outputs.funduq != ''
     runs-on: ubuntu-latest
     environment: pypi-funduq
     permissions:
       id-token: write
+      contents: write
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v3
         with:
-          name: dist
-          path: dist/
+          python-version: "3.12"
+      - run: uv build --wheel --sdist -o dist funduq
       - uses: pypa/gh-action-pypi-publish@release/v1
-        with:
-          repository-url: ${{ needs.what.outputs.target == 'testpypi' && 'https://test.pypi.org/legacy/' || '' }}
+      - run: |
+          git tag "funduq-v${{ needs.detect.outputs.funduq }}"
+          git push origin "funduq-v${{ needs.detect.outputs.funduq }}"
 
   publish-funduq-provider-sdk:
-    needs: [what, build]
-    if: needs.what.outputs.distribution == 'funduq-provider-sdk'
+    needs: [detect, publish-funduq-contract]
+    if: always() && !failure() && !cancelled() && needs.detect.outputs.funduq-provider-sdk != ''
     runs-on: ubuntu-latest
     environment: pypi-funduq-provider-sdk
     permissions:
       id-token: write
+      contents: write
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v3
         with:
-          name: dist
-          path: dist/
+          python-version: "3.12"
+      - run: uv build --wheel --sdist -o dist funduq-provider-sdk
       - uses: pypa/gh-action-pypi-publish@release/v1
-        with:
-          repository-url: ${{ needs.what.outputs.target == 'testpypi' && 'https://test.pypi.org/legacy/' || '' }}
+      - run: |
+          git tag "funduq-provider-sdk-v${{ needs.detect.outputs.funduq-provider-sdk }}"
+          git push origin "funduq-provider-sdk-v${{ needs.detect.outputs.funduq-provider-sdk }}"
