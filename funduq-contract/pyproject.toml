@@ -1,0 +1,37 @@
+[project]
+name = "funduq-contract"
+version = "0.1.0"
+description = "The bytes both sides of funduq sign and verify: signing payloads, actor-chain hops, and signature checking"
+requires-python = ">=3.12"
+# The one thing core and the SDKs are allowed to share.
+#
+# They used to share nothing, and each wrote its own copy of the six signing
+# payloads, the chain format and signature verification — the same concepts
+# under two sets of names (`resolve_signing_payload` in one, `resolve_payload`
+# in the other). That split was justified by dependency weight, and the
+# justification was sound: a provider author must not install sqlalchemy,
+# alembic and a database driver to sign a hop. But weight only argues that the
+# SDK cannot depend on *core*. It never argued for writing the format twice,
+# and the second copy bought nothing that the recorded vectors do not already
+# buy — a frozen byte string catches a wrong change to one shared
+# implementation exactly as well as it catches two copies drifting apart.
+#
+# So this package holds the format, and it stays as light as the SDK already
+# was: the dependency list below is the SDK's own, unchanged. Nothing here
+# talks to a network or a database, and nothing here holds a private key —
+# custody belongs to whoever has one (`FunduqIdentity`, `ProviderIdentity`).
+dependencies = [
+    "cryptography>=42.0",
+    # Actor-chain hops are JWTs. Signing, not transport.
+    "pyjwt[crypto]>=2.9",
+]
+
+[dependency-groups]
+dev = ["pytest>=8.0"]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["funduq_contract"]

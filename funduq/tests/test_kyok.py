@@ -7,7 +7,7 @@ import pytest
 
 from openai.types.chat import ChatCompletionChunk
 
-from funduq.identity import kyok_call_signing_payload
+from funduq.identity import kyok_call_payload
 from funduq_provider_sdk.identity import kyok_call_payload
 from funduq.models import AgentRef, LlmRef
 from funduq.protocols.kyok import collapse_stream
@@ -27,16 +27,10 @@ _AGENT = AgentRef(provider_key="ab" * 32, name="translator")
 
 
 def test_a_kyok_call_signs_what_it_is_for():
-    payload = kyok_call_signing_payload("some-token", 1755300000, "ab" * 32).decode()
+    payload = kyok_call_payload("some-token", 1755300000, "ab" * 32).decode()
 
     assert payload.startswith("funduq-kyok-call:")
     assert payload == f"funduq-kyok-call:some-token:1755300000:{'ab' * 32}"
-
-
-def test_both_sides_state_the_kyok_signing_payload_the_same_way():
-    assert kyok_call_payload("tok", 1755300000, "cafe") == kyok_call_signing_payload(
-        "tok", 1755300000, "cafe"
-    )
 
 
 def test_kyok_token_roundtrip():

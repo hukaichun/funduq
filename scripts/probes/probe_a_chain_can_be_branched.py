@@ -53,10 +53,10 @@ from funduq.config import CoreSettings
 from funduq.identity import FunduqIdentity
 from funduq.core import Funduq
 from funduq.identity import (
-    InvalidActorChain,
-    extend_actor_chain,
-    new_actor_chain,
-    verify_actor_chain,
+    InvalidChain,
+    extend_chain,
+    new_chain,
+    verify_chain,
 )
 from funduq.models import AgentRef
 from funduq_provider_sdk import InProcessLink, ProviderIdentity, ProviderRuntime
@@ -148,14 +148,14 @@ async def main() -> int:
     try:
         # --- 1. the honest path
         print("\n[1] the honest path: caller → A → B")
-        honest = extend_actor_chain(b_key, extend_actor_chain(a_key, new_actor_chain(caller)))
-        honest_keys = verify_actor_chain(honest).actor_public_keys
+        honest = extend_chain(b_key, extend_chain(a_key, new_chain(caller)))
+        honest_keys = verify_chain(honest).actor_public_keys
         print(f"           three hops, in order: {[k[:8] for k in honest_keys]}\n")
 
         # --- 2. B rebuilds it without A
         print("[2] B rebuilds it as caller → B, using hop zero it already holds")
-        branched = extend_actor_chain(b_key, [honest[0]])
-        result = verify_actor_chain(branched)
+        branched = extend_chain(b_key, [honest[0]])
+        result = verify_chain(branched)
         findings.record(
             "a chain records every hand it passed through",
             hexk(a_key) in result.actor_public_keys,
@@ -192,10 +192,10 @@ async def main() -> int:
         print("[4] B does the same thing to a chain that went out through funduq")
         # As A would have received it: the caller's hop, then funduq's, naming
         # the agent it dispatched to.
-        as_dispatched = funduq.identity.dispatch_hop(new_actor_chain(caller), agent)
-        rebranched = extend_actor_chain(b_key, as_dispatched[:-1] + [as_dispatched[-1]])
+        as_dispatched = funduq.identity.dispatch_hop(new_chain(caller), agent)
+        rebranched = extend_chain(b_key, as_dispatched[:-1] + [as_dispatched[-1]])
         claimed = jwt.decode(as_dispatched[-1], options={"verify_signature": False})["dispatchedTo"]
-        next_signer = verify_actor_chain(rebranched).actor_public_keys[-1]
+        next_signer = verify_chain(rebranched).actor_public_keys[-1]
 
         findings.record(
             "an erased hand can be noticed",
@@ -212,19 +212,19 @@ async def main() -> int:
         # --- 5. what the design does guarantee
         print("[5] what resists")
         try:
-            verify_actor_chain(honest[1:])
+            verify_chain(honest[1:])
             dropped_head = True
             detail = "a chain starting mid-way verified — the head can be dropped"
-        except InvalidActorChain as e:
+        except InvalidChain as e:
             dropped_head = False
             detail = f"refused: {str(e)[:72]}… — the first hop must carry a null prevHash, so truncation works only from the tail backwards"
         findings.record("the head cannot be dropped", not dropped_head, detail)
 
         spliced_ok = True
         try:
-            elsewhere = new_actor_chain(Ed25519PrivateKey.generate())
-            verify_actor_chain([*honest[:1], extend_actor_chain(b_key, elsewhere)[-1]])
-        except InvalidActorChain:
+            elsewhere = new_chain(Ed25519PrivateKey.generate())
+            verify_chain([*honest[:1], extend_chain(b_key, elsewhere)[-1]])
+        except InvalidChain:
             spliced_ok = False
         findings.record(
             "a hop from another chain cannot be grafted on",

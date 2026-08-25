@@ -42,7 +42,7 @@ from funduq import repo
 from funduq.config import CoreSettings
 from funduq.identity import FunduqIdentity
 from funduq.core import Funduq
-from funduq.identity import InvalidActorChain, new_actor_chain
+from funduq.identity import InvalidChain, new_chain
 from funduq.models import AgentRef
 from funduq_provider_sdk import InProcessLink, ProviderIdentity, ProviderRuntime
 
@@ -129,7 +129,7 @@ async def main() -> int:
 
     caller_key = Ed25519PrivateKey.generate()
     caller_public = caller_key.public_key().public_bytes_raw().hex()
-    chain = new_actor_chain(caller_key)
+    chain = new_chain(caller_key)
 
     agent_impl = Agent()
     identity = ProviderIdentity(Ed25519PrivateKey.generate())
@@ -184,7 +184,7 @@ async def main() -> int:
                 pass
             async with funduq.session() as session:
                 stolen_run = await repo.get_run(session, stolen.run_id)
-        except InvalidActorChain as e:
+        except InvalidChain as e:
             refusal = str(e)
 
         findings.record(

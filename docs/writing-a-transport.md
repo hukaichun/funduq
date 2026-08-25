@@ -215,7 +215,7 @@ invented and a standard client has somewhere to put it. Drop the field
 and every cancel on a bound thread is refused; forge nothing, because
 funduq verifies the signature, not the envelope. A cancel that carries
 no authority for a bound run raises funduq's own `InvalidCancel` —
-alongside `InvalidResolution` and `InvalidActorChain`, the family A2A
+alongside `InvalidResolution` and `InvalidChain`, the family A2A
 has no word for at all.
 
 Caller mistakes come back in A2A's words too — an unknown `contextId`,

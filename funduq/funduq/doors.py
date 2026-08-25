@@ -10,8 +10,8 @@ from ag_ui.core import RunErrorEvent, RunStartedEvent
 from funduq.agui import build_run_agent_input
 from funduq.errors import InvalidRunInput, LlmProviderNotFound
 from funduq.identity import (
-    InvalidActorChain,
-    verify_actor_chain,
+    InvalidChain,
+    verify_chain,
     verify_cancel,
     verify_delegation,
     verify_resolution,
@@ -43,7 +43,7 @@ async def verify_caller(
 ) -> tuple[dict, str | None, Any]:
     """Verifies `metadata["actorChain"]` if present and returns
     `(metadata stripped of funduq's reserved keys, the chain's head key, the raw chain)` —
-    `(metadata, None, None)` when no chain is attached. Raises `InvalidActorChain` if the
+    `(metadata, None, None)` when no chain is attached. Raises `InvalidChain` if the
     chain is tampered: a bad chain is refused at the door, never carried.
 
     `presenter_key` is the key an authenticating seat in front of this door
@@ -91,9 +91,9 @@ async def verify_caller(
     actor_chain = metadata.get("actorChain")
     if not actor_chain:
         return metadata, None, None
-    verified = verify_actor_chain(actor_chain)
+    verified = verify_chain(actor_chain)
     if presenter_key is not None and presenter_key != verified.presenter:
-        raise InvalidActorChain(
+        raise InvalidChain(
             "the chain's last hop was signed by "
             f"{verified.presenter[:16]}…, but the caller authenticated as "
             f"{presenter_key[:16]}… — extend the chain with your own key to present it"
@@ -280,7 +280,7 @@ def authorize_cancel(run: Any, metadata: dict[str, Any]) -> None:
     run's segment head and the agent's own provider key — because the two
     are the same question asked twice: who does this run's segment answer
     to? The proof is a signature over
-    `identity.cancel_signing_payload(run_id, timestamp)`, which is
+    `identity.cancel_payload(run_id, timestamp)`, which is
     possession of a private key rather than a chain hop anyone downstream
     could replay.
 

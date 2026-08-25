@@ -14,7 +14,7 @@ from openai.types.shared import ErrorObject
 
 from funduq import repo
 from funduq.errors import KyokRejected, LlmProviderNotFound
-from funduq.identity import new_actor_chain
+from funduq.identity import new_chain
 from funduq.kyok import read_kyok_forwarded_props
 from funduq.models import LlmRef
 from funduq.protocols.a2a import A2AAdapter
@@ -267,7 +267,7 @@ async def test_a_delegating_caller_funds_the_sub_agent_by_saying_so(funduq, serv
     sub_served = await serve(sub, "sub-agent")
     sub.identity = sub_served.identity
 
-    chain = new_actor_chain(Ed25519PrivateKey.generate())
+    chain = new_chain(Ed25519PrivateKey.generate())
     await A2AAdapter(funduq).send_task(
         sub_served.agents["sub-agent"],
         {"role": "user", "parts": [{"type": "text", "text": "delegated"}]},

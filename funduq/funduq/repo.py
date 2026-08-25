@@ -625,7 +625,7 @@ async def reopen_run(
     party's own chain does not replace the one the run was opened under.
 
     That party is not unrecorded, though: on a chained ask it had to produce
-    a signature over `identity.resolve_signing_payload(run_id, timestamp)`
+    a signature over `identity.resolve_payload(run_id, timestamp)`
     from the run's own authority set, and `metadata` carries it here to be
     merged into the run's record. That is a stronger trace than a chain would
     be — a chain says who stood on the path, while this is bound to this act
