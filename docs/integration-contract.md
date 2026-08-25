@@ -49,11 +49,29 @@ The mechanics are in
 [Responsibility chains](mechanisms/responsibility-chains.md).
 
 One small carve-out keeps the record honest: the metadata keys funduq
-itself writes into a run's record (`verifiedActorChain`,
-`interrupts`, `failureReason`, and `funduq`, held in reserve) are stripped from caller-supplied metadata at the doors. A
-caller cannot plant a forged verification summary — or a fake failure
-reason — wearing funduq's handwriting; everything else passes through
-untouched.
+itself writes into a run's record — `interrupts`, `pendingToolCalls`,
+`failureReason`, and `funduq`, held in reserve — are stripped from
+caller-supplied metadata at the doors (`props.RESERVED_METADATA_KEYS`,
+stripped in one place because every door funnels through
+`doors.verify_caller`). A caller cannot plant a fake failure reason
+wearing funduq's handwriting.
+
+**Everything else is relayed verbatim, and that is a promise, not an
+implementation detail.** Metadata under any other key, and the free-form
+contents of `forwardedProps`, reach the serving agent exactly as sent:
+funduq neither reads, rewrites, summarizes, nor drops them. It is what
+makes the slot usable for mechanisms funduq does not provide — the
+worked example is a **voucher**, since funduq cannot know that a key
+belongs to a particular employee and a deployment's own SSO can (see
+[responsibility chains](mechanisms/responsibility-chains.md)). Anything
+built on this passthrough is building on the contract.
+
+What funduq adds to `forwardedProps` it adds *beside* the caller's own
+values, never over them: a KYOK grant when the run opted in, the actor
+chain, a relayed delegation certificate, and `addressedRunId` when the
+caller declared an interjection. The reserved list above is the whole of
+what is ever taken away; if that list grows, it is a contract change and
+belongs in the changelog.
 
 ## Agent providers: speak AG-UI shapes, funduq opens the doors
 
