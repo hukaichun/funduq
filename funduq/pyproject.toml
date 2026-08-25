@@ -71,16 +71,13 @@ postgres = ["psycopg[binary,pool]>=3.2"]
 dev = [
     # funduq's own suite registers through the provider SDK rather than through
     # funduq's signing helpers, so the payload a provider actually sends is
-    # checked against the one funduq expects on every test run. Signing with
-    # funduq's own builder meant both sides moved together: an operation prefix
-    # was added, 219 tests passed, and no provider in the world could register
-    # any more. See funduq_provider_sdk.identity.
-    "funduq-provider-sdk",
-    # Same second-opinion arrangement for the KYOK side: the suite
-    # registers and serves completions through the LLM provider SDK, so
-    # its payload and the protocol it satisfies are checked against
-    # funduq's own on every run.
-    "funduq-llm-provider-sdk",
+    # checked against the one funduq expects on every test run: the suite
+    # registers, serves runs and serves completions through the SDK a real
+    # provider would use, rather than through funduq's own helpers. Both kinds
+    # of provider live in one distribution now, so the `llm` extra is what
+    # brings the completion half — and asking for it here is also how the
+    # suite proves the extra actually carries what it claims.
+    "funduq-provider-sdk[llm]",
     "pytest>=8.3",
     "pytest-asyncio>=0.24",
     "psycopg[binary,pool]>=3.2",
@@ -98,9 +95,11 @@ packages = ["funduq"]
 
 [tool.uv.sources]
 funduq-contract = { path = "../funduq-contract", editable = true }
-# Editable, and that matters: a non-editable path install copies the SDK
-# into the venv, so its signing payloads freeze at sync time and a change to
-# them would not fail a local test run — only a fresh CI install. The copy is
-# only a second opinion if it is the live one.
+# Editable, and that matters: a non-editable path install copies a package
+# into the venv, so a change to it would not fail a local test run — only a
+# fresh CI install. The suite is only checking the live code if the install
+# is editable.
+#
+# Keyed on the bare distribution name; the `[llm]` extra is requested where
+# the dependency is declared, not here.
 funduq-provider-sdk = { path = "../funduq-provider-sdk", editable = true }
-funduq-llm-provider-sdk = { path = "../funduq-llm-provider-sdk", editable = true }

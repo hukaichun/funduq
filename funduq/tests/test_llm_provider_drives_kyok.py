@@ -21,7 +21,7 @@ from funduq.protocols.a2a import A2AAdapter
 from funduq.protocols.agui import AGUIAdapter
 from funduq.protocols.kyok import CompletionFailure, KyokAdapter
 from funduq_provider_sdk.identity import kyok_call_payload
-from funduq_llm_provider_sdk import (
+from funduq_provider_sdk.llm import (
     DeliveredCompletion,
     InProcessLLMProvider,
     ProviderIdentity,
@@ -388,7 +388,7 @@ async def test_a_policy_refusal_reaches_the_agent_as_a_502(funduq, serve, llm):
 
 
 async def test_a_structured_refusal_travels_intact_not_as_prose(funduq, serve, llm):
-    from funduq_llm_provider_sdk import CompletionRefused
+    from funduq_provider_sdk.llm import CompletionRefused
 
     stub, _, ref = llm
     payload = {"kind": "budget-ceiling", "retryAfter": 5, "spent": {"runs": 3}}
@@ -632,7 +632,7 @@ async def test_deleting_an_offering_mirrors_delete_agent(funduq):
 
 
 async def test_funduq_counts_what_it_observed_while_relaying(funduq, serve, llm):
-    from funduq_llm_provider_sdk import CompletionRefused
+    from funduq_provider_sdk.llm import CompletionRefused
 
     stub, identity, ref = llm
     agent = KyokTokenAgent()

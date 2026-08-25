@@ -7,7 +7,7 @@ import pytest
 
 FUNDUQ_PACKAGE = Path(__file__).resolve().parent.parent / "funduq"
 
-FORBIDDEN_ROOTS = {"funduq_provider_sdk", "funduq_llm_provider_sdk", "funduq_client_sdk"}
+FORBIDDEN_ROOTS = {"funduq_provider_sdk", "funduq_provider_sdk.llm", "funduq_client_sdk"}
 
 
 def _core_modules() -> list[Path]:

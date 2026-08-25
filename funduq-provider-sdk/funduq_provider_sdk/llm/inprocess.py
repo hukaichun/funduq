@@ -11,8 +11,8 @@ from funduq_provider_sdk.identity import (
     verify_signature,
 )
 
-from funduq_llm_provider_sdk.link import FunduqLLMLink
-from funduq_llm_provider_sdk.provider import CompletionHandler, DeliveredCompletion
+from funduq_provider_sdk.llm.link import FunduqLLMLink
+from funduq_provider_sdk.llm.provider import CompletionHandler, DeliveredCompletion
 
 
 class InProcessLLMProvider(FunduqLLMLink):

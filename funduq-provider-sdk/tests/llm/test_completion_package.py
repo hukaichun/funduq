@@ -5,7 +5,7 @@ from dataclasses import dataclass
 
 from openai.types.chat import ChatCompletionChunk
 
-from funduq_llm_provider_sdk import (
+from funduq_provider_sdk.llm import (
     DELIVERED_COMPLETION_FIELDS,
     DeliveredCompletion,
     InProcessLLMProvider,
@@ -71,7 +71,7 @@ def test_public_key_is_the_identitys_own():
 
 
 async def test_any_link_gets_the_same_translation_the_in_process_one_does():
-    from funduq_llm_provider_sdk import FunduqLLMLink
+    from funduq_provider_sdk.llm import FunduqLLMLink
 
     seen: list[DeliveredCompletion] = []
 
@@ -105,7 +105,7 @@ async def test_any_link_gets_the_same_translation_the_in_process_one_does():
 
 
 async def test_the_readme_ceiling_pattern_refuses_structurally():
-    from funduq_llm_provider_sdk import CompletionRefused
+    from funduq_provider_sdk.llm import CompletionRefused
 
     spent: dict[str, int] = {}
 

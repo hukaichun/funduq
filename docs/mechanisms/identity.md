@@ -74,7 +74,7 @@ concern behind its single connection.
 ## Published as data
 
 Every payload above is exported by the SDKs — the agent families by
-`funduq-provider-sdk`, the LLM families by `funduq-llm-provider-sdk` — as
+`funduq-provider-sdk`, the LLM families by its `llm` extra — as
 independent twins of funduq's implementation: neither SDK imports funduq nor
 funduq them (the LLM SDK does share the provider SDK's keypair class,
 because identity is identity). Each is pinned byte-for-byte in

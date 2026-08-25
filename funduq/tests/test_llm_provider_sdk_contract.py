@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import inspect
 
-from funduq_llm_provider_sdk import (
+from funduq_provider_sdk.llm import (
     COMPLETION_REFUSAL_ATTR,
     CONNECTED_LLM_PROVIDER_ATTRS,
     CompletionRefused,
@@ -11,7 +11,7 @@ from funduq_llm_provider_sdk import (
     InProcessLLMProvider,
     ProviderIdentity,
 )
-from funduq_llm_provider_sdk.provider import DeliveredCompletion
+from funduq_provider_sdk.llm.provider import DeliveredCompletion
 
 from funduq.kyok import CompletionRequest, ConnectedLLMProvider
 from funduq.props import build_forwarded_props

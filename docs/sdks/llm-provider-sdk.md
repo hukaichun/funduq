@@ -1,4 +1,4 @@
-# funduq-llm-provider-sdk
+# Serving completions: the `llm` extra
 
 Part of [the SDKs](../sdks.md).
 

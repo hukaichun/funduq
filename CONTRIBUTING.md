@@ -8,7 +8,7 @@ that section before assuming a change belongs where you'd first guess.
 ## What lives here, and what doesn't
 
 This tree is the library (`funduq/`), the two provider-side contract
-packages (`funduq-provider-sdk/`, `funduq-llm-provider-sdk/`) and the published
+packages (`funduq-provider-sdk/`, `funduq-provider-sdk/`) and the published
 site (`docs/`), which carries the design records too.
 Everything else — the gateway, the transport SDKs, the reference
 providers and the directory UI — lives in
@@ -18,7 +18,7 @@ wire it defines — anything network-facing belongs there (see issue #27
 for the boundary).
 
 There is deliberately no shared `uv` workspace; each project (`funduq`,
-`funduq-provider-sdk`, `funduq-llm-provider-sdk`) syncs independently:
+`funduq-provider-sdk`, `funduq-contract`) syncs independently:
 
 ```bash
 cd funduq && uv sync --group dev

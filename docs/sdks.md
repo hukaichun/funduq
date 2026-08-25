@@ -15,7 +15,7 @@ models, and the chain verifier — each an independent twin of funduq's
 implementation, pinned by the published vectors.
 → [Details](sdks/provider-sdk.md)
 
-## funduq-llm-provider-sdk
+## funduq-provider-sdk[llm] — the completion half
 
 The LLM provider's side, inheriting the same discipline: the
 `FunduqLLMLink` port, the delivered-completion envelope, the structured

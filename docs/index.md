@@ -27,7 +27,7 @@ it: what is persisted, how the dispatch trunk moves runs and completions,
 how verification works, and where each mechanism lives in the tree.
 
 **[The SDKs](sdks.md)** — the two pure contract packages providers build
-with (`funduq-provider-sdk`, `funduq-llm-provider-sdk`): no transport, no
+with (`funduq-provider-sdk`, and its `llm` extra for completions): no transport, no
 funduq dependency, every byte pinned — including the wire itself, exercised
 end to end without a socket.
 

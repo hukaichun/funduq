@@ -18,7 +18,7 @@ import json
 from ag_ui.core import RunAgentInput, UserMessage
 from openai.types.chat import ChatCompletionChunk
 
-from funduq_llm_provider_sdk import DeliveredCompletion
+from funduq_provider_sdk.llm import DeliveredCompletion
 from funduq_provider_sdk import (
     AgentHandle,
     DeliveredRun,

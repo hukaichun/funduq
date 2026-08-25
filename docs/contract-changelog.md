@@ -24,6 +24,38 @@ after the first person was hurt.
 
 ---
 
+## Revision 3 — 2026-08-25
+
+**`funduq-llm-provider-sdk` is gone; serving completions is the `llm` extra
+of `funduq-provider-sdk`.**
+
+*What to change*: `pip install funduq-provider-sdk[llm]` instead of
+`funduq-llm-provider-sdk`, and import from `funduq_provider_sdk.llm` instead
+of `funduq_llm_provider_sdk`. Nothing else moved — the same classes, the same
+names, the same wire shapes.
+
+The two were 685 lines and 197, and the smaller imported nothing from the
+larger but `ProviderIdentity`: identity is identity, whichever kind of
+provider holds it. What kept them apart was dependency weight, which is the
+same argument that shaped everything else here — and an extra answers it
+better than a distribution does. `openai` drags httpx, anyio and a handful
+more, and an agent provider still does not pay for any of it: the extra is
+opt-in, and `funduq_provider_sdk.__init__` does not import the subpackage, so
+the import cost is opt-in too.
+
+It also settles a naming problem rather than solving one. With two packages,
+the agent one silently owned the unqualified word "provider" and a reader had
+to infer that. With one, "the provider SDK" covers both kinds honestly, and
+the distributions line up by role: **contract**, **core**, **provider**,
+and — when it exists — **caller**, which are the codebase's own words for the
+two sides of a door.
+
+This does not touch funduq's own separation of the two rosters. An LLM
+provider still registers separately and is judged separately; that is core's
+business, and this is a client library.
+
+---
+
 ## Revision 2 — 2026-08-25
 
 **A fourth package, `funduq-contract`, holds the bytes both sides sign.**

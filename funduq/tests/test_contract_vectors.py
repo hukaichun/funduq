@@ -74,7 +74,7 @@ def test_every_domain_tag_has_a_published_vector_family():
 def test_the_published_wire_frames_are_what_the_ports_translate_to():
     from funduq.kyok import CompletionRequest
     from funduq.models import AgentRef, ClaimedRun
-    from funduq_llm_provider_sdk import DeliveredCompletion
+    from funduq_provider_sdk.llm import DeliveredCompletion
     from funduq_provider_sdk import DeliveredRun
 
     (run_wire,) = [w["frame"] for w in VECTORS["wire"] if w["kind"] == "delivered-run"]
