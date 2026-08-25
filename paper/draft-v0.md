@@ -119,39 +119,134 @@ attestation… that the AS already performed policy narrowing validation」)。
 
 ---
 
-## 2. 鄰居們讓什麼變得不可表達
+## 2. 三個支撐點,以及提出者自己怎麼寫
 
-> 這是 related work,也是全文最可重用的一張表。它的規矩來自
-> `retractions.md`:**每一句「他們沒有做 X」都要有對方文本的出處,最好是
-> 對方自己的 limitations。** 沒讀全文的東西不進這張表。
+> **這一節的規矩**(`retractions.md`):每一句「他們沒有做 X」都必須有對方
+> 文本的出處,最好是對方自己的 limitations 或讓步。凡標
+> `[待逐字查證]` 的,目前出處是二手摘要,**進正文前必須讀原文**。
+>
+> 排列方式刻意不按系統排,按 §1 那三個支撐點排。這是論證的形狀:五個設計
+> 彼此不同,共同點是每一個都需要三樣裡的至少一樣。
+>
+> **篇幅衝突,要決定**:§1 ¶3 和 §2.2 引的是同樣那三句讓步。8 頁裝不下
+> 兩次。要嘛 §1 只留一句、其餘下放 §2,要嘛 §2.2 只留表格。**承重的那邊
+> 要引全文,另一邊只准指過去。**
 
-| 系統 | 這裡的「授權」是什麼意思 | agent 屬於誰 | 被弄成不可表達的 |
-|---|---|---|---|
-| gateway / proxy 層 + OAuth on-behalf-of | authorization server 簽發的 token 裡的 scope;agent **繼承一個人的**存取權 | 一個人類使用者 | agent 作為**獨立業務**服務多個使用方;以及「受託方自己也要負責」——在這裡它只是 `act` claim 裡的一個名字 |
-| agent-as-principal | agent 在某個 tenant 的目錄裡有自己的身分 | 註冊它的那個 tenant | 沒有自己目錄的供應方;或跨組織而不做 IdP 聯邦 |
-| 可驗證憑證式委派(帶 scope、可撤銷、根在 responsible party) | 寫進憑證的一組權限 | 根部的 responsible party | 任何**雙方沒有共同權限詞彙**的部署——見下 |
-| 遞減式能力權杖 | 每一跳只能收窄的能力 | 開出這條鏈的那一方 | **break**:子樹成為供應方自己的實作細節 |
-| 裁決式清算 | 由一份 obligation object 依證據被裁決 | 在 obligation 上共簽的雙方 | 雙方都有正當利益、而**沒有人有資格判定**的情況 |
+### 2.1 中央發證方
 
-**共同的形狀。** 回答「他能做什麼」會強迫三個前提之一:一個**中央發證方**
-(排除獨立供應方)、一套**共同權限詞彙**(排除沒有詞彙的所有人)、或一個
-**裁決者**(排除兩造都站得住的爭議)。
+鏈由誰簽,決定了鏈能離開誰而存在。
 
-**而第二個前提目前並不存在。** `[STUB — 待查證]` 現行 agent 授權相關的
-Internet-Draft 中,只有少數把權限放在結構化的 authorization-details 欄位,
-絕大多數完全沒有引用該機制;而同一層的兩份開放規格,共用同一個縮寫,在
-一週內先後發布且判定詞彙互不相容。
-**進正文前:直接從 IETF datatracker 取得草案計數,不要引二手來源,並註明
-查詢條件與日期。**
+- **`delegation_chain` claim**(Alibaba×2、Cisco、Okta,2026-06-06)每一筆
+  紀錄的 `as_signature` 是 **REQUIRED**,而委派方自己的 `delegator_signature`
+  是 **RECOMMENDED**。驗證方也不准相信手上那條鏈:
+  > 「For opaque (non-JWT) access tokens, the Resource Server **MUST** use
+  > token introspection ([RFC7662]) to retrieve **the authoritative
+  > `delegation_chain` from the AS**, rather than trusting any
+  > client-supplied chain data.」
 
-**而且它不可能以慣用的形式存在**,因為 agent 是在**推論當下**依 prompt 與
-先前輸出決定要呼叫哪些工具——那個集合在發憑證的時刻列舉不出來。
-`[STUB]` 找一手來源,不要引部落格。
+- **HDP**(2026-03)整條鏈只有一把金鑰,而它自己把後果寫出來了:
+  > 「HDP v0.1 uses the issuer's key for all hop signatures, meaning agents
+  > do not sign with their own keys… hop signatures attest that **a hop was
+  > recorded at the issuer**, not that the specific agent produced it.」(§7.1)
 
-> **刻意不放進這張表的**:本文所承接的古典脈絡——contract net 的任務分配、
-> agent 通訊語言、electronic institutions——屬於 §3,是**祖先**不是競爭者。
-> `classical-mas-line.md` 記著一件值得寫一句的事:近期七篇 agent 協定論文
-> 對那條線**零引用**。
+  per-agent key 是 v0.2 的計畫。
+
+- **SentinelAgent** 由一個中央 Delegation Authority Service 發證、攔截、
+  阻擋。`[待逐字查證]`
+
+**弄成不可表達的**:沒有共同發證方的兩方之間的委派。跨組織正是這種情況。
+
+### 2.2 共同權限詞彙
+
+**這一格不需要我們論證,因為提出者自己在三個地方讓步了,而且是同一份規格。**
+
+1. 這個欄位預設不存在:
+   > 「**This field is typically absent.** The delegation is governed solely
+   > by the OAuth `scope` parameter… When this field is absent, the Resource
+   > Server MUST apply scope-based authorization only.」
+2. 語言不由規格定,由雙方私下講好:
+   > 「…Rego…, ALFA…, XACML, or **any other policy representation agreed
+   > upon by the delegator and the Authorization Server**.」
+3. 算不動的時候,退回去信中央:
+   > 「For expressive policy languages where automated subset checking is
+   > computationally expensive or **undecidable**, the RS **MAY rely on the
+   > AS's attestation** (`as_signature`) as evidence that the AS already
+   > performed policy narrowing validation at issuance time.」
+
+三步依序把「共同詞彙」換成「雙邊協議」,再換成「對中央的信任」。
+
+而現存的詞彙彼此不通:`authorization_details`(AAT)、`cedar_actions`
+(MJWT)、`scope` + Rego(`delegation_chain`)、自然語言 `intent`(HDP)。
+四份規格四套詞彙。`[AAT / MJWT 待逐字查證]`
+
+HDP 記了 scope 之後,把檢查推回應用層:
+> 「Semantic validation of agent actions against declared scope is an
+> application-layer concern; **HDP provides the record, not the
+> enforcement.**」(§4.2.3)
+
+> **這句話要小心引。** 它跟本文的立場字面上相同,而立場其實不同:HDP 記
+> scope 然後不檢查,本文**不記 scope**。差別必須在正文裡講死,否則審稿人
+> 會說已經有人講過。
+
+**根本原因是時序,不是政治。** agent 在**推論當下**才決定呼叫哪些工具;
+委派發生時,委派方還不知道下游需要什麼,寫下的約束只能用猜的。猜窄了的
+代價量得到:把約束交給每一手自己收窄,擋掉最多 **54.5%** 本來該做的呼叫,
+完成度掉 36.3 分,理由是「delegators cannot anticipate downstream needs」。
+〔arXiv:2608.07556〕
+
+**弄成不可表達的**:任何雙方沒有共同權限詞彙的部署——也就是幾乎所有跨組織
+部署。
+
+### 2.3 裁決者
+
+- **RAILS** 自稱中性,但中性的是**裁決者**不是**棄權者**:「RAILS
+  adjudicates on evidence」(§5.5),而 §9.8 主張清算所的決定權。
+- **SentinelAgent** 在執行前攔截並阻擋。`[待逐字查證]`
+- **AIP** 是遞減式能力權杖那一系;它有 up-flow,但那是自報,而且是**被評價
+  的那一方自己簽的**——它自己的 Limitations 引用 Provenance Paradox 說
+  自評品質「systematically selects the worst delegates」。
+
+**弄成不可表達的**:兩造都有正當利益、而**沒有人有資格判定**的爭議。
+
+### 2.4 一張表(正文若擠得下)
+
+| 需要的支撐點 | 誰需要 | 出處 |
+|---|---|---|
+| 中央發證方 | `delegation_chain`、HDP、SentinelAgent | 「the authoritative `delegation_chain` from the AS」;HDP §7.1 |
+| 共同權限詞彙 | AAT、MJWT、`delegation_chain`、HDP | 「any other policy representation agreed upon by the delegator and the AS」 |
+| 裁決者 | RAILS、SentinelAgent | 「RAILS adjudicates on evidence」 |
+
+### 2.5 他們看見了同一個洞,然後把它列為選配
+
+`delegation_chain` 草案自己列的第二個缺口,就是本文的機制:
+
+> 「The `act` claim is **constructed unilaterally by the Authorization
+> Server**. The delegating agent leaves **no independent cryptographic
+> evidence** that it authorized a specific delegation. This limits
+> non-repudiation and post-hoc audit capabilities.」
+
+然後 `as_signature` 是 REQUIRED,`delegator_signature` 是 RECOMMENDED。
+
+**這是全節最有力的一段**:不是我們指出他們漏了什麼,是他們指出了同一件事,
+而在把它做成必要條件、還是做成選配之間,選了選配。本文選的是另一邊——鏈上
+除了各方自己的簽名之外**沒有別的東西**,所以沒有一把中央金鑰可以退回去信。
+
+順帶,那份規格對自己的邊界也很誠實:「This version of the specification
+**focuses on linear delegation chains**; other complex topologies such as
+diamond-shaped delegation… may be addressed by future extensions」,以及
+「A RECOMMENDED default maximum depth is **5 hops**」。**沒有任何一份處理
+「某一手不再延伸」** —— 那不是被拒絕,是沒有被想成一種行為。
+
+### 2.6 刻意不放進這一節的
+
+本文所承接的古典脈絡——contract net 的任務分配、agent 通訊語言、
+electronic institutions——屬於 §3,是**祖先**不是競爭者。
+`classical-mas-line.md` 記著一件值得寫一句的事:近期七篇 agent 協定論文
+對那條線**零引用**。
+
+已採納且最成熟的那份跨域規格(`draft-ietf-oauth-identity-chaining`,已送
+IESG)做的是 token 換發,不是責任。`[待逐字查證:它是否明文把 audit /
+accountability 列在範圍外,還是只是沒提。這兩件事在論文裡不能混為一談。]`
 
 ---
 
@@ -314,6 +409,10 @@ electronic institutions → 本場域自家期刊上的 accountability 線)是�
 
 - 每個百分比附 n,否則刪掉。
 - 每句「他們沒有做 X」都引對方文本,最好是 limitations。
+- §2 裡每個 `[待逐字查證]` 都清掉:二手摘要不得當引文。目前逐字讀過原文的
+  只有 `draft-liu-oauth-chain-delegation-00` 與 HDP;AAT、MJWT、
+  SentinelAgent、`draft-ietf-oauth-identity-chaining`、agentgateway 都還沒。
+- 「沒有明文寫」和「明文寫在範圍外」是兩件事,不得互相代用。
 - 每個「本系統有沒有實作 X」的句子,出處是程式碼或測試,**不是任何一頁
   文件**。
 - 送出那一週再掃一次該場域的最新 listing。
