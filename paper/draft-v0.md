@@ -1,336 +1,280 @@
-# Draft v0 — AAMAS 2027 main track (EMAS subject area)
+# 草稿 v0 — AAMAS 2027 主會(EMAS subject area)
 
-> **Status: first draft, structure complete, prose written where the argument
-> is settled and marked `[STUB]` where it is not.** Written 2026-08-25 from
-> the design statement given in conversation that day, plus
-> `strengths-and-gaps.md`, `downstream-review-2026-08.md` and
-> `retractions.md`. Nothing here is committed prose; the point is to see the
-> shape early enough to be wrong cheaply.
+> **狀態:第一版草稿。** 結構完整;論證已定的地方寫成成稿,未定的標
+> `[STUB]`。2026-08-25 寫,材料來自當天對話裡的設計理念陳述,加上
+> `strengths-and-gaps.md`、`downstream-review-2026-08.md`、`retractions.md`。
+> 這裡沒有一句是定稿——目的是**早一點看到形狀,錯得便宜**。
 >
-> **Constraints** (from the AAMAS 2027 instructions, read 2026-08-25):
-> eight pages excluding references, LaTeX mandatory, **double-blind**,
-> supplementary ≤25MB and reviewers need not read it — *anything essential
-> must be in the paper*. Abstract 2026-10-01, paper 2026-10-08; OpenReview
-> accounts two weeks before the abstract, so **by ~2026-09-17**.
+> **語言**:中文是工作語言,英文是投稿語言。專有名詞保留英文,因為它們在
+> 論文裡會是 term of art。定稿前整篇翻譯,不是逐句轉寫。
 >
-> **Double-blind handling.** The system, the repository and the probes are
-> the evidence and all three are identifying. Throughout this draft the
-> system is called **the broker**; before submission every occurrence of the
-> project name, the repository URL and the author's handle must be gone, and
-> the artifact link becomes an anonymised mirror. The probes are quoted by
-> *what they do*, never by repository path.
+> **投稿硬約束**(2026-08-25 讀 AAMAS 2027 instructions):正文 **8 頁**、
+> 參考文獻不計、**LaTeX 強制**、**double-blind**、補充材料 ≤25MB 而且
+> **審稿人沒有義務看**——所以任何承重的東西必須寫在正文裡。
+> 摘要 2026-10-01、正文 2026-10-08;OpenReview 帳號要在摘要前兩週建好,
+> 也就是 **~2026-09-17**。
+>
+> **匿名化**:系統名、repo、probe 三個都會破匿名,而它們正好是證據。
+> 本草稿一律稱系統為 **the broker**;送出前專案名、repo URL、作者 handle
+> 全部要清掉,artifact 換成匿名鏡像。probe **用它做了什麼來稱呼**,不用
+> 路徑。
 
 ---
 
-## Title candidates
+## 標題候選
 
 1. **Responsibility Chains: A Broker That Records Delegation Without Governing It**
 2. Every Node Is a Supplier: Delegation Boundaries for Agents That Represent Businesses
 3. What a Chain Proves: Origin, Possession, and the Limits of Delegation Provenance
 
-> (1) says the position and the refusal in one line and is the safest for a
-> reviewer skimming titles. (3) is the most honest about the paper's
-> strongest evidence but reads as a negative result. Decide late.
+> (1) 一行講完位置和拒絕,對掃標題的審稿人最安全。(3) 最誠實地反映本文
+> 最強的證據,但讀起來像負面結果。**晚點再決定**,等摘要寫出來。
 
 ---
 
-## Abstract `[STUB — write last]`
+## 摘要 `[STUB — 最後寫]`
 
-Must contain, in this order: an agent represents a business rather than a
-person; delegation makes every provider a caller, so the two roles are
-recursive; systems that answer *what may this agent do* build one scenario
-into the protocol and make the others inexpressible; a broker that records
-responsibility without adjudicating it keeps both parties' positions intact;
-and two properties of signed delegation chains that we falsified against a
-running implementation.
+要依序包含:agent 代表的是業務不是人;委派讓每個供應方變成使用方,兩個
+角色是遞迴的;回答「他能做什麼」的系統把一種場景寫進了協定,於是別的場景
+不可表達;一個只記錄責任、不裁決責任的 broker 能同時保住兩邊的立足點;
+以及**兩個我們對著跑得起來的實作證偽掉的性質**。
 
 ---
 
 ## 1. Introduction
 
-**¶1 — an agent is not a person.** We speak of agents as though they were
-people, and then decline to treat them as such: no agent is educated, holds
-rights, or votes. What an agent is, always, is the encapsulation of a
-business — a unit of work someone offers and someone else consumes. The
-question of an agent's *own* standing therefore never arises. Every question
-that matters is about the two parties on either side of it.
+**¶1 —— agent 不是人。** 我們用談人的方式談 agent,然後又不真的那樣對待
+它:沒有人教育 agent、給它權利、讓它投票。agent 一直以來是什麼,是**一項
+業務的封裝**——有人提供、有人使用的一個工作單位。所以「agent 自己的地位」
+這個問題從來不成立。真正要緊的每一個問題,都關於它兩側的那兩方。
 
-**¶2 — the two things a protocol must not take away.** A provider publishes
-a capability and must keep the freedom to implement it as it sees fit,
-including the freedom to subcontract without disclosing to whom. A caller
-pays for the work and must keep the standing to intervene in it, to see what
-it needs to see, and to find someone accountable when it goes wrong. Neither
-is negotiable, and a mechanism that preserves one by spending the other has
-solved nothing.
+**¶2 —— 協定不可以拿走的兩樣東西。** 供應方公開一項能力,必須保有**照
+自己方式實作的自由**,包括轉包給誰而不揭露的自由。使用方付錢,必須保有
+**介入的立足點**——該看到的看得到,出事時找得到人負責。兩者都不可協商,
+而一個用犧牲其中一個去換另一個的機制,等於什麼都沒解決。
 
-**¶3 — the recursion that makes this hard.** The moment a provider delegates,
-it becomes a caller. The same party must simultaneously be protected in its
-freedom to implement and held to its answerability upstream. There is no
-fixed assignment of roles to parties that a protocol can encode, because the
-roles alternate along every path of the delegation tree.
+**¶3 —— 使問題困難的那一步遞迴。** 供應方一旦委派,它就變成使用方。
+**同一方**必須同時被保護實作自由、又被要求對上游負責。沒有任何「把角色
+固定分配給參與方」的寫法可以寫進協定,因為角色沿著委派樹的每一條路徑
+交替。
 
-**¶4 — why a policy cannot do it, and a boundary can.** A policy has to
-decide which party is which before it can act, and that decision is an
-adjudication: it takes a side between two parties who both have a legitimate
-interest. A boundary does not. It records where responsibility ends and
-begins, and leaves the exercise of rights to the parties who hold them. Not
-adjudicating is not modesty; it is the only position from which both can be
-preserved.
+**¶4 —— 為什麼政策做不到而界線做得到。** 政策必須先判定哪一方是哪一種
+才能動作,而那個判定就是**裁決**:它在兩個都有正當利益的一方之間選邊。
+界線不必。界線只記錄責任在哪裡結束、在哪裡開始,權利的行使留給持有它的
+那一方。不裁決不是謙虛,是**唯一能同時保住兩邊的位置**。
 
-**¶5 — what the field does instead.** Every deployed and proposed system in
-this space answers a different question — *what may this agent do* — and
-each answers it by building one application scenario into the protocol
-itself. §2 shows five, and what each one makes inexpressible. The cost is
-not that they are wrong; each is right for its scenario. The cost is that
-adopting one removes scenarios from the space.
+**¶5 —— 這個領域實際上做了什麼。** 這個空間裡每一個已部署與已提出的系統
+回答的是另一個問題——**「他能做什麼」**——而每一個都用「把一種應用場景
+寫進協定本身」的方式回答。§2 列了五個,以及它們各自讓什麼變得不可表達。
+代價不是它們錯了:每一個對它自己的場景都是對的。**代價是採用其中一個,
+就從空間裡拿掉了一些場景。**
 
-**¶6 — contributions.**
-1. A statement of the delegation problem in which roles are recursive and
-   the intermediary is a recorder rather than an adjudicator (§3).
-2. A mechanism — responsibility chains — in which what crosses a boundary is
-   keys and structure, never permissions, and in which extending or not
-   extending is itself the declaration (§4).
-3. A demonstration that a *right* can ride that structure without the
-   intermediary defining the right: an authorization chain layered on a
-   responsibility chain, boundary-truncated (§5).
-4. **Two properties we falsified against the running system** (§6): a signed
-   chain proves origin and not possession, and a chain's completeness is not
-   provable. Both are demonstrated by executable probes, and one of the two
-   remains open.
+**¶6 —— 貢獻。**
+1. 把委派問題陳述成一個**角色遞迴**、而中介是記錄者而非裁決者的問題(§3)。
+2. 一個機制——**責任鏈**——跨越邊界的是金鑰與結構,從不是權限;而「延伸
+   或不延伸」本身就是宣告(§4)。
+3. 示範一項**權利**可以搭著那個結構走,而中介從未定義那項權利:一條授權鏈
+   疊在責任鏈上,在邊界處截斷(§5)。
+4. **兩個我們對著跑得起來的系統證偽掉的性質**(§6):一條簽好的鏈證明來源
+   而不證明持有;鏈的完整性無法證明。兩者都由可執行的 probe 展示,而其中
+   一個至今未關。
 
-> `[STUB]` ¶5 needs the *hook*: the reader must feel a live problem in the
-> first column. Candidate, sourced rather than asserted: of surveyed
-> organisations, 28% can trace an agent's actions to a human sponsor and
-> 24.4% have visibility into agent-to-agent communication. Verify the
-> survey's n and methodology before it goes in — `retractions.md` §E, any
-> percentage carries its n or is cut.
+> `[STUB]` ¶5 還缺**鉤子**:讀者要在第一欄就感覺到這是個活的問題。候選
+> (要有出處,不能用斷言):受訪組織中只有 28% 能把 agent 的行為追回到
+> 一個人類負責人,24.4% 對 agent 之間的通訊有完整可見度。
+> **進正文前必須查證這份調查的 n 與方法**——`retractions.md` §E:
+> 任何百分比要嘛附 n,要嘛不引。
 
 ---
 
-## 2. What the neighbours make inexpressible
+## 2. 鄰居們讓什麼變得不可表達
 
-> The related-work section, and the paper's most reusable table. Its rule,
-> from `retractions.md`: **every "they do not do X" is sourced from their own
-> text, preferably their own limitations.** No claim survives here that we
-> have not read in full.
+> 這是 related work,也是全文最可重用的一張表。它的規矩來自
+> `retractions.md`:**每一句「他們沒有做 X」都要有對方文本的出處,最好是
+> 對方自己的 limitations。** 沒讀全文的東西不進這張表。
 
-| System | What *authorization* means | Whom the agent belongs to | Made inexpressible |
+| 系統 | 這裡的「授權」是什麼意思 | agent 屬於誰 | 被弄成不可表達的 |
 |---|---|---|---|
-| Gateway/proxy layer with OAuth on-behalf-of | scopes in a token an authorization server issued; the agent inherits a human's access | a human user | the agent as an *independent business* serving many callers; a delegate that is itself accountable rather than a name in an `act` claim |
-| Agent-as-principal | the agent has its own identity inside one tenant's directory | the tenant that registered it | a provider with no directory of its own, or one crossing organisations without federation |
-| Verifiable-credential delegation (scoped, revocable, rooted at a responsible party) | a permission set written into a credential | the responsible party at the root | any deployment where the two sides share no permission vocabulary — see below |
-| Attenuating capability tokens | a capability that may only shrink at each hop | whoever originated the chain | *break*: a subtree becoming the provider's own implementation detail |
-| Adjudicated clearing | an obligation object cleared by a decision on evidence | the co-signers of the obligation | the case where both parties have a legitimate interest and no one has standing to decide |
+| gateway / proxy 層 + OAuth on-behalf-of | authorization server 簽發的 token 裡的 scope;agent **繼承一個人的**存取權 | 一個人類使用者 | agent 作為**獨立業務**服務多個使用方;以及「受託方自己也要負責」——在這裡它只是 `act` claim 裡的一個名字 |
+| agent-as-principal | agent 在某個 tenant 的目錄裡有自己的身分 | 註冊它的那個 tenant | 沒有自己目錄的供應方;或跨組織而不做 IdP 聯邦 |
+| 可驗證憑證式委派(帶 scope、可撤銷、根在 responsible party) | 寫進憑證的一組權限 | 根部的 responsible party | 任何**雙方沒有共同權限詞彙**的部署——見下 |
+| 遞減式能力權杖 | 每一跳只能收窄的能力 | 開出這條鏈的那一方 | **break**:子樹成為供應方自己的實作細節 |
+| 裁決式清算 | 由一份 obligation object 依證據被裁決 | 在 obligation 上共簽的雙方 | 雙方都有正當利益、而**沒有人有資格判定**的情況 |
 
-**The common shape.** Answering *what may this agent do* forces one of three
-prerequisites: a central issuer (excluding independent providers), a shared
-permission vocabulary (excluding everyone who lacks one), or an adjudicator
-(excluding disputes with two legitimate sides).
+**共同的形狀。** 回答「他能做什麼」會強迫三個前提之一:一個**中央發證方**
+(排除獨立供應方)、一套**共同權限詞彙**(排除沒有詞彙的所有人)、或一個
+**裁決者**(排除兩造都站得住的爭議)。
 
-**The second prerequisite does not currently exist.** `[STUB — verify]` Of
-active agent-authorization Internet-Drafts, a small minority carry
-permissions in a structured authorization-details field and the large
-majority do not reference that mechanism at all; two open specifications for
-the same layer, sharing an acronym, shipped within a week of each other with
-incompatible verdict vocabularies. **Before this ships: obtain the draft
-counts from the IETF datatracker directly rather than from a secondary
-source, and state the query and date.**
+**而第二個前提目前並不存在。** `[STUB — 待查證]` 現行 agent 授權相關的
+Internet-Draft 中,只有少數把權限放在結構化的 authorization-details 欄位,
+絕大多數完全沒有引用該機制;而同一層的兩份開放規格,共用同一個縮寫,在
+一週內先後發布且判定詞彙互不相容。
+**進正文前:直接從 IETF datatracker 取得草案計數,不要引二手來源,並註明
+查詢條件與日期。**
 
-**And it cannot exist in the usual form**, because an agent selects its tools
-at inference time from a prompt and prior outputs — the set is not
-enumerable when a credential is issued. `[STUB]` Attribute this to a primary
-source, not a blog.
+**而且它不可能以慣用的形式存在**,因為 agent 是在**推論當下**依 prompt 與
+先前輸出決定要呼叫哪些工具——那個集合在發憑證的時刻列舉不出來。
+`[STUB]` 找一手來源,不要引部落格。
 
-> **Not in the table, deliberately**: the classical line this work descends
-> from — contract-net task allocation, agent communication languages,
-> electronic institutions — belongs in §3, as ancestry rather than
-> competition. `classical-mas-line.md` records that seven recent
-> agent-protocol papers cite none of it, which is itself worth one sentence.
+> **刻意不放進這張表的**:本文所承接的古典脈絡——contract net 的任務分配、
+> agent 通訊語言、electronic institutions——屬於 §3,是**祖先**不是競爭者。
+> `classical-mas-line.md` 記著一件值得寫一句的事:近期七篇 agent 協定論文
+> 對那條線**零引用**。
 
 ---
 
-## 3. The setting
+## 3. 場景設定
 
-**3.1 Businesses, not persons.** A delegation tree is rooted in a business
-need and every node is a supplier of a business. Whether a human sits at the
-root is not a separate question: a unit that answers for nothing is not a
-business, and a business is made of people who answer for things. This
-dissolves rather than solves a problem posed elsewhere in the literature —
-that a subdelegation chain leaves fault unassigned *because there is no
-human principal to absorb it*. If nothing absorbs it, there is no business,
-and nothing to clear.
+**3.1 是業務,不是人格。** 一棵委派樹**根在一項業務需求**,而**每個節點都
+是某項業務的供應方**。根部有沒有坐著一個人不是另一個問題:一個不為任何事
+負責的單位不是業務,而業務是由會為事情負責的人組成的。
 
-**3.2 What the intermediary is for.** `[STUB]` The broker holds the run,
-records who asked and through whose hands the work passed, and hands the work
-to whoever is serving. It implements no transport and speaks no protocol of
-its own; the interaction vocabulary is the standards'.
+這**取消**而不是解決了文獻裡的一個問題:有人主張子委派鏈讓過失無從歸屬,
+**因為沒有人類 principal 去吸收它**。如果真的沒有東西吸收,那就不是一項
+業務,也就沒有什麼好清算的。
 
-**3.3 The discipline: no interaction mode per scenario.** `[STUB]` Whatever
-the broker invents must be opt-in and must leave a standard client's
-behaviour unchanged — a property that can be tested rather than asserted.
-State the test.
+**3.2 中介是幹嘛的。** `[STUB]` broker 持有 run,記錄誰提出、經過誰的手,
+並把工作交給正在服務的那一方。它不實作 transport,也不說自己發明的協定;
+互動的詞彙是標準的。
+
+**3.3 紀律:不替場景發明互動模式。** `[STUB]` broker 發明的任何東西必須
+opt-in,而且必須讓標準客戶端的行為**完全不變**——這是可以測的性質,不是
+宣稱。把那個測試寫出來。
 
 ---
 
-## 4. Responsibility chains
+## 4. 責任鏈
 
-`[STUB — the mechanism section; longest, and the one EMAS reviewers will
-read hardest.]`
+`[STUB —— 機制章,最長,而且是 EMAS 審稿人讀最兇的一節。]`
 
-Must cover, in this order:
+必須依序涵蓋:
 
-1. **The chain carries keys and nothing else.** No subject, no time, no
-   scope. Each hop is signed by the key it names and hash-links to the
-   previous hop.
-2. **Extending is the declaration; silence is the break.** There is no
-   per-edge flag. What extension buys — escalation path, answering rights,
-   visibility — is exactly what a break refuses, so a flag would have
-   nothing to mean. Segment boundaries are *derived from where signatures
-   reached*, never registered.
-3. **The bundle.** Intervention rights, cost attribution and visibility
-   follow the same boundary, and that is what makes the declaration
-   incorruptible: *the caller pays but may not look* and *the provider looks
-   but does not pay* are both structurally unsayable. Note: the bundle is a
-   property of the declaration's semantics, not of any one implementation
-   of cost.
-4. **The intermediary decides nothing about the declaration**, and does not
-   determine what any party *is*. The vocabulary of agency and resource
-   ownership names the two stable shapes a free, priced declaration collapses
-   into; it is not a test anyone applies.
+1. **鏈只帶金鑰,不帶別的。** 沒有 subject、沒有時間、沒有 scope。每一跳
+   由它所指名的金鑰簽署,並以雜湊連到前一跳。
+2. **延伸就是宣告,沉默就是 break。** 沒有 per-edge 的旗標。延伸買到的
+   東西——升級路徑、回答權、可見性——正好是 break 拒絕的東西,所以旗標
+   沒有東西可以表示。段落邊界是**從簽名實際到達的位置推導出來的**,不在
+   任何地方登記。
+3. **三綁。** 介入權、成本歸屬、可見性沿著同一條邊界走,而那正是宣告
+   不可腐化的原因:「**使用方付錢但不准看**」和「**供應方能看但不付錢**」
+   兩句話結構上都說不出來。註記:三綁是**宣告的語義**,不是任何一種成本
+   實作的功能。
+4. **中介對宣告不做任何決定**,也不判定任何一方**是什麼**。agency /
+   resource owner 這組詞彙,是那兩種宣告各自意味著什麼的名字——是自由而
+   被定價的宣告會塌縮成的兩個穩定型態——不是任何人拿來判定的測試。
 
 ---
 
-## 5. An authorization chain on top
+## 5. 疊在上面的授權鏈
 
-A responsibility chain says who answers. It says nothing about what anyone
-may do — and a right can nonetheless travel along it, without the
-intermediary defining the right.
+責任鏈說的是誰負責。它對任何人可以做什麼**隻字未提**——而一項權利仍然
+可以沿著它走,不需要中介去定義那項權利。
 
-**The rule.** A right held by a segment's head may be exercised by any party
-inside that segment, and stops at the boundary.
+**規則。** 一項屬於段落 head 的權利,段落內的任何一方都可以行使,**到邊界
+為止**。
 
-**The worked instance.** `[STUB]` A caller's own model credential, usable by
-the agent serving that caller's run and by anything the segment extends to,
-truncated where the segment ends: a broken-off subtree funds itself. The
-intermediary never judges what the credential may be spent on. It decides
-only where the segment ends.
+**具體實例。** `[STUB]` 使用方自己的模型憑證,可以被服務該 run 的 agent
+使用,也可以被段落延伸到的任何一方使用,並在段落結束處截斷:斷開的子樹
+自己出錢。中介從不判斷那份憑證可以花在什麼上。它只決定段落在哪裡結束。
 
-**Why this is the answer to §2.** The systems in that table define rights
-*inside* the chain, and therefore need a vocabulary everyone agrees on. Here
-the chain defines only structure and the right attaches to it, so no prior
-agreement about the meaning of permissions is required.
+**為什麼這是對 §2 的回答。** 那張表裡的系統把權利定義在**鏈之內**,因此
+需要一套所有人都同意的詞彙。這裡鏈只定義結構、權利依附結構,所以**不需要
+任何人事先同意「權限」是什麼意思**。
 
-> **Honesty, in the paper**: this instance is experimental. It is complete as
-> a demonstration that layering works and is not offered as a production
-> mechanism. `[decide]` whether it appears as a section, a paragraph in §4,
-> or future work.
+> **論文裡要誠實寫的**:這個實例是實驗性的。作為「疊加可行」的示範它是
+> 完整的,但不作為生產機制提出。`[待決]` 它是一節、§4 的一段,還是
+> future work。
 
 ---
 
-## 6. What we falsified
+## 6. 我們證偽掉的東西
 
-> The paper's most distinguishing section, and the reason to write it at all:
-> in a literature where mechanism properties are asserted in prose, these were
-> executed. Both probes were written red, before the fixes, and one is still
-> red.
+> 全文最有辨識度的一節,也是這篇值得寫的理由:在一個機制性質靠散文宣稱的
+> 文獻裡,這兩條是**被執行**的。兩支 probe 都是**先寫成紅的**、在修法之前,
+> 而且其中一支至今仍紅。
 
-**6.1 A signed chain proves origin, not possession.** A chain proves the
-head's key signed the first hop. It does not prove that whoever presents it
-now holds that key — and the chain is not a secret, since the broker relays
-it to the serving provider verbatim so the agent may verify it rather than
-trust a summary. A probe has the provider present the caller's own chain back
-at a door for work the caller never requested: it is accepted, recorded under
-the caller's head, and the two records are identical in every field carrying
-authority.
+**6.1 簽好的鏈證明來源,不證明持有。** 一條鏈證明 head 的金鑰簽了第一跳。
+它不證明**現在呈交它的人**持有那把金鑰——而鏈不是秘密,因為 broker 會把它
+原樣轉給正在服務的供應方,好讓 agent 自己驗證而不是相信一份摘要。一支
+probe 讓供應方拿使用方自己的鏈,在門口為使用方從未要求過的工作開一個 run:
+它被接受、記在使用方的 head 底下,而兩筆紀錄在**所有帶權威的欄位上完全
+相同**。
 
-*The fix, and its shape*: the broker cannot authenticate a presenter, because
-a door receives bytes rather than a connection. The seat in front of it can,
-and passes in the key it authenticated; the broker compares that key against
-the chain's **last hop** — never its head, which is exactly the mistake that
-lets the replay through. Authentication stays outside; the comparison belongs
-inside, where it is tested once instead of reimplemented per deployment.
+*修法及其形狀*:broker 無法認證呈交者,因為門收到的是 bytes 不是連線。
+前面的 seat 可以,並把它認證出的金鑰傳進來;broker 拿它去比對鏈的
+**最後一跳**——絕不是 head,而比對 head 正是讓上述重放通過的那個錯誤。
+認證留在外面;比對放在裡面,因為那樣只需要測一次,而不是每個部署各自
+重寫一遍。
 
-**6.2 Completeness is not provable.** Signatures and hash-links prove nobody
-was inserted, reordered, or spliced in from another chain. They never prove
-nobody was *removed*. A probe rebuilds `caller → A → B` as `caller → B` from
-the first hop's own token: nothing is forged, it verifies, and the head is
-unchanged. Two properties do resist and are asserted alongside it — the head
-cannot be dropped, and a hop from a foreign chain cannot be grafted on.
+**6.2 完整性無法證明。** 簽名與雜湊連結證明沒有人被**插入**、**重排**、
+或從別條鏈**接枝**進來。它們從不證明沒有人被**移除**。一支 probe 用第一跳
+自己的 token 把 `caller → A → B` 重建成 `caller → B`:沒有偽造任何東西,
+驗證通過,head 不變。兩個確實抵抗得住的性質也一併釘住——head 抹不掉,
+別條鏈的 hop 接不上來。
 
-*What reaches it*: the broker signing each dispatch with the agent it
-dispatched to. An agent is addressed as a (provider key, name) pair, and that
-provider key is the one that signs the next hop when the provider extends
-honestly — so a hop and its successor check against each other, and a branch
-cannot satisfy both.
+*什麼構得到它*:broker 為它所做的每一次派工簽名,並寫明**派給哪個 agent**。
+agent 的定址是 (provider key, name) 這一對,而那把 provider key 正是該
+供應方老實延伸時要簽下一跳的金鑰——於是一跳與它的後繼互相對照,而分支
+無法同時滿足兩邊。
 
-**6.3 What we do not claim.** A recent survey states that no deployed
-protocol can cryptographically prove which human principal authorized which
-specific agent to perform which *specific action* at the third or fourth hop.
-**This work does not satisfy that either**: binding the first hop to the act
-it authorizes is deliberately deferred, so a party that extends honestly and
-then acts under the caller's head is visible and attributable but not
-prevented. We claim the position and the path, never that sentence.
+**6.3 我們不主張什麼。** 近期一份綜述指出:沒有任何已部署的協定能以密碼學
+證明「哪個人類 principal 授權了哪個 agent 去做哪個**具體動作**」到第三或
+第四跳。**本工作同樣不滿足這句話**:把第一跳綁定到它所授權的動作是**刻意
+延後**的,所以一個老實延伸之後、以使用方的 head 行動的一方,是**看得見、
+追得到,但攔不住**的。我們主張位置與路徑,絕不主張那句話。
 
-Nor do we claim that recording without adjudicating is *effective*. No one
-has measured that, ourselves included; the adjacent result that appears to
-support it comes from a design that also mediates completely and does
-adjudicate, and therefore contains no record-only arm to compare against.
+我們也不主張「只記錄不裁決」是**有效的**。沒有人量測過,包括我們自己;
+看似支持它的那個相鄰結果,來自一個同時做 complete mediation **而且會裁決**
+的設計,因此它裡面根本沒有 record-only 這個對照組。
 
 ---
 
-## 7. Implementation `[STUB]`
+## 7. 實作 `[STUB]`
 
-Short. The mechanism is implemented and under test; the one designed-but-
-unimplemented part is the disclosure that translates a key to a person, which
-belongs to a deployment's own identity provider and is named as such. State
-the implemented-versus-designed split as a table and let it be small.
+簡短。機制已實作且有測試;唯一「已設計未實作」的部分是把金鑰翻譯成人的那
+一次揭露,而它屬於部署自己的 identity provider,論文裡照這樣命名。
+implemented-versus-designed 用一張小表交代就好。
 
-**Do not** claim the mechanism is unimplemented — an internal table said so
-while tests exercised it, and that error is recorded in `retractions.md` as
-its own failure mode: trusting a document that had fallen behind the code.
-
----
-
-## 8. Discussion and limitations
-
-- **What this work removes from the space.** Every design forecloses
-  something; §2's table is only fair if we say what ours forecloses. Ours has
-  no vocabulary for a *standing intent* — a monitor or resident guard is
-  modelled as many runs plus a thread, and the standing-ness lives outside
-  the record. Responsibility for a timer-driven run traces to a deployment
-  decision rather than to a moment of human choice, and nothing on the chain
-  points at that decision.
-- **Governance attaches here; it is not provided here.** Two independent
-  papers state the demand: governance is a missing architectural layer that
-  must compose with existing interoperability standards, and the governance
-  questions around clearing are explicitly unsettled. `[quote both]`
-- `[STUB]` Federation, and why chains crossing several brokers need no extra
-  design.
+**不要**宣稱機制沒有實作——曾經有一份內部對照表這樣寫,而同時有測試在測
+它;那個錯誤已記在 `retractions.md`,而且是它自己的一種失敗形態:**相信一份
+落後於程式碼的文件**。
 
 ---
 
-## 9. Related work — placement notes `[STUB]`
+## 8. 討論與限制
 
-Merge into §2 or keep separate depending on space. The classical line
-(contract net → agent communication languages → electronic institutions →
-the accountability line in this venue's own journal) is the handshake with
-the likely reviewer, and `classical-mas-line.md` has it with citations.
+- **本工作從空間裡拿掉了什麼。** 每一個設計都會剝掉東西;§2 那張表只有在
+  我們對自己問同一個問題時才公平。我們沒有**常駐意圖**的詞彙——監控或
+  常駐守衛被建模成很多個 run 加一個 thread,而「常駐」這件事住在紀錄之外。
+  由 timer 驅動的 run,責任追到的是一次**部署決定**而不是一次人的選擇,
+  而鏈上沒有任何東西指向那個決定。
+- **治理接在這裡,但不由這裡提供。** 兩份立場不同的論文陳述了需求:治理是
+  一個**缺失的架構層**,必須能與既有互通標準**組合**;以及清算周邊的治理
+  問題**明文未定**。`[兩句原文都要引]`
+- `[STUB]` 聯邦,以及為什麼鏈跨越多個 broker 不需要額外設計。
 
 ---
 
-## Open decisions before writing prose
+## 9. Related work —— 擺放備註 `[STUB]`
 
-1. **Title** — decide late, after the abstract exists.
-2. **§5's placement** — section, paragraph, or future work.
-3. **The §1 hook** — which sourced number, with its n verified.
-4. **Anonymisation plan** — anonymised artifact mirror, and whether the
-   probes ship as supplementary (reviewers need not read it, so anything
-   load-bearing must be described in §6 itself).
+視篇幅併入 §2 或獨立成節。古典脈絡(contract net → agent 通訊語言 →
+electronic institutions → 本場域自家期刊上的 accountability 線)是與可能
+審稿人握手的地方,`classical-mas-line.md` 已備妥含引用。
 
-## Checks before submission
+---
 
-- Every percentage carries its n, or is cut.
-- Every "they do not do X" cites their text, ideally their limitations.
-- Every claim about what this system implements cites code or a test, never
-  a page of documentation.
-- Re-sweep the venue's recent listings the week of submission.
+## 動筆前要決定的四件事
+
+1. **標題** —— 摘要寫出來之後再定。
+2. **§5 的位置** —— 一節、§4 的一段,還是 future work。
+3. **§1 的鉤子** —— 用哪個有出處的數字,而且 n 要查證過。
+4. **匿名化方案** —— 匿名 artifact 鏡像;以及 probe 要不要當補充材料
+   (審稿人沒有義務看,所以承重的部分必須在 §6 正文裡講完)。
+
+## 送出前的檢查
+
+- 每個百分比附 n,否則刪掉。
+- 每句「他們沒有做 X」都引對方文本,最好是 limitations。
+- 每個「本系統有沒有實作 X」的句子,出處是程式碼或測試,**不是任何一頁
+  文件**。
+- 送出那一週再掃一次該場域的最新 listing。
