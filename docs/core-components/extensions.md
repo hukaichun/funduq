@@ -10,7 +10,16 @@ Part of [core components](../core-components.md). The six
 | [Runs and cancels are requests](../mechanisms/requests.md) | `broker.py` (three-valued offer, cancel relay, observed outcomes) | `FunduqLink.offer` / `Refusal` in `funduq_provider_sdk` |
 | [Provider quality counters](../mechanisms/quality.md) | `live_roster.py` counters; snapshots via `RunBroker.quality` / `KyokRelay.quality` | — (observed, not reported by providers) |
 | [Keep your own key](../mechanisms/kyok.md) | `kyok.py` (bindings, tokens, relay) + `protocols/kyok.py` (call authorization, relay envelope) | `funduq_provider_sdk.llm` (link, handler, `CompletionRefused`) |
-| [Responsibility chains](../mechanisms/responsibility-chains.md) | **not implemented** — design record only | — |
+| [Responsibility chains](../mechanisms/responsibility-chains.md) | `repo.py` (`head_key` on threads and runs, `ThreadMembershipRequired`), `doors.py` (`verify_caller` and its presenter check, `authorize_cancel`, the resolution check in `open_run`), `identity.py` (`verify_resolution`, `verify_cancel`, `verify_delegation`) | `funduq_provider_sdk.identity` (`sign_resolution`, `sign_cancel`, `sign_delegation`, `extend_chain`) |
+
+**Vouchers are the row's one unimplemented part** — translating a key to a
+person is a disclosure only a deployment's own IdP can make, and
+[responsibility chains](../mechanisms/responsibility-chains.md) says so.
+Everything else on that page — a thread bound to a head at birth, answering
+and stopping needing a signature from that head, break and extend as
+behaviours rather than fields — is code with tests against it. The row said
+"not implemented — design record only" while 37 tests exercised it, which is
+the drift this table exists to prevent.
 
 The byte-level agreement between the two columns is
 [`contract-vectors.json`](../contract-vectors.json); neither column
