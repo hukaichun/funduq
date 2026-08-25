@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from tests.conftest import publish_agents, publish_llm
 
-from funduq_llm_provider_sdk import InProcessLLMProvider, ProviderIdentity
+from funduq_provider_sdk.llm import InProcessLLMProvider, ProviderIdentity
 
 from funduq.models import AgentRef, LlmRef
 

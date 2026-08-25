@@ -6,7 +6,7 @@ from typing import Any
 
 from openai.types.chat import ChatCompletionChunk
 
-from funduq_llm_provider_sdk.provider import DeliveredCompletion
+from funduq_provider_sdk.llm.provider import DeliveredCompletion
 
 
 class FunduqLLMLink(ABC):

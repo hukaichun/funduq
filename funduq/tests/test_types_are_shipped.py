@@ -9,7 +9,6 @@ _REPO = Path(__file__).resolve().parents[2]
 _DISTRIBUTED_PACKAGES = [
     _REPO / "funduq" / "funduq",
     _REPO / "funduq-provider-sdk" / "funduq_provider_sdk",
-    _REPO / "funduq-llm-provider-sdk" / "funduq_llm_provider_sdk",
 ]
 
 

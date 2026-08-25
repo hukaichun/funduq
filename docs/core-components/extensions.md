@@ -9,7 +9,7 @@ Part of [core components](../core-components.md). The six
 | [Actor chain](../mechanisms/actor-chain.md) | `identity.py` (`verify_chain`, chain builders) | `funduq_provider_sdk` (`sign_hop`, `verify_chain`) |
 | [Runs and cancels are requests](../mechanisms/requests.md) | `broker.py` (three-valued offer, cancel relay, observed outcomes) | `FunduqLink.offer` / `Refusal` in `funduq_provider_sdk` |
 | [Provider quality counters](../mechanisms/quality.md) | `live_roster.py` counters; snapshots via `RunBroker.quality` / `KyokRelay.quality` | — (observed, not reported by providers) |
-| [Keep your own key](../mechanisms/kyok.md) | `kyok.py` (bindings, tokens, relay) + `protocols/kyok.py` (call authorization, relay envelope) | `funduq_llm_provider_sdk` (link, handler, `CompletionRefused`) |
+| [Keep your own key](../mechanisms/kyok.md) | `kyok.py` (bindings, tokens, relay) + `protocols/kyok.py` (call authorization, relay envelope) | `funduq_provider_sdk.llm` (link, handler, `CompletionRefused`) |
 | [Responsibility chains](../mechanisms/responsibility-chains.md) | **not implemented** — design record only | — |
 
 The byte-level agreement between the two columns is

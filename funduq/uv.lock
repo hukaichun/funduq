@@ -426,8 +426,7 @@ postgres = [
 
 [package.dev-dependencies]
 dev = [
-    { name = "funduq-llm-provider-sdk" },
-    { name = "funduq-provider-sdk" },
+    { name = "funduq-provider-sdk", extra = ["llm"] },
     { name = "psycopg", extra = ["binary", "pool"] },
     { name = "pytest" },
     { name = "pytest-asyncio" },
@@ -451,8 +450,7 @@ provides-extras = ["postgres"]
 
 [package.metadata.requires-dev]
 dev = [
-    { name = "funduq-llm-provider-sdk", editable = "../funduq-llm-provider-sdk" },
-    { name = "funduq-provider-sdk", editable = "../funduq-provider-sdk" },
+    { name = "funduq-provider-sdk", extras = ["llm"], editable = "../funduq-provider-sdk" },
     { name = "psycopg", extras = ["binary", "pool"], specifier = ">=3.2" },
     { name = "pytest", specifier = ">=8.3" },
     { name = "pytest-asyncio", specifier = ">=0.24" },
@@ -477,27 +475,6 @@ requires-dist = [
 dev = [{ name = "pytest", specifier = ">=8.0" }]
 
 [[package]]
-name = "funduq-llm-provider-sdk"
-version = "0.1.0"
-source = { editable = "../funduq-llm-provider-sdk" }
-dependencies = [
-    { name = "funduq-provider-sdk" },
-    { name = "openai" },
-]
-
-[package.metadata]
-requires-dist = [
-    { name = "funduq-provider-sdk", editable = "../funduq-provider-sdk" },
-    { name = "openai", specifier = ">=1.50" },
-]
-
-[package.metadata.requires-dev]
-dev = [
-    { name = "pytest", specifier = ">=8.0" },
-    { name = "pytest-asyncio", specifier = ">=0.24" },
-]
-
-[[package]]
 name = "funduq-provider-sdk"
 version = "0.1.0"
 source = { editable = "../funduq-provider-sdk" }
@@ -508,16 +485,24 @@ dependencies = [
     { name = "pyjwt", extra = ["crypto"] },
 ]
 
+[package.optional-dependencies]
+llm = [
+    { name = "openai" },
+]
+
 [package.metadata]
 requires-dist = [
     { name = "ag-ui-protocol", specifier = ">=0.1.19" },
     { name = "cryptography", specifier = ">=42.0" },
     { name = "funduq-contract", editable = "../funduq-contract" },
+    { name = "openai", marker = "extra == 'llm'", specifier = ">=1.50" },
     { name = "pyjwt", extras = ["crypto"], specifier = ">=2.9" },
 ]
+provides-extras = ["llm"]
 
 [package.metadata.requires-dev]
 dev = [
+    { name = "openai", specifier = ">=1.50" },
     { name = "pytest", specifier = ">=8.0" },
     { name = "pytest-asyncio", specifier = ">=0.24" },
 ]

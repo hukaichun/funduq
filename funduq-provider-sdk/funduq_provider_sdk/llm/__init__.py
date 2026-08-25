@@ -1,14 +1,14 @@
 from funduq_provider_sdk.identity import ProviderIdentity
 
-from funduq_llm_provider_sdk.contract import (
+from funduq_provider_sdk.llm.contract import (
     COMPLETION_REFUSAL_ATTR,
     CONNECTED_LLM_PROVIDER_ATTRS,
     DELIVERED_COMPLETION_FIELDS,
     KYOK_FORWARDED_PROPS_KEY,
 )
-from funduq_llm_provider_sdk.inprocess import InProcessLLMProvider
-from funduq_llm_provider_sdk.link import FunduqLLMLink
-from funduq_llm_provider_sdk.provider import (
+from funduq_provider_sdk.llm.inprocess import InProcessLLMProvider
+from funduq_provider_sdk.llm.link import FunduqLLMLink
+from funduq_provider_sdk.llm.provider import (
     CompletionHandler,
     CompletionRefused,
     DeliveredCompletion,

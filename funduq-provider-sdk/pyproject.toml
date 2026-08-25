@@ -1,7 +1,7 @@
 [project]
 name = "funduq-provider-sdk"
 version = "0.1.0"
-description = "What a provider and funduq agree on, from the provider's side: identity, the port, and the provider's own worker loop"
+description = "What a provider and funduq agree on, from the provider's side: identity, the ports, and the provider's own worker loop — for an agent provider, or an LLM provider with the `llm` extra"
 requires-python = ">=3.12"
 # This package defines an interaction, not a transport: no httpx, no
 # websockets, no grpcio, and no funduq. A network binding is downstream's to
@@ -29,8 +29,21 @@ dependencies = [
     "ag-ui-protocol>=0.1.19",
 ]
 
+[project.optional-dependencies]
+# Serving completions instead of (or as well as) agents. It is an extra
+# rather than a package because the two SDKs were 685 lines and 197, and the
+# smaller one imported nothing from the larger but `ProviderIdentity` —
+# identity is identity. What kept them apart was dependency weight, and an
+# extra answers that better than a distribution: `openai` drags httpx, anyio
+# and a handful more, and an agent provider must not pay for it.
+#
+# The types, never the client. `funduq_provider_sdk.llm` is not imported by
+# this package's `__init__`, so an agent provider never pays the import
+# either.
+llm = ["openai>=1.50"]
+
 [dependency-groups]
-dev = ["pytest>=8.0", "pytest-asyncio>=0.24"]
+dev = ["pytest>=8.0", "pytest-asyncio>=0.24", "openai>=1.50"]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"

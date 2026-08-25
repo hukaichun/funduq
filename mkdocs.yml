@@ -60,7 +60,8 @@ nav:
       - Support: core-components/support.md
   - SDKs:
       - sdks.md
+      - funduq-contract: sdks/contract.md
       - funduq-provider-sdk: sdks/provider-sdk.md
-      - funduq-llm-provider-sdk: sdks/llm-provider-sdk.md
+      - Serving completions (the llm extra): sdks/llm-provider-sdk.md
   - Writing a transport: writing-a-transport.md
   - Design records: design-records.md

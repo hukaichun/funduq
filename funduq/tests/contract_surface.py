@@ -100,7 +100,6 @@ def _typing_surface() -> list[str]:
         root / "funduq-contract" / "funduq_contract",
         root / "funduq" / "funduq",
         root / "funduq-provider-sdk" / "funduq_provider_sdk",
-        root / "funduq-llm-provider-sdk" / "funduq_llm_provider_sdk",
     )
     return sorted(f"{p.name}:{'typed' if (p / 'py.typed').exists() else 'untyped'}" for p in packages)
 
