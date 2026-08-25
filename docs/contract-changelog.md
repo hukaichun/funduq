@@ -24,6 +24,33 @@ after the first person was hurt.
 
 ---
 
+## Revision 4 — 2026-08-25
+
+**An installed package can now say which revision it implements**, and the
+distributions carry the metadata a stranger needs.
+
+- `funduq_contract.CONTRACT_REVISION` is a constant. Package versions and
+  contract revisions answer different questions — a version says which
+  release of one distribution you have, a revision says which set of bytes,
+  settings and ports all of them agree on — and until now nothing installed
+  could answer the second. It is part of the surface, so cutting a revision
+  cannot forget it.
+
+- **`funduq-contract` is pinned rather than named.** `funduq` and
+  `funduq-provider-sdk` asked for it with no bounds at all, which would let a
+  future incompatible release install itself under an old dependant. It is
+  the one distribution both sides depend on, so every version skew this
+  project can have runs through it. Now `>=0.1.0,<0.2`.
+
+- **License, readme, classifiers and project urls** are declared on all
+  three. Without them PyPI shows a blank page and "License: UNKNOWN", which
+  for an enterprise reader is where evaluation stops.
+
+*For an implementation in any language*: nothing here changes a byte on the
+wire. The vectors are untouched.
+
+---
+
 ## Revision 3 — 2026-08-25
 
 **`funduq-llm-provider-sdk` is gone; serving completions is the `llm` extra
