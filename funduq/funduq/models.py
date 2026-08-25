@@ -94,6 +94,7 @@ class RunRecord(BaseModel):
     protocol: str
     status: str
     head_key: str | None = None
+    actor_chain: list[str] | None = None
     input_json: dict[str, Any] = Field(default_factory=dict)
     metadata: dict[str, Any] = Field(default_factory=dict)
     created_at: datetime

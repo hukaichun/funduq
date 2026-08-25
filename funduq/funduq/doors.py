@@ -10,6 +10,7 @@ from ag_ui.core import RunErrorEvent, RunStartedEvent
 from funduq.agui import build_run_agent_input
 from funduq.errors import InvalidRunInput, LlmProviderNotFound
 from funduq.identity import (
+    InvalidActorChain,
     verify_actor_chain,
     verify_cancel,
     verify_delegation,
@@ -37,11 +38,38 @@ __all__ = [
 ]
 
 
-async def verify_caller(session: "AsyncSession", metadata: dict) -> tuple[dict, str | None, Any]:
+async def verify_caller(
+    session: "AsyncSession", metadata: dict, *, presenter_key: str | None = None
+) -> tuple[dict, str | None, Any]:
     """Verifies `metadata["actorChain"]` if present and returns
     `(metadata stripped of funduq's reserved keys, the chain's head key, the raw chain)` —
     `(metadata, None, None)` when no chain is attached. Raises `InvalidActorChain` if the
     chain is tampered: a bad chain is refused at the door, never carried.
+
+    `presenter_key` is the key an authenticating seat in front of this door
+    proved belongs to whoever is calling, and it is the answer to **a chain
+    proves origin, not possession**. A chain is not a secret — funduq relays
+    it to the serving provider verbatim — so holding one is no evidence of
+    being its head, and a provider can otherwise present its caller's chain
+    back here for work the caller never asked for
+    (`scripts/probes/probe_a_provider_can_speak_as_the_caller.py`). When a
+    key is supplied it must equal the chain's **presenter** (the last hop's
+    signer, never the head — comparing the head is exactly the mistake that
+    lets the replay through), and a mismatch is refused rather than
+    downgraded: presenting a chain is a claim, and a claim that cannot be
+    backed is not the same act as making no claim at all.
+
+    funduq compares; it never authenticates. A door receives bytes, not a
+    connection, so establishing who is calling needs the live channel the
+    seat has and core does not. Supplying the key is therefore the
+    embedder's, and **omitting it changes nothing**: the chain is verified,
+    relayed and its head copied exactly as before. This is an extension for
+    a deployment that has an authenticating seat, not a new requirement —
+    withdrawing authority from every caller who has no seat in front of them
+    would be compelling participation, which funduq does not do. It also
+    means a deployment that supplies no key is exactly as exposed as it was,
+    and that is a deployment invariant rather than a setting: core's caller
+    doors are not independently safe.
 
     funduq's whole part in caller identity is four verbs — verify, copy the
     head, relay, refuse — and this is the verify. No summary is produced:
@@ -63,7 +91,14 @@ async def verify_caller(session: "AsyncSession", metadata: dict) -> tuple[dict, 
     actor_chain = metadata.get("actorChain")
     if not actor_chain:
         return metadata, None, None
-    head = verify_actor_chain(actor_chain).head
+    verified = verify_actor_chain(actor_chain)
+    if presenter_key is not None and presenter_key != verified.presenter:
+        raise InvalidActorChain(
+            "the chain's last hop was signed by "
+            f"{verified.presenter[:16]}…, but the caller authenticated as "
+            f"{presenter_key[:16]}… — extend the chain with your own key to present it"
+        )
+    head = verified.head
     delegation = metadata.get("delegation")
     if delegation is not None:
         authority = verify_delegation(delegation)
@@ -161,6 +196,16 @@ async def dispatch(
 
     kyok_ref = inbound.kyok_ref
 
+    # funduq bears the same responsibility on a chain that a provider does, so
+    # it signs one hop for the dispatch it is making, naming where the run
+    # went. Only ever an extension: a run that carried no chain gets none —
+    # starting one would make funduq the segment's head, which it is not.
+    relayed_chain = (
+        funduq.identity.dispatch_hop(inbound.actor_chain, inbound.agent)
+        if inbound.actor_chain
+        else inbound.actor_chain
+    )
+
     try:
         input_json = build_run_agent_input(
             thread_id,
@@ -175,7 +220,7 @@ async def dispatch(
                 inbound.agent,
                 kyok_ref is not None,
                 inbound.forwarded_props,
-                inbound.actor_chain,
+                relayed_chain,
                 addressed_run_id=inbound.addressed_run_id,
                 delegation=inbound.metadata.get("delegation"),
             ),
@@ -268,6 +313,7 @@ async def open_run(
     metadata: dict[str, Any],
     head_key: str | None,
     protocol: str,
+    actor_chain: Any = None,
 ) -> Opened | None:
     """Resolves a request to the run it belongs on: the pending ask it answers, or a new run
     queued on the thread. Returns None only for a declared **result** that found no ask to land
@@ -319,7 +365,7 @@ async def open_run(
     await repo.ensure_queue_room(session, thread_id, funduq.settings.thread_queue_limit)
     created = await repo.create_run(
         session, thread_id, agent, protocol, run_input,
-        metadata=metadata, head_key=head_key,
+        metadata=metadata, head_key=head_key, actor_chain=actor_chain,
     )
     return Opened(run_id=created["run_id"], starting_seq=0, landed_on_ask=False)
 

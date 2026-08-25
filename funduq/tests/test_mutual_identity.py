@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import pytest
+from pydantic import ValidationError
 
 from tests.conftest import publish_agents, publish_offline
 from funduq_provider_sdk import ProviderIdentity
@@ -71,12 +72,17 @@ def test_the_same_key_is_the_same_funduq_across_restarts(settings: CoreSettings)
     assert before.identity_public_key == after.identity_public_key
 
 
-def test_a_funduq_without_a_key_says_so_rather_than_inventing_one(settings: CoreSettings):
-    funduq = Funduq(settings)
-
-    assert funduq.identity_public_key is None
-    with pytest.raises(RuntimeError, match="no identity"):
-        funduq.sign(b"anything")
+def test_a_funduq_cannot_be_built_without_a_key(settings: CoreSettings):
+    """It used to be optional, and a funduq without one answered a provider's
+    challenge with nothing. That is not a lighter deployment — it is one whose
+    signature nobody can check, and whose dispatch hops cannot exist. A
+    protection that depends on someone remembering an optional setting is not
+    a protection, so the setting has no default and construction fails."""
+    with pytest.raises(ValidationError, match="identity_private_key"):
+        CoreSettings(
+            database_url=settings.database_url,
+            token_signing_secret=settings.token_signing_secret,
+        )
 
 
 @pytest.mark.parametrize(
@@ -192,27 +198,6 @@ async def test_a_pinning_link_refuses_the_wrong_funduq(settings: CoreSettings):
         from funduq.models import AgentRef
 
         assert not funduq.is_serving(AgentRef(provider_key=identity.public_key, name="wary"))
-    finally:
-        await funduq.aclose()
-
-
-async def test_an_identityless_funduq_answers_nothing_and_only_a_pin_objects(settings: CoreSettings):
-    from funduq_provider_sdk import WrongFunduq
-
-    funduq = Funduq(settings)
-    try:
-        identity = ProviderIdentity.generate()
-        await _register(funduq, identity, "trusting")
-
-        answer = await funduq.attach_provider(_link(funduq, identity))
-        assert answer is None
-        funduq.detach_all_for(identity.public_key)
-
-        pinned = ProviderIdentity.generate().public_key
-        with pytest.raises(WrongFunduq):
-            await publish_agents(funduq, 
-                _link(funduq, identity, funduq_public_key=pinned), ["trusting"]
-            )
     finally:
         await funduq.aclose()
 

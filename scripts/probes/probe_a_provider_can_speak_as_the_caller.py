@@ -16,13 +16,12 @@ verifier sees bytes, not a live presenter). Removing it did not open this
 hole — a provider inside the window could always do this — it stopped the
 window from making the gap look guarded.
 
-**Everything here is expected to FAIL on current code.** That is the point:
-it is the acceptance test for the fix, written before it. The fix is a
-presenter check at the door — the seat in front of funduq authenticates
-whoever is calling and hands that key in, and funduq refuses a chain whose
-last hop was signed by anyone else. Each scenario prints what happened and
-what should happen instead, so the same script becomes the pass/fail check
-when the check lands.
+The fix is the **presenter check**: the seat in front of funduq
+authenticates whoever is calling and hands that key in, and funduq refuses
+a chain whose last hop was signed by anyone else. This script was written
+before it, red, as its acceptance test; it now runs the same scenarios
+with a seat in place and is green. Each scenario still prints what
+happened, so a regression reads as prose rather than a failed assert.
 
     cd funduq && uv run python ../scripts/probes/probe_a_provider_can_speak_as_the_caller.py
     FUNDUQ_DATABASE_URL=postgresql+psycopg://… uv run python ../scripts/probes/probe_a_provider_can_speak_as_the_caller.py
@@ -41,8 +40,9 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
 from funduq import repo
 from funduq.config import CoreSettings
+from funduq.identity import FunduqIdentity
 from funduq.core import Funduq
-from funduq.identity import new_actor_chain
+from funduq.identity import InvalidActorChain, new_actor_chain
 from funduq.models import AgentRef
 from funduq_provider_sdk import InProcessLink, ProviderIdentity, ProviderRuntime
 
@@ -108,9 +108,9 @@ class Findings:
             for name in broken:
                 print(f"    {name}")
             print(
-                "\nExpected on current code. A door accepts a chain on the strength of\n"
-                "its signatures alone, so whoever holds one speaks with its authority.\n"
-                "The fix is the presenter check; when it lands, this script goes green."
+                "\nREGRESSION. With a seat supplying the presenter key, a door must not\n"
+                "accept a chain whose last hop someone else signed — that is the replay\n"
+                "this script was written to pin."
             )
         else:
             print(f"every property holds ({len(checked)} checked)")
@@ -120,7 +120,11 @@ class Findings:
 async def main() -> int:
     migrate()
     findings = Findings()
-    funduq = Funduq(CoreSettings(database_url=URL, token_signing_secret="probe"))
+    funduq = Funduq(CoreSettings(
+        database_url=URL,
+        token_signing_secret="probe",
+        identity_private_key=FunduqIdentity.generate_hex(),
+    ))
     await funduq.start()
 
     caller_key = Ed25519PrivateKey.generate()
@@ -143,6 +147,7 @@ async def main() -> int:
             agent,
             {"messages": [{"id": "m1", "role": "user", "content": "summarise this document"}]},
             metadata={"actorChain": chain},
+            presenter_key=caller_public,
         )
         async for _ in handle.events():
             pass
@@ -166,41 +171,52 @@ async def main() -> int:
 
         # --- 2. the provider replays it on work the caller never asked for
         print("[2] the provider presents that same chain at a door, for its own work")
-        stolen = await funduq.start_run(
-            agent,
-            {"messages": [{"id": "m2", "role": "user", "content": "transfer the budget"}]},
-            metadata={"actorChain": agent_impl.seen_chain},
-        )
-        async for _ in stolen.events():
-            pass
-        async with funduq.session() as session:
-            stolen_run = await repo.get_run(session, stolen.run_id)
+        stolen_run = None
+        refusal = None
+        try:
+            stolen = await funduq.start_run(
+                agent,
+                {"messages": [{"id": "m2", "role": "user", "content": "transfer the budget"}]},
+                metadata={"actorChain": agent_impl.seen_chain},
+                presenter_key=identity.public_key,
+            )
+            async for _ in stolen.events():
+                pass
+            async with funduq.session() as session:
+                stolen_run = await repo.get_run(session, stolen.run_id)
+        except InvalidActorChain as e:
+            refusal = str(e)
 
         findings.record(
             "a chain presented by someone who is not its head is refused",
-            stolen_run.head_key != caller_public,
-            f"accepted: run {stolen.run_id[:8]}… is recorded under head_key "
-            f"{(stolen_run.head_key or '')[:16]}… — the caller's key — for a message the "
-            "caller never sent. The presenter was the provider; nothing at the door asked "
-            "who was presenting"
-            if stolen_run.head_key == caller_public
-            else f"refused, or recorded under {stolen_run.head_key}",
+            refusal is not None,
+            f"refused at the door: {refusal}"
+            if refusal is not None
+            else f"accepted: run recorded under head_key {(stolen_run.head_key or '')[:16]}… "
+            "— the caller's key — for a message the caller never sent",
         )
 
-        # --- 3. and the record cannot tell the two apart
-        print("[3] can the record distinguish the caller's run from the provider's?")
-        same = (
-            caller_run.head_key == stolen_run.head_key
-            and caller_run.provider_key == stolen_run.provider_key
+        # --- 3. what the provider can still do: speak in its own name
+        print("[3] the provider opens the same work under its own chain")
+        own = await funduq.start_run(
+            agent,
+            {"messages": [{"id": "m3", "role": "user", "content": "transfer the budget"}]},
+            metadata={"actorChain": [identity.sign_hop()]},
+            presenter_key=identity.public_key,
         )
+        async for _ in own.events():
+            pass
+        async with funduq.session() as session:
+            own_run = await repo.get_run(session, own.run_id)
+
         findings.record(
-            "the record shows who actually presented each run",
-            not same,
-            "identical in every field that carries authority: same head_key, same agent. "
-            "An auditor reading these two rows cannot tell that the caller opened one of "
-            "them and the provider opened the other in its name"
-            if same
-            else "the two runs differ in the record",
+            "a party can always speak in its own name",
+            own_run.head_key == identity.public_key,
+            "accepted, headed by the provider itself — the check refuses a claim the "
+            "presenter cannot back, never participation. What the provider cannot do is "
+            "make this work answer to the caller"
+            if own_run.head_key == identity.public_key
+            else f"recorded under {own_run.head_key}",
         )
 
         return findings.summarize()

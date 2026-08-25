@@ -51,6 +51,8 @@ NODE_SCRIPT = Path(__file__).resolve().parent / "node.py"
 
 SIGNING_SECRET = "probe-signing-secret"
 
+IDENTITY_KEY = "5a" * 32
+
 
 class NodeError(RuntimeError):
     """A node answered `ok: false`. Carries which node, since 'who said this'
@@ -87,6 +89,11 @@ class Cluster:
             **os.environ,
             "FUNDUQ_DATABASE_URL": self.database_url,
             "FUNDUQ_TOKEN_SIGNING_SECRET": SIGNING_SECRET,
+            # Both nodes share one identity on purpose: they are one funduq
+            # behind a load balancer, and a provider pins the key it connected
+            # to. Two keys would make which node answered visible to every
+            # provider, which is not what horizontal scaling means.
+            "FUNDUQ_IDENTITY_PRIVATE_KEY": IDENTITY_KEY,
             **self.extra_env,
         }
 

@@ -8,6 +8,7 @@ from funduq.errors import InvalidRegistration
 
 from tests.conftest import DATABASE_URL, TEST_SIGNING_SECRET, publish_offline
 from funduq.config import CoreSettings
+from funduq.identity import FunduqIdentity
 
 
 class _Stub:
@@ -54,7 +55,7 @@ async def test_a_connection_that_cannot_sign_for_its_claimed_key_is_rejected(fun
 async def test_an_explicit_proof_must_answer_a_ticket_funduq_issued(funduq):
     identity = await _registered(funduq, "replayer")
     stub = _Stub(identity.public_key)
-    proof = identity.sign_connect("", "not-a-funduq-ticket", "pn")
+    proof = identity.sign_connect(funduq.identity_public_key, "not-a-funduq-ticket", "pn")
 
     with pytest.raises(InvalidRegistration, match="live ticket"):
         await funduq.attach_provider(
@@ -70,7 +71,7 @@ async def test_a_ticket_admits_the_key_it_was_issued_to_and_no_other(funduq):
     stranger = ProviderIdentity.generate()
     ticket = funduq.issue_ticket(admitted.public_key)
 
-    proof = stranger.sign_connect("", ticket, "pn")
+    proof = stranger.sign_connect(funduq.identity_public_key, ticket, "pn")
     with pytest.raises(InvalidRegistration, match="live ticket"):
         await funduq.attach_provider(
             _Stub(stranger.public_key), ticket=ticket, provider_nonce="pn", proof=proof
@@ -91,14 +92,14 @@ async def test_a_stranger_cannot_burn_a_ticket_it_merely_saw(funduq):
             _Stub(stranger.public_key),
             ticket=ticket,
             provider_nonce="pn",
-            proof=stranger.sign_connect("", ticket, "pn"),
+            proof=stranger.sign_connect(funduq.identity_public_key, ticket, "pn"),
         )
 
     await funduq.attach_provider(
         _Stub(admitted.public_key),
         ticket=ticket,
         provider_nonce="pn",
-        proof=admitted.sign_connect("", ticket, "pn"),
+        proof=admitted.sign_connect(funduq.identity_public_key, ticket, "pn"),
     )
 
 
@@ -106,7 +107,7 @@ async def test_a_ticket_is_single_use(funduq):
     identity = await _registered(funduq, "once")
     stub = _Stub(identity.public_key)
     ticket = funduq.issue_ticket(identity.public_key)
-    proof = identity.sign_connect("", ticket, "pn")
+    proof = identity.sign_connect(funduq.identity_public_key, ticket, "pn")
 
     await funduq.attach_provider(stub, ticket=ticket, provider_nonce="pn", proof=proof)
     funduq.detach_all_for(identity.public_key)
@@ -132,6 +133,7 @@ async def test_a_silent_connection_is_rejected_and_the_signer_admitted():
         CoreSettings(
             database_url=DATABASE_URL,
             token_signing_secret=TEST_SIGNING_SECRET,
+            identity_private_key=FunduqIdentity.generate_hex(),
         )
     )
     try:

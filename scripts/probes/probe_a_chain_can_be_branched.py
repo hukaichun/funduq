@@ -24,8 +24,13 @@ This is **not** what the presenter check fixes — that check answers "are you
 who you say you are", and here B does not lie about being B. Kept as its own
 probe so it cannot quietly redden the presenter check's acceptance test.
 
-**Expected to fail on current code**, except the two properties that genuinely
-hold, which are asserted here so a future change cannot lose them silently.
+Verification alone can never catch this — there is no signature over what is
+absent — so that row is marked LIMIT rather than counted as a failure. What a
+branch cannot survive is **funduq's own dispatch hop**, which names the agent
+it dispatched to: an agent is `(provider_key, name)`, and that provider key is
+exactly the key that signs the next hop when the provider extends honestly, so
+the hop and its successor contradict each other. This script pins that, and the
+two properties that genuinely resist, so none of them can be lost silently.
 
     cd funduq && uv run python ../scripts/probes/probe_a_chain_can_be_branched.py
     FUNDUQ_DATABASE_URL=postgresql+psycopg://… uv run python ../scripts/probes/probe_a_chain_can_be_branched.py
@@ -38,12 +43,14 @@ import os
 import tempfile
 from pathlib import Path
 
+import jwt
 from alembic import command
 from alembic.config import Config
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
 from funduq import repo
 from funduq.config import CoreSettings
+from funduq.identity import FunduqIdentity
 from funduq.core import Funduq
 from funduq.identity import (
     InvalidActorChain,
@@ -79,29 +86,38 @@ class Agent:
 
 
 class Findings:
-    def __init__(self) -> None:
-        self.rows: list[tuple[str, bool]] = []
+    """Separates properties that must hold from the one that never can.
 
-    def record(self, name: str, held: bool, detail: str) -> None:
-        self.rows.append((name, held))
-        print(f"  {'HOLDS  ' if held else 'BROKEN '} {name}\n           {detail}\n")
+    Verification cannot detect a removal — that is a permanent property of
+    signatures over a hash chain, not a defect awaiting a fix, so counting it
+    as a failure would leave this script red forever and the first person to
+    tidy that up would delete the record of *why* funduq's dispatch hops
+    exist. It is marked LIMIT and the rest are pass/fail.
+    """
+
+    def __init__(self) -> None:
+        self.rows: list[tuple[str, bool, bool]] = []
+
+    def record(self, name: str, held: bool, detail: str, *, permanent: bool = False) -> None:
+        self.rows.append((name, held, permanent))
+        mark = "LIMIT  " if permanent else ("HOLDS  " if held else "BROKEN ")
+        print(f"  {mark} {name}\n           {detail}\n")
 
     def summarize(self) -> int:
-        broken = [n for n, held in self.rows if not held]
+        broken = [n for n, held, perm in self.rows if not held and not perm]
+        checked = [n for n, _h, perm in self.rows if not perm]
         if broken:
-            print(f"{len(broken)} of {len(self.rows)} properties do not hold:")
+            print(f"{len(broken)} of {len(checked)} properties do not hold:")
             for name in broken:
                 print(f"    {name}")
             print(
-                "\nExpected on current code. A chain's completeness is not verifiable:\n"
-                "signatures and links prove nobody was added, never that nobody was\n"
-                "removed. The presenter check does not address this — B is honestly B.\n"
-                "What would: funduq signing each dispatch with the agent it dispatched\n"
-                "to, so a kept funduq hop contradicts a branch and a dropped one leaves\n"
-                "a gap a consumer can require against."
+                "\nREGRESSION. Verification never detects a removal, so what a branch\n"
+                "cannot survive is funduq's own dispatch hop: it names the agent it\n"
+                "dispatched to, and that provider key is exactly the key that signs the\n"
+                "next hop when the provider extends honestly."
             )
         else:
-            print(f"every property holds ({len(self.rows)} checked)")
+            print(f"every property holds ({len(checked)} checked)")
         return len(broken)
 
 
@@ -112,7 +128,11 @@ def hexk(key: Ed25519PrivateKey) -> str:
 async def main() -> int:
     migrate()
     findings = Findings()
-    funduq = Funduq(CoreSettings(database_url=URL, token_signing_secret="probe"))
+    funduq = Funduq(CoreSettings(
+        database_url=URL,
+        token_signing_secret="probe",
+        identity_private_key=FunduqIdentity.generate_hex(),
+    ))
     await funduq.start()
 
     caller, a_key, b_key = (Ed25519PrivateKey.generate() for _ in range(3))
@@ -141,7 +161,10 @@ async def main() -> int:
             hexk(a_key) in result.actor_public_keys,
             f"A is gone and the branch verifies: {[k[:8] for k in result.actor_public_keys]}, "
             f"head still the caller ({result.head == hexk(caller)}). Nothing was forged — "
-            "B hashed hop zero's own token and signed a hop pointing at it",
+            "B hashed hop zero's own token and signed a hop pointing at it. Verification "
+            "can never catch this on its own: it proves nobody was added, and there is no "
+            "signature over what is absent",
+            permanent=True,
         )
 
         # --- 3. the door takes it
@@ -156,16 +179,38 @@ async def main() -> int:
         async with funduq.session() as session:
             run = await repo.get_run(session, handle.run_id)
         findings.record(
-            "the record shows the hands the work passed through",
-            False,
-            f"run {handle.run_id[:8]}… is recorded under head_key {(run.head_key or '')[:16]}… "
-            "— the caller — and funduq stores no chain at all, only the head. So even the "
-            "hops that did survive the branch are not in the record: A's absence cannot be "
-            "noticed later because nothing was kept to notice it against",
+            "the record keeps the chain that was presented",
+            run.actor_chain == branched,
+            f"run {handle.run_id[:8]}… keeps all {len(run.actor_chain or [])} hop(s) it "
+            f"arrived with, under head_key {(run.head_key or '')[:16]}… — so an auditor can "
+            "at least read the path that was claimed, which was impossible while only the "
+            "head was stored"
+            if run.actor_chain == branched
+            else f"stored {run.actor_chain!r}, presented {branched!r}",
+        )
+        # --- 4. what funduq's own hop makes visible
+        print("[4] B does the same thing to a chain that went out through funduq")
+        # As A would have received it: the caller's hop, then funduq's, naming
+        # the agent it dispatched to.
+        as_dispatched = funduq.identity.dispatch_hop(new_actor_chain(caller), agent)
+        rebranched = extend_actor_chain(b_key, as_dispatched[:-1] + [as_dispatched[-1]])
+        claimed = jwt.decode(as_dispatched[-1], options={"verify_signature": False})["dispatchedTo"]
+        next_signer = verify_actor_chain(rebranched).actor_public_keys[-1]
+
+        findings.record(
+            "an erased hand can be noticed",
+            claimed["providerKey"] != next_signer,
+            f"funduq's hop says it dispatched to provider {claimed['providerKey'][:8]}… "
+            f"(agent '{claimed['name']}'), and the hop after it is signed by "
+            f"{next_signer[:8]}… — the two contradict each other, which is what a branch "
+            "cannot avoid: an agent is (provider_key, name), and that provider key is "
+            "exactly the key that signs the next hop when it extends honestly"
+            if claimed["providerKey"] != next_signer
+            else "the chain is consistent — no branch to notice here",
         )
 
-        # --- 4. what the design does guarantee
-        print("[4] what resists")
+        # --- 5. what the design does guarantee
+        print("[5] what resists")
         try:
             verify_actor_chain(honest[1:])
             dropped_head = True

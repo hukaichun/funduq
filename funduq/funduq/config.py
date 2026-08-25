@@ -27,5 +27,12 @@ class CoreSettings(BaseSettings):
 
     token_signing_secret: str
 
-    identity_private_key: str | None = None
+    # Required, and deliberately without a default. funduq is an identity like
+    # any other — providers pin it, and it signs a hop on every dispatch — so a
+    # funduq without one is not a lighter deployment, it is one whose signature
+    # nobody can check. A protection that depends on someone remembering an
+    # optional setting is not a protection, and generating a key per process
+    # would be worse still: the key would change on every restart and every
+    # provider's pin would break.
+    identity_private_key: str
 

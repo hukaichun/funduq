@@ -219,10 +219,8 @@ class _Roster(abc.ABC):
             raise InvalidRegistration(
                 f"invalid connect proof for {self.party} '{connection.public_key}'"
             )
-        answer = (
-            self._funduq.sign(funduq_connect_signing_payload(ticket, provider_nonce or ""))
-            if self._funduq.identity is not None
-            else None
+        answer = self._funduq.sign(
+            funduq_connect_signing_payload(ticket, provider_nonce or "")
         )
         confirm = getattr(connection, "confirm_connect", None)
         if callable(confirm):
@@ -391,11 +389,7 @@ class Funduq:
 
     def __init__(self, settings: CoreSettings | None = None, broker: RunBroker | None = None) -> None:
         self.settings = settings or CoreSettings()
-        self.identity = (
-            FunduqIdentity.from_hex(self.settings.identity_private_key)
-            if self.settings.identity_private_key
-            else None
-        )
+        self.identity = FunduqIdentity.from_hex(self.settings.identity_private_key)
         self.engine = _create_engine(self.settings)
         self.sessionmaker = async_sessionmaker(self.engine, expire_on_commit=False)
         self.broker = broker or RunBroker(
@@ -420,8 +414,8 @@ class Funduq:
 
 
     @property
-    def identity_public_key(self) -> str | None:
-        return self.identity.public_key if self.identity is not None else None
+    def identity_public_key(self) -> str:
+        return self.identity.public_key
 
     def issue_ticket(self, public_key: str) -> str:
         """Mint a single-use ticket admitting `public_key` to open a link, and
@@ -476,12 +470,7 @@ class Funduq:
         return True
 
     def sign(self, payload: bytes) -> str:
-        """Sign `payload` with this funduq's identity key, or raise if none is configured."""
-        if self.identity is None:
-            raise RuntimeError(
-                "this funduq has no identity: set identity_private_key "
-                "(FUNDUQ_IDENTITY_PRIVATE_KEY) to a hex-encoded Ed25519 seed"
-            )
+        """Sign `payload` with this funduq's identity key."""
         return self.identity.sign(payload)
 
 
@@ -931,6 +920,7 @@ class Funduq:
         run_input: dict[str, Any],
         thread_id: str | None = None,
         metadata: dict[str, Any] | None = None,
+        presenter_key: str | None = None,
     ) -> RunHandle:
         """Create (or reuse) a thread, open a queued run on it, and enqueue it for dispatch.
 
@@ -948,7 +938,7 @@ class Funduq:
         socket would — the same rule in-process providers live under.
         """
         async with self.session() as session:
-            caller_metadata, head_key, actor_chain = await verify_caller(session, metadata or {})
+            caller_metadata, head_key, actor_chain = await verify_caller(session, metadata or {}, presenter_key=presenter_key)
             caller_metadata, kyok = await resolve_kyok(session, caller_metadata)
             resolved_thread_id = await repo.ensure_thread(
                 session, agent, thread_id, metadata=caller_metadata,
@@ -965,6 +955,7 @@ class Funduq:
                 run_input=run_input,
                 metadata=caller_metadata,
                 head_key=head_key,
+                actor_chain=actor_chain,
                 protocol="ag-ui",
             )
             live = await dispatch(
@@ -1001,7 +992,11 @@ class Funduq:
         )
 
     async def resume_run(
-        self, run_id: str, run_input: dict[str, Any], metadata: dict | None = None
+        self,
+        run_id: str,
+        run_input: dict[str, Any],
+        metadata: dict | None = None,
+        presenter_key: str | None = None,
     ) -> RunHandle:
         """Deliver a deferred call's result back into the run it suspended.
 
@@ -1028,7 +1023,7 @@ class Funduq:
                 )
             agent = AgentRef(provider_key=stored.provider_key, name=stored.agent_name)
 
-            caller_metadata, head_key, actor_chain = await verify_caller(session, metadata or {})
+            caller_metadata, head_key, actor_chain = await verify_caller(session, metadata or {}, presenter_key=presenter_key)
             caller_metadata, kyok = await resolve_kyok(session, caller_metadata)
 
             opened = await open_run(
@@ -1040,6 +1035,7 @@ class Funduq:
                 run_input=run_input,
                 metadata=caller_metadata,
                 head_key=head_key,
+                actor_chain=actor_chain,
                 protocol=stored.protocol or "ag-ui",
             )
             if opened is None:
