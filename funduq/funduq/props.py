@@ -26,8 +26,16 @@ ordinary next turn. Yields to whatever carrier A2A ships for this."""
 ADDRESSED_RUN_METADATA_KEY = f"{INTERJECTION_EXTENSION_URI}/addressedRunId"
 
 
+OBSERVED_METADATA_KEY = "funduq"
+"""The one key under a run's metadata that holds what **funduq itself
+observed**, as opposed to what a caller said. Everything under it is written
+by funduq and stripped from caller metadata at the doors, which is what lets
+a reader tell the two apart without trusting either — the party that answered
+a paused run sits here, and no caller can plant one."""
+
+
 RESERVED_METADATA_KEYS = frozenset(
-    {"interrupts", "pendingToolCalls", "failureReason", "funduq"}
+    {"interrupts", "pendingToolCalls", "failureReason", OBSERVED_METADATA_KEY}
 )
 """Metadata keys funduq itself writes into a run's record (plus "funduq", held in
 reserve). A caller-supplied value under any of these is stripped at the doors

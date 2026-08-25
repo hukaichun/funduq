@@ -13,6 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from funduq.identity import provider_fingerprint
 from funduq.ids import new_id
 from funduq.models import AgentRecord, AgentRef, AgentSummary, LlmRef, LlmSummary, RunRecord
+from funduq.props import OBSERVED_METADATA_KEY
 from funduq.schema import (
     agents,
     llm_providers,
@@ -597,14 +598,60 @@ async def create_run(
 
 
 async def _merge_run_metadata(
-    session: AsyncSession, run_id: str, metadata: dict[str, Any]
+    session: AsyncSession,
+    run_id: str,
+    metadata: dict[str, Any],
+    appending: dict[str, str | None] | None = None,
 ) -> dict[str, Any]:
+    """The run's stored metadata with `metadata` written over it, and anything
+    in `appending` added to a list under funduq's own reserved key.
+
+    Caller metadata is *assigned* because the latest one is the current one.
+    What funduq itself observes is *appended*, because a run can be answered
+    more than once and an earlier answerer is not superseded by a later one —
+    they are two acts, and a record that kept only the last would say the
+    first never happened. Entries whose value is None are skipped rather
+    than recorded as an unknown: an unbound run has no authority to name,
+    which is different from having one nobody looked at.
+    """
     existing = (
         await session.execute(
             select(runs.c.metadata).where(runs.c.run_id == run_id)
         )
     ).scalars().first()
-    return {**(existing or {}), **metadata}
+    merged = {**(existing or {}), **metadata}
+    ours = dict(merged.get(OBSERVED_METADATA_KEY) or {})
+    for key, value in (appending or {}).items():
+        if value is not None:
+            ours[key] = [*(ours.get(key) or []), value]
+    if ours:
+        merged[OBSERVED_METADATA_KEY] = ours
+    return merged
+
+
+async def record_cancel_request(
+    session: AsyncSession, run_id: str, *, requested_by: str | None
+) -> None:
+    """Notes which authority asked this run to stop.
+
+    Kept apart from the run's status because it is not one: funduq relays a
+    cancel and never records an outcome it has not observed, so what is
+    written here is the asking, which funduq did observe, and the run's own
+    ending still comes from the provider. A no-op for an unbound run, which
+    names no authority to record.
+    """
+    if requested_by is None:
+        return
+    await session.execute(
+        update(runs)
+        .where(runs.c.run_id == run_id)
+        .values(
+            metadata=await _merge_run_metadata(
+                session, run_id, {}, appending={"cancelRequestedBy": requested_by}
+            )
+        )
+    )
+    await session.commit()
 
 
 async def reopen_run(
@@ -613,6 +660,7 @@ async def reopen_run(
     input_json: dict[str, Any],
     metadata: dict[str, Any] | None = None,
     expected_status: str | None = None,
+    answered_by: str | None = None,
 ) -> bool:
     """Puts `run_id` back to "queued" with fresh input, returning whether a row
     changed. With `expected_status`, the update only applies while the run is
@@ -624,20 +672,26 @@ async def reopen_run(
     answering a paused ask is not taking the run over, so the answering
     party's own chain does not replace the one the run was opened under.
 
-    That party is not unrecorded, though: on a chained ask it had to produce
-    a signature over `identity.resolve_payload(run_id, timestamp)`
-    from the run's own authority set, and `metadata` carries it here to be
-    merged into the run's record. That is a stronger trace than a chain would
-    be — a chain says who stood on the path, while this is bound to this act
-    by this key.
+    That party is recorded, in two forms that are not the same form. The
+    proof it presented rides in `metadata` and is merged in as given — a
+    signature over `identity.resolve_payload(run_id, timestamp)` from the
+    run's own authority set, bound to this act by this key rather than
+    saying, as a chain does, who merely stood on the path. And
+    `answered_by` is the **effective** authority the doors computed while
+    checking that proof: with a delegation certificate the signer is a
+    session key standing for a durable one, so the proof names the glove
+    and this names the hand. Appended rather than assigned, because a run
+    can pause more than once and each answer is its own act.
     """
     values: dict[str, Any] = {
         "status": "queued",
         "input_json": input_json,
         "last_activity_at": _utcnow(),
     }
-    if metadata:
-        values["metadata"] = await _merge_run_metadata(session, run_id, metadata)
+    if metadata or answered_by is not None:
+        values["metadata"] = await _merge_run_metadata(
+            session, run_id, metadata or {}, appending={"answeredBy": answered_by}
+        )
     where = [runs.c.run_id == run_id]
     if expected_status is not None:
         where.append(runs.c.status == expected_status)
