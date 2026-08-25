@@ -617,7 +617,20 @@ async def reopen_run(
     """Puts `run_id` back to "queued" with fresh input, returning whether a row
     changed. With `expected_status`, the update only applies while the run is
     still in that status — the guard that makes two concurrent replies to one
-    paused run resolve to a single reopen instead of both winning."""
+    paused run resolve to a single reopen instead of both winning.
+
+    **`head_key` and `actor_chain` are deliberately untouched.** A run's
+    responsibility is fixed when it is created and there is one form of it;
+    answering a paused ask is not taking the run over, so the answering
+    party's own chain does not replace the one the run was opened under.
+
+    That party is not unrecorded, though: on a chained ask it had to produce
+    a signature over `identity.resolve_signing_payload(run_id, timestamp)`
+    from the run's own authority set, and `metadata` carries it here to be
+    merged into the run's record. That is a stronger trace than a chain would
+    be — a chain says who stood on the path, while this is bound to this act
+    by this key.
+    """
     values: dict[str, Any] = {
         "status": "queued",
         "input_json": input_json,

@@ -117,18 +117,24 @@ runs = Table(
     Column("agent_name", String, nullable=False),
     Column("protocol", String, nullable=False),
     Column("status", String, nullable=False),
-    # The chain head this run arrived under (after delegation-certificate
+    # The chain head this run was opened under (after delegation-certificate
     # resolution); NULL = anonymous. A paused run's ask may be resolved only
     # by this key or the agent's own provider key.
     Column("head_key", String, nullable=True),
-    # The chain exactly as presented, hops and all; NULL = none was carried.
-    # The head answers "who answers for this" and is what authority is read
-    # from — this answers "through whose hands", which nothing else can. A
-    # chain can be branched (a party rebuilds it without the hands between
-    # the head and itself, forging nothing), and without the presented chain
-    # on the record that erasure is not merely unprovable at verification
-    # time, it is unnoticeable afterwards: nothing was kept to notice it
-    # against.
+    # The chain this run was **opened** under, hops and all, exactly as
+    # presented; NULL = none was carried. The head answers "who answers for
+    # this" and is what authority is read from — this answers "through whose
+    # hands", which nothing else can, and keeping it is what makes a branch
+    # (a party rebuilding a chain without the hands between the head and
+    # itself, forging nothing) noticeable afterwards at all.
+    #
+    # Both are written once, at creation, and a resume replaces neither: **a
+    # run's responsibility is fixed at its birth**, and there is one form of
+    # it. The party that answers a paused ask is not taking the run over, and
+    # its own act is already recorded in a stronger form than a chain — the
+    # signature over `funduq-resolve:{run_id}:{timestamp}` it had to produce,
+    # merged into the run's metadata by `repo.reopen_run`. A chain says who
+    # was on the path; that signature is bound to this act by this key.
     Column("actor_chain", _JSON, nullable=True),
     Column("input_json", _JSON, nullable=False),
     Column("started_at", _TS, nullable=True),

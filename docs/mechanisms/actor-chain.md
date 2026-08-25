@@ -97,6 +97,19 @@ Before both existed, a branch was not merely unprovable at verification
 time — it was unnoticeable afterwards, because nothing was kept to notice
 it against.
 
+**Both are written once, when the run is created.** A run's
+responsibility is fixed at its birth and there is one form of it, so
+resuming a paused run replaces neither: the party that answers is not
+taking the run over, and the run keeps answering to the head it was
+opened under. That party is not unrecorded either — on a chained ask it
+had to sign `funduq-resolve:{run_id}:{timestamp}` from the run's own
+authority set, and that signature is kept in the run's metadata. It is a
+stronger trace than a chain: a chain says who stood on the path, while a
+signature is bound to *this* act by *this* key.
+
+Changing a run's responsibility after birth is a separate question, and
+one nothing here answers.
+
 ## The presenter check
 
 `presenter_key` on every door, defaulting to None.
