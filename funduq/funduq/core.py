@@ -387,8 +387,14 @@ class _LlmRoster(_Roster):
 class Funduq:
     """The network-free facade: agent/LLM-provider rosters, threads, runs, and dispatch."""
 
-    def __init__(self, settings: CoreSettings | None = None, broker: RunBroker | None = None) -> None:
-        self.settings = settings or CoreSettings()
+    def __init__(self, settings: CoreSettings, broker: RunBroker | None = None) -> None:
+        """`settings` is required, and used to default to `CoreSettings()` —
+        which read the process environment, so `Funduq()` quietly configured
+        itself from ambient state its caller never mentioned. A deployment
+        that wants that behaviour asks for it by name:
+        `Funduq(CoreSettings.from_env())`.
+        """
+        self.settings = settings
         self.identity = FunduqIdentity.from_hex(self.settings.identity_private_key)
         self.engine = _create_engine(self.settings)
         self.sessionmaker = async_sessionmaker(self.engine, expire_on_commit=False)
