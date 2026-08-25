@@ -133,9 +133,22 @@ def _vectors_surface() -> Any:
     return _without_prose({key: value for key, value in document.items() if key != "contract"})
 
 
+def _revision_surface() -> str:
+    """The revision `funduq_contract` says it implements.
+
+    In the surface so that cutting a revision cannot forget the constant: an
+    installed package that claims the wrong one is worse than one that claims
+    nothing, because it answers confidently.
+    """
+    from funduq_contract import CONTRACT_REVISION
+
+    return f"contract_revision:{CONTRACT_REVISION}"
+
+
 def surface() -> dict[str, Any]:
     """Everything an outside implementation depends on, gathered live."""
     return {
+        "declared_revision": _revision_surface(),
         "vectors": _vectors_surface(),
         "settings": _settings_surface(),
         "link": _link_surface(),

@@ -3,6 +3,19 @@ name = "funduq-contract"
 version = "0.1.0"
 description = "The bytes both sides of funduq sign and verify: signing payloads, actor-chain hops, and signature checking"
 requires-python = ">=3.12"
+license = "Apache-2.0"
+license-files = ["LICENSE"]
+readme = "README.md"
+authors = [{ name = "Kai-Chun Hu" }]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: Apache Software License",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Software Development :: Libraries",
+    "Typing :: Typed",
+]
+
 # The one thing core and the SDKs are allowed to share.
 #
 # They used to share nothing, and each wrote its own copy of the six signing
@@ -35,3 +48,10 @@ build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
 packages = ["funduq_contract"]
+
+[project.urls]
+Homepage = "https://github.com/hukaichun/funduq"
+Documentation = "https://hukaichun.github.io/funduq/"
+Source = "https://github.com/hukaichun/funduq"
+Changelog = "https://github.com/hukaichun/funduq/blob/main/docs/contract-changelog.md"
+Issues = "https://github.com/hukaichun/funduq/issues"

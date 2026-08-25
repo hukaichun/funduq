@@ -105,6 +105,28 @@ jobs:
       - run: uv run pytest -v
         working-directory: funduq-provider-sdk
 
+  # A green suite says the source tree works for someone who has the source
+  # tree. It says nothing about the artifact, and three of these failed the
+  # first time they were built rather than imported — a `[project.urls]` table
+  # that swallowed every section after it, a `license-files` entry naming a
+  # LICENSE that lived only at the repo root, and a declared README that did
+  # not exist. The declarations are checked offline in funduq's suite; this is
+  # the part that needs a real build.
+  wheels-build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v3
+        with:
+          python-version: "3.12"
+      - name: build every distribution
+        run: |
+          for package in funduq-contract funduq funduq-provider-sdk; do
+            uv build --wheel --sdist -o dist "$package"
+          done
+      - name: what would be published
+        run: ls -la dist
+
   # Everything else — the gateway, both SDKs, the reference providers and
   # the directory UI — lives in funduq-server, which carries its own CI,
   # including the app-builds probe only it can run.

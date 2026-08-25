@@ -18,6 +18,23 @@ different jobs, which is what lets this sit under core and an SDK at once
 without either lending the other its keys.
 """
 
+CONTRACT_REVISION = 3
+"""Which revision of funduq's contract this package implements.
+
+Package versions and contract revisions answer different questions. A
+version says which release of *this distribution* you have; a revision says
+which set of bytes, settings and ports it agrees with, across all four
+distributions at once. They move at different rates on purpose — a bug fix
+here bumps the version and not the revision.
+
+It is a constant so that an installed package can answer the question
+without anyone visiting a web page: `funduq_contract.CONTRACT_REVISION`
+against the revision recorded in `docs/contract-vectors.json`, and
+`docs/contract-changelog.md` for what moved between them. It is part of the
+contract surface, so it cannot be forgotten when a revision is cut — the
+fingerprint moves and the suite stays red until it is updated.
+"""
+
 from funduq_contract.chain import (
     ChainResult,
     InvalidChain,
@@ -45,6 +62,7 @@ from funduq_contract.signatures import (
 )
 
 __all__ = [
+    "CONTRACT_REVISION",
     "FINGERPRINT_HEX_LENGTH",
     "ChainResult",
     "InvalidChain",
