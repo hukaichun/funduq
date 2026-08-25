@@ -32,7 +32,6 @@ dependencies = [
     # `pip install funduq` runs out of the box. Postgres is opt-in via the
     # `postgres` extra below.
     "aiosqlite>=0.20",
-    "pydantic-settings>=2.6",
     "ag-ui-protocol>=0.1.19",
     # A2A's own types, for the same reason ag-ui-protocol is here: funduq used
     # to hand-write both sides of this protocol as string literals, and a

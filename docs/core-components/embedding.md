@@ -15,12 +15,20 @@ The package exports only `migrate` at the top level; `Funduq` comes from
 
 ## The object
 
-`Funduq(settings=None, broker=None)` builds the engine and the dispatch
-machinery. Both arguments are injection points: settings default to
-`CoreSettings()` read from the environment (see
-[Support](support.md)), and passing your own `RunBroker` is how you
-change dispatch timeouts, which are broker constructor arguments rather
-than settings.
+`Funduq(settings, broker=None)` builds the engine and the dispatch
+machinery. **Settings are required and never read from the environment.**
+Core is a library and does not own a process, so it is told its
+configuration rather than finding it — the same rule that keeps transport,
+liveness and authentication outside. A deployment that wants the
+environment asks for it by name:
+
+```python
+funduq = Funduq(CoreSettings.from_env())
+```
+
+`broker` is the other injection point, and how dispatch timeouts are
+changed — they are `RunBroker` constructor arguments rather than settings
+(see [what a deployment has to know](../operational-limits.md)).
 
 `await funduq.start()` must be called before any run is enqueued —
 enqueueing on a stopped broker raises rather than silently accepting

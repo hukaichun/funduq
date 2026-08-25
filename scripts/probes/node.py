@@ -180,7 +180,9 @@ async def main() -> None:
         level=logging.INFO, format=f"%(levelname)s [{args.name}] %(name)s: %(message)s"
     )
 
-    funduq = Funduq(CoreSettings())
+    # This one really is a process, started by cluster.py with the
+    # environment it wants — so reading it is the right act here, named.
+    funduq = Funduq(CoreSettings.from_env())
     if args.start:
         await funduq.start()
 
