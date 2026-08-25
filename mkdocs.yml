@@ -41,6 +41,7 @@ nav:
   - The integration contract: integration-contract.md
   - What a deployment has to know: operational-limits.md
   - Contract changelog: contract-changelog.md
+  - Releasing: releasing.md
   - The agent loop: agent-loop.md
   - Mechanisms:
       - mechanisms.md

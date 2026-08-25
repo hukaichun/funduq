@@ -1,0 +1,183 @@
+# Publishing to PyPI, one distribution at a time.
+#
+# There is no API token here and there is not meant to be. PyPI trusts this
+# repository, this workflow file and one named environment per project, and
+# GitHub mints a short-lived OIDC token for each run — so nothing long-lived
+# is stored anywhere, and revoking a publisher is a click rather than a secret
+# rotation. For a project whose subject is identity and keys, a password in a
+# repository secret would be the wrong first impression.
+#
+# **The name of this file is part of the configuration.** PyPI's publishers
+# name `release.yml`; renaming it silently breaks publishing, and the error
+# arrives at the worst moment. The same is true of the environment names
+# below and of `hukaichun/funduq` itself.
+#
+# One job per distribution, each with its own environment, because PyPI
+# refuses to register one (owner, repo, workflow, environment) against more
+# than one project name. That rule is worth understanding rather than working
+# around: a single configuration able to publish several names is a single
+# thing to compromise, so each target gets an entrance that can be revoked on
+# its own.
+#
+# Tags decide what goes out:
+#
+#     funduq-contract-v0.1.0      →  funduq-contract
+#     funduq-v0.1.0               →  funduq
+#     funduq-provider-sdk-v0.1.0  →  funduq-provider-sdk
+#
+# `funduq-contract` first, if several are going out together: the other two
+# declare it as a dependency, and an install resolves nothing until it exists.
+
+name: release
+
+on:
+  push:
+    tags:
+      - "funduq-v*"
+      - "funduq-contract-v*"
+      - "funduq-provider-sdk-v*"
+  workflow_dispatch:
+    inputs:
+      distribution:
+        description: Which distribution to publish
+        required: true
+        type: choice
+        options:
+          - funduq-contract
+          - funduq
+          - funduq-provider-sdk
+      version:
+        description: The version to publish, without a leading v
+        required: true
+        type: string
+      target:
+        description: >
+          Where to publish. TestPyPI needs its own three pending publishers,
+          registered on test.pypi.org with these same environment names — it
+          is a separate site, not a mode of this one.
+        required: true
+        default: testpypi
+        type: choice
+        options:
+          - testpypi
+          - pypi
+
+jobs:
+  # Which distribution and version this run is for, decided once so that three
+  # publish jobs do not each re-derive it from a tag and disagree.
+  what:
+    runs-on: ubuntu-latest
+    outputs:
+      distribution: ${{ steps.decide.outputs.distribution }}
+      version: ${{ steps.decide.outputs.version }}
+      target: ${{ steps.decide.outputs.target }}
+    steps:
+      - id: decide
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "distribution=${{ inputs.distribution }}" >> "$GITHUB_OUTPUT"
+            echo "version=${{ inputs.version }}" >> "$GITHUB_OUTPUT"
+            echo "target=${{ inputs.target }}" >> "$GITHUB_OUTPUT"
+          else
+            tag='${{ github.ref_name }}'
+            # Longest prefix first: `funduq-v` would otherwise never be
+            # reached, and `funduq-contract-v0.1.0` would publish as funduq.
+            case "$tag" in
+              funduq-contract-v*)      dist=funduq-contract ;;
+              funduq-provider-sdk-v*)  dist=funduq-provider-sdk ;;
+              funduq-v*)               dist=funduq ;;
+              *) echo "::error::tag '$tag' names no distribution"; exit 1 ;;
+            esac
+            echo "distribution=$dist" >> "$GITHUB_OUTPUT"
+            echo "version=${tag##*-v}" >> "$GITHUB_OUTPUT"
+            echo "target=pypi" >> "$GITHUB_OUTPUT"
+          fi
+
+  build:
+    needs: what
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v3
+        with:
+          python-version: "3.12"
+
+      # A tag is a claim about a version, and a claim is worth checking
+      # before it becomes an artifact nobody can take back: PyPI does not
+      # allow re-uploading a filename, so publishing 0.1.0 under a v0.2.0 tag
+      # is not something a later commit can fix.
+      - name: the tag and the package must agree
+        run: |
+          declared=$(python -c "
+          import tomllib
+          print(tomllib.load(open('${{ needs.what.outputs.distribution }}/pyproject.toml','rb'))['project']['version'])
+          ")
+          if [ "$declared" != "${{ needs.what.outputs.version }}" ]; then
+            echo "::error::${{ needs.what.outputs.distribution }} declares $declared, but this run says ${{ needs.what.outputs.version }}"
+            exit 1
+          fi
+
+      # The suite runs on every push already. What this repeats is the part a
+      # release cannot afford to have wrong, and it is cheap.
+      - name: the contract revision is recorded and described
+        run: uv run --group dev pytest -q tests/test_contract_revision.py tests/test_packages_are_publishable.py
+        working-directory: funduq
+
+      - run: uv build --wheel --sdist -o dist "${{ needs.what.outputs.distribution }}"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: dist/
+
+  # Three near-identical jobs rather than one with a computed environment.
+  # The environment is half of what PyPI is verifying, so it is written out
+  # literally: an expression there would be a claim assembled at runtime, and
+  # this is the one place where that is worth avoiding.
+  publish-funduq-contract:
+    needs: [what, build]
+    if: needs.what.outputs.distribution == 'funduq-contract'
+    runs-on: ubuntu-latest
+    environment: pypi-funduq-contract
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist/
+      - uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          repository-url: ${{ needs.what.outputs.target == 'testpypi' && 'https://test.pypi.org/legacy/' || '' }}
+
+  publish-funduq:
+    needs: [what, build]
+    if: needs.what.outputs.distribution == 'funduq'
+    runs-on: ubuntu-latest
+    environment: pypi-funduq
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist/
+      - uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          repository-url: ${{ needs.what.outputs.target == 'testpypi' && 'https://test.pypi.org/legacy/' || '' }}
+
+  publish-funduq-provider-sdk:
+    needs: [what, build]
+    if: needs.what.outputs.distribution == 'funduq-provider-sdk'
+    runs-on: ubuntu-latest
+    environment: pypi-funduq-provider-sdk
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist/
+      - uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          repository-url: ${{ needs.what.outputs.target == 'testpypi' && 'https://test.pypi.org/legacy/' || '' }}
