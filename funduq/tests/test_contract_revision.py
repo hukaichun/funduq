@@ -36,6 +36,29 @@ def test_the_recorded_fingerprint_matches_the_surface() -> None:
     )
 
 
+def test_the_installed_constant_says_the_recorded_revision() -> None:
+    """The one number an installed package can answer with, and the one the
+    vectors record, have to be the same number.
+
+    Nothing checked this, and they drifted the moment the constant was
+    introduced: the changelog entry that added `CONTRACT_REVISION` cut
+    revision 4 and left the constant at 3. The fingerprint test does not
+    catch it — the constant's *value* is part of the surface, so changing it
+    moves the fingerprint and forces a bump, but nothing required the bump to
+    land on the same number. So a stranger asking an installed package which
+    revision it implements got an answer one behind the vectors it was
+    written against, which is the exact question the constant exists to
+    answer.
+    """
+    from funduq_contract import CONTRACT_REVISION
+
+    assert CONTRACT_REVISION == contract.recorded()["revision"], (
+        f"funduq_contract.CONTRACT_REVISION is {CONTRACT_REVISION}, but "
+        f"docs/contract-vectors.json records revision {contract.recorded()['revision']}. "
+        "Cutting a revision means moving both."
+    )
+
+
 def test_the_changelog_has_an_entry_for_the_current_revision() -> None:
     """A bumped number with no sentence under it is the same silence in a new
     place. The fingerprint test forces the bump; this one forces the line."""
