@@ -24,6 +24,61 @@ after the first person was hurt.
 
 ---
 
+## Revision 5 — 2026-08-26
+
+**A chain that was rewritten to leave someone out is now refused**, and the
+number an installed package answers with is the number the vectors record.
+
+- **`verify_chain` reads `dispatchedTo`.** funduq signs one hop per dispatch
+  naming the agent it sent the run to, and an agent is `(provider_key,
+  name)` — so that provider key is exactly the key that signs the next hop
+  when the provider extends honestly. The field has existed for as long as
+  the hop has and nothing read it, so the property it gives (a rebuilt chain
+  contradicting itself) was *available* rather than enforced: a probe
+  performed the comparison and the verifier did not. **A chain your
+  implementation used to get away with may now be refused** — specifically
+  one where a party hop follows a dispatch hop naming somebody else.
+
+  Two shapes stay legal and are pinned by tests: a chain that **ends** at a
+  dispatch nobody answered (the named party declined to extend, which is a
+  break rather than a defect), and a **dispatch following a dispatch** (the
+  same work offered onward without the first party signing).
+
+- **The chain funduq stores is the chain it dispatched.** It used to store
+  what the caller presented while the agent received that plus funduq's own
+  hop, so funduq's records could not tell a run it had dispatched from one
+  that reached it having passed no witness at all. Nothing on the wire
+  changes for a provider; what changes is that the record now says which of
+  the two it was.
+
+- **A resume relays the run's own chain.** It used to relay the *answering
+  party's*, with a fresh dispatch hop signed over it — so a provider that
+  resolved its own agent's ask sent that agent a chain headed by the
+  provider itself on the second round. One delegation now has one witness
+  signature, and what an agent verifies does not change because somebody
+  else answered its pause.
+
+- **`CONTRACT_REVISION` was 3 while the vectors said 4.** Revision 4 is the
+  entry that introduced the constant and it left the constant behind, and no
+  test compared the two: the constant's value is in the fingerprint, so
+  changing it forces *a* bump, but nothing required the bump to land on the
+  same number. An installed package therefore answered one behind the
+  vectors it was written against — the exact question the constant exists to
+  answer. Both are 5 now, and a test holds them together.
+
+- **The recorded pin was wrong in this file.** Revision 4 says
+  `funduq-contract` is pinned `>=0.1.0,<0.2`; the declared bound is and was
+  `>=0.0.1,<0.1`. The line is corrected below rather than quietly, because a
+  changelog that misquotes a dependency bound is worse than one that omits
+  it.
+
+*For an implementation in any language*: no byte on the wire changes and the
+vectors are untouched. What changes is that a verifier which accepted a
+dispatch hop followed by the wrong signer was not implementing this
+contract, and now has a test to say so.
+
+---
+
 ## Revision 4 — 2026-08-25
 
 **An installed package can now say which revision it implements**, and the
@@ -40,7 +95,8 @@ distributions carry the metadata a stranger needs.
   `funduq-provider-sdk` asked for it with no bounds at all, which would let a
   future incompatible release install itself under an old dependant. It is
   the one distribution both sides depend on, so every version skew this
-  project can have runs through it. Now `>=0.1.0,<0.2`.
+  project can have runs through it. Now `>=0.0.1,<0.1` — this line said
+  `>=0.1.0,<0.2`, which was never the declared bound; see revision 5.
 
 - **License, readme, classifiers and project urls** are declared on all
   three. Without them PyPI shows a blank page and "License: UNKNOWN", which
