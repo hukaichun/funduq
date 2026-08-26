@@ -208,3 +208,38 @@ funduq 的原則（rule zero、observed-outcomes-only、不裁決、mechanism/po
 
 CLAUDE.md 說「Verify by running something」。這一輪的對應版本是：
 **每次要把一段理解壓成一句話之前，先回去看那段理解原本長什麼樣。**
+
+---
+
+## F. 重複一個關於自己程式碼的說法而沒有跑它(2026-08-26)
+
+### F1 「那支 probe 至今仍紅」
+
+**寫了什麼。** 草稿三處、以及好幾輪對話裡,都說 `probe_a_chain_can_be_
+branched.py` 至今仍紅,並把它當成「我們誠實地留著一個未關的缺陷」的證據。
+
+**為什麼錯。** 跑一次就知道:
+
+```
+[2] B rebuilds it as caller → B      LIMIT
+[4] ...went out through funduq       HOLDS
+[5] the head cannot be dropped       HOLDS
+    a hop from another chain...      HOLDS
+every property holds (4 checked)
+```
+
+它是綠的,帶一列標為 LIMIT 的限制——而那支 probe 的 docstring 早就寫著
+「that row is marked LIMIT rather than counted as a failure」。**來源就在
+手邊,而且是自己寫的。**
+
+**這條跟前面十四條不同的地方。** 前面的錯誤來自壓縮、或來自相信一份落後
+的文件。這一條兩者都不是:**它是一個關於自家程式碼的斷言,而驗證它的成本
+是一道指令。** 沒有跑,只是因為它已經被說過一次,而重複比查證便宜。
+
+**判準。** 任何一句「我們的 X 現在是紅的/綠的/會怎樣」,在寫進論文之前
+要跑一次那個東西。這比「出處必須是程式碼或測試」更嚴:那條講的是**看**,
+這條講的是**執行**——而 `CLAUDE.md` 開宗明義那一節說的就是這件事。
+
+**順帶。** 這個更正讓論文變**強**不變弱:一支綠的 probe 加一列寫明範圍的
+限制,比一支紅的 probe 更能支持「這是有理由的取捨」而不是「這是還沒補的
+洞」。錯誤的方向是**把自己講得太扁**,跟 E'1 同一族。
