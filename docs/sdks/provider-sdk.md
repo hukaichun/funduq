@@ -36,6 +36,12 @@ in-process transport (in-process is a transport, not a special case);
 each agent's `run_stream`, and reports events back through whatever link
 it is on.
 
+A design exists for taking the link's *state machine* out of prose and into
+this package, after which a transport would mount that machine rather than
+subclass this port, and `FunduqLink` would remain the surface for provider
+authors only — see [the link protocol
+machine](../link-protocol-machine.md). None of it is built.
+
 ## The envelopes
 
 `DeliveredRun` is both what the runtime consumes and the declared wire
