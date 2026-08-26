@@ -1,10 +1,14 @@
-# 同位置專案與規格的重查 — 2026-08-25
+# 同位置專案與規格的重查 — 2026-08-25,2026-08-26 續
 
 > 起因:`bibliography-notes.md` 的學術側很厚,產品/規格側只有 memory 裡
 > 一段名字清單。這一輪只查**跟 funduq 站在同一個位置的東西**:誰在
 > 呼叫方與供應方之間、誰記委派、誰記責任。
 >
-> **這一輪推翻了一個既有判斷**,見最後一節。凡標「未證實」的不得進論文。
+> **第一輪(08-25)推翻了一個既有判斷**,見 §5。**第二輪(08-26)查四家
+> 大廠的跨組織狀態,見 §7**——那一節的結論比規格層更硬,因為它引的是已經
+> 出貨的產品自己寫下的限制。
+>
+> 凡標「未證實」或 `[待逐字查證]` 的不得進論文。
 
 ---
 
@@ -150,3 +154,116 @@ question」。需求側引用用。
    **不帶 scope 與時間**、**break 是一級行為**(五個設計沒有一個處理拒絕延伸)。
 4. **要盯 `draft-liu-oauth-chain-delegation`**。如果它被 OAuth WG 採納,
    `funduq-contract` 就從補充變成競爭者。
+
+---
+
+# 第二輪(2026-08-26):四家大廠的跨組織狀態
+
+> 問題:IBM / Google / AWS / Microsoft 在**跨單位** agent 互動上做到哪裡。
+> 答案很整齊——**他們的產品邊界正好畫在論文說的那條線上,而且是他們自己
+> 畫的**。以下每一句引文都從一手文件取得;凡是「文件沒有談」的一律標成
+> **沒寫**,不得寫成「明文排除」。
+
+## 7.1 Microsoft — 身分不出租戶,自己寫明
+
+`docs/agent-id/agent-identities.md`(MicrosoftDocs/entra-docs,2026-08-26 取):
+
+> 「Agent identities can only be issued tokens in the Microsoft Entra tenant
+> where they're created. **They can't access resources or APIs in other
+> tenants.**」
+>
+> 「While agent identities are single-tenant, agent identity blueprints can be
+> configured as multitenant. A multitenant blueprint can be published and
+> added to other tenants, where it creates **tenant-local** agent identities.
+> **The agent identities themselves always remain single-tenant.**」
+
+**跨租戶的做法是在對方租戶裡再造一個本地身分。** 於是同一個 agent 在兩個
+組織裡是兩個身分,而沒有任何東西把它們連起來——「跨邊界的連續性」在這個
+模型裡不是做得不好,是不存在。
+
+同一份 FAQ 裡一句對責任歸屬直接不利的自陳:
+
+> 「Audit logs **don't distinguish agent identities from other Microsoft
+> Entra identity types by default**… Operations initiated by agent identities
+> appear as **service principals**.」
+
+值得記一筆的概念:Copilot Studio 建立的 agent,「The user who created the
+agent is recorded as its **sponsor**」。這是廠商產品裡最接近責任根的東西,
+但它綁的是**建立者**,不是**每一次呼叫的委派者**——一個 sponsor 對應一個
+agent 的一生,不對應一次工作。
+
+## 7.2 Google — SPIFFE 身分,跨組織沒寫
+
+`docs.cloud.google.com/agent-builder/agent-engine/agent-identity`:每個 agent
+拿到 SPIFFE 身分與自動配發的 X.509 憑證;
+
+> 「Unlike service accounts, agent identities are **not shared by multiple
+> workloads by default, can't be impersonated**, and don't allow developers
+> to generate long-lived service account keys.」
+
+代使用者行事走 3-legged OAuth。**文件沒有談跨組織**——是沒寫,不是寫明在
+範圍外。`[若要在論文裡用,只能寫「未見規範」]`
+
+## 7.3 AWS — 一跳的 on-behalf-of 加憑證保管
+
+Bedrock AgentCore Identity:agent 身分實作成 workload identity;inbound 用
+IAM SigV4 或外部 IdP 的 OAuth/JWT,outbound 用憑證提供者去取第三方服務,
+目的是
+
+> 「enable agents and tools to access AWS resources and third-party services
+> **on behalf of users**」
+
+也就是**一跳的 OBO**。跨帳號有(Memory 2026-06 支援),**跨組織沒有**,
+多跳委派的紀錄也沒有。
+
+## 7.4 IBM — 集中式控制平面,範圍是「你的企業」
+
+watsonx Orchestrate 的 Agentic Control Plane(2026-06,AWS 與 IBM Cloud):
+集中式身分與憑證管理、政策執行、稽核日誌、隔離控制,治理「agents from any
+source with consistent policy enforcement and full auditability」,範圍寫的是
+「across your entire **enterprise** environment」。
+`[一手公告頁回 403;引文目前是二手,進論文前要另找可引來源]`
+
+Agent Catalog 被描述成一個受治理的市集——**位置上最接近 funduq**,但它是
+單一廠商內的目錄,不是跨信任邊界的中介。
+
+## 7.5 交棒鏈是完整的,而且每一棒都引得到
+
+四家都把跨組織交給 A2A。A2A 自己說(`a2a-protocol.org/latest/topics/
+enterprise-ready/`):
+
+> 「A2A delegates authentication to standard web mechanisms.」
+>
+> 「A2A protocol payloads, such as `JSON-RPC` messages, **don't carry user or
+> client identity information directly. Identity is established at the
+> transport/HTTP layer.**」
+
+**廠商說跨組織找 A2A,A2A 說身分在傳輸層。沒有人接住責任。**
+
+(A2A 文件同樣**沒有**明文說它不處理責任鏈或跨跳稽核——只是沒寫。上面兩句
+引文本身已經夠用,不需要再加一句我們自己的推論。)
+
+## 7.6 這一輪對論文的六個影響
+
+1. **§1 的三個支撐點多了一種證據。** 原本靠規格草案;現在四家出貨產品的
+   邊界就畫在那條線上。規格是提案,產品是已經做出的取捨——後者更硬。
+2. **§2 少一格,要補:大廠不是解決了跨組織,是把它定義掉了。** 應對支撐點
+   缺失的第四種方式,是**把邊界縮進支撐點存在的範圍內**。
+3. **agent-as-principal 那一列改寫。** 別再寫「沒有自己目錄的供應方不可
+   表達」,改引微軟原文:身分永遠單租戶,跨租戶靠複製,連續性不存在。
+4. **§6.1 拿到一句協定原文。** 「Identity is established at the
+   transport/HTTP layer」正是為什麼呈交者的認證必須留在門外、而比對留在
+   門內——presenter check 的形狀有了協定自己的解釋。
+5. **§8 要準備一個反問:「廠商明年就做跨租戶了」。** 答案:他們會做的是
+   目錄聯邦,而那需要兩個組織先聯邦——**同一個中央發證方支撐點,只是換了
+   個尺度**。
+6. **sponsor 是一個要處理的鄰居。** 微軟已經記錄「誰建立了這個 agent」。
+   要講清楚差別:那是一個 agent 一生一個,而責任鏈是**一次工作一條**。
+
+## 7.7 待辦
+
+- IBM 的一手可引來源(公告頁 403)。
+- Google / A2A 的「沒寫」不得寫成「排除」——已在 §2 的檢查清單裡。
+- 新增五筆一手來源進 `bibliography-notes.md`:Entra Agent ID 文件、A2A
+  enterprise-ready 頁、Google agent identity、AWS AgentCore Identity、
+  IBM Agentic Control Plane。
