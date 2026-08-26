@@ -24,6 +24,33 @@ after the first person was hurt.
 
 ---
 
+## Revision 6 — 2026-08-26
+
+**The rule revision 5 announced is now the rule that runs.** 0.0.2 shipped
+it bypassable, and this is the correction.
+
+- **A hop cannot excuse itself from the dispatch check.** As shipped, the
+  check skipped itself whenever the next hop carried a `dispatchedTo` of its
+  own — meant to allow one dispatch following another, but the field is
+  written by the party being checked, so the rule was opt-out. A branching
+  party added the field and passed. A malformed value did worse: it slipped
+  the check *and* cleared the pending dispatch, so the hop after it went
+  unchecked too.
+
+  The rule now reads: the hop after a dispatch must be signed by **the
+  provider it named, or by the same key that signed the dispatch**. A
+  witness may offer the same work onward because it is the witness — whose
+  key signed the hop — not because the hop says so about itself. Both bypass
+  shapes are pinned by tests, and a chain ending at a dispatch nobody
+  answered stays legal.
+
+*If you implemented against 0.0.2*: chains you were building are unaffected
+unless you were relying on the escape, and a verifier that accepted a party
+hop carrying its own `dispatchedTo` after somebody else's dispatch was
+accepting a rewritten chain.
+
+---
+
 ## Revision 5 — 2026-08-26
 
 **A chain that was rewritten to leave someone out is now refused**, and the
@@ -43,6 +70,13 @@ number an installed package answers with is the number the vectors record.
   dispatch nobody answered (the named party declined to extend, which is a
   break rather than a defect), and a **dispatch following a dispatch** (the
   same work offered onward without the first party signing).
+
+  > **This rule did not hold as shipped — see revision 6.** The second
+  > allowance was implemented by skipping the check whenever the successor
+  > carried a `dispatchedTo`, which the party being checked writes. Anyone
+  > who wanted past it added one. If you implemented against 0.0.2, the
+  > refusal described above is not what you got.
+
 
 - **The chain funduq stores is the chain it dispatched.** It used to store
   what the caller presented while the agent received that plus funduq's own

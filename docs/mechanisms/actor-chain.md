@@ -103,13 +103,24 @@ recipient, and the dispatch hop below is what narrows it.
 ## The record keeps the head, not the path
 
 funduq stores the **head key** on what needs an authority (a thread's
-binding, a paused ask), and `runs.actor_chain` keeps the chain as
-presented. The head answers "who answers for this"; the chain answers
-"through whose hands", and nothing else on the record can.
+binding, a paused ask), and `runs.actor_chain` keeps the chain **as
+dispatched**: every hop the caller presented, and then the one funduq signs
+naming where it sent the run. The head answers "who answers for this"; the
+chain answers "through whose hands", and nothing else on the record can.
 
-Keeping it makes the *claim* auditable, not the erasure detectable: the
-stored chain is whatever was presented, so a branch is stored exactly as
-branched. What contradicts a branch is funduq's own dispatch hop, below.
+It used to keep the presented chain alone, while the agent received the
+longer one — so funduq's own books could not tell a run it had dispatched
+from a chain that reached it having passed no witness at all, which is the
+distinction the mechanism is for. The hop is signed at the door now, before
+the run is created, so the same object is what the record keeps and what
+the agent receives.
+
+Keeping it makes the *claim* auditable: a branch is stored exactly as
+branched, and what contradicts a branch is funduq's own dispatch hop, which
+is now in the record rather than only in the copy handed out. Verification
+reads it — the hop after a dispatch must be signed by the provider it named
+or by the same witness offering the work onward, and nothing the successor
+says about itself changes that.
 Before both existed, a branch was not merely unprovable at verification
 time — it was unnoticeable afterwards, because nothing was kept to notice
 it against.
