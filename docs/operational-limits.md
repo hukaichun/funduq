@@ -105,9 +105,24 @@ behalf.
 **Running one funduq as several processes is not supported.** That is a
 different thing from the paragraph above: it is horizontal scaling of a
 single funduq, and `scripts/probes/probe_multiprocess.py` is its acceptance
-test — expected to fail in its entirety today, and saying so in its own
-docstring. Do not read the missing feature as a limit on delegation; a
-delegation tree has never had to fit in one process.
+test — **0 of 8 scenarios pass**, measured on 2026-08-27 against two real
+processes sharing one database, identically on SQLite and Postgres. Do not
+read the missing feature as a limit on delegation; a delegation tree has
+never had to fit in one process.
+
+Two of those eight are the whole shape of it, and both are about the
+provider's link rather than the run. **The link belongs to one process, and
+so does the ticket that admits it** — a provider that fetches its ticket
+through a load balancer and then opens its link through the same balancer
+is refused outright, because the ticket was minted in the other process's
+memory. And a caller who lands on a node that does not hold that link has
+their run recorded `failed` / `agent_offline`, which is the paragraph above
+seen from the caller's side. The remaining six are consequences: a booting
+replica reaps another node's live runs, an event reported at the wrong node
+is answered `False`, a stream opened at the wrong node stays empty, a
+SIGKILLed node leaves its runs `running` forever, and a provider that
+re-attaches to the survivor is offered nothing — the claim and the queues
+were process state on the node that died.
 
 ## Timing an embedder cannot reach
 

@@ -49,7 +49,9 @@ jobs:
       #
       # Two of the six probes are deliberately *not* here.
       # `probe_multiprocess.py` is the target for the horizontal-scaling work
-      # and currently fails 6/6 on purpose; `probe_broker_surface.py` reports
+      # and currently fails 8/8 on purpose — re-measured 2026-08-27, after it
+      # was ported from the retired `claim_work` to handed-down dispatch, on
+      # SQLite and Postgres alike; `probe_broker_surface.py` reports
       # what escapes the broker rather than judging it. Listing them would
       # either break CI or quietly pass, and both would teach the wrong thing
       # about what is covered.

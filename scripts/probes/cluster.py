@@ -28,7 +28,14 @@ Usage:
     async with Cluster(nodes=["a", "b"]) as c:
         run = await c.call({"op": "start_run", ...})     # lands wherever
         await c.call({"op": "funduq_start"}, node="b")     # lands on b
+        provider = await c.attach(identity, node="a")    # a link, to one node
         c.kill("a")                                      # SIGKILL, no cleanup
+
+The LB half of this stops at the door. Work is handed *down* a provider's
+link now rather than pulled by a request, so a provider is attached to one
+named process and stays there — `attach` takes no round-robin form. Which
+node a caller lands on is still a coin toss, and that mismatch is what most
+of the multiprocess probe now measures.
 """
 
 from __future__ import annotations
@@ -45,6 +52,14 @@ import tempfile
 from pathlib import Path
 from typing import Any
 
+from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+from funduq_provider_sdk import (
+    ProviderIdentity,
+    funduq_connect_payload,
+    new_nonce,
+    verify_signature,
+)
+
 REPO_ROOT = Path(__file__).resolve().parents[2]
 FUNDUQ_DIR = REPO_ROOT / "funduq"
 NODE_SCRIPT = Path(__file__).resolve().parent / "node.py"
@@ -52,6 +67,16 @@ NODE_SCRIPT = Path(__file__).resolve().parent / "node.py"
 SIGNING_SECRET = "probe-signing-secret"
 
 IDENTITY_KEY = "5a" * 32
+
+# What a provider pins. Derived here rather than asked of a node on purpose:
+# the whole point of pinning is that the value does not come from the party
+# being authenticated.
+FUNDUQ_PUBLIC_KEY = (
+    Ed25519PrivateKey.from_private_bytes(bytes.fromhex(IDENTITY_KEY))
+    .public_key()
+    .public_bytes_raw()
+    .hex()
+)
 
 
 class NodeError(RuntimeError):
@@ -80,6 +105,7 @@ class Cluster:
         self.start_nodes = start_nodes
         self.extra_env = env or {}
         self.procs: dict[str, subprocess.Popen] = {}
+        self.clients: list["ProviderClient"] = []
         self._next = 0
 
     # ---- Lifecycle
@@ -118,6 +144,9 @@ class Cluster:
         return self
 
     async def __aexit__(self, *_exc: Any) -> None:
+        for client in self.clients:
+            await client.close()
+        self.clients.clear()
         self.shutdown()
 
     def spawn(self, name: str) -> None:
@@ -198,6 +227,70 @@ class Cluster:
         name = self.pick()
         return name, await self.call(request, node=name)
 
+    # ---- Providers, which the LB cannot help with
+
+    async def attach(
+        self,
+        identity: ProviderIdentity,
+        *,
+        node: str,
+        ticket_from: str | None = None,
+        max_concurrent_runs: int | None = None,
+    ) -> "ProviderClient":
+        """Open a provider link on one named node and return the provider's half.
+
+        **`node` is required and there is no round-robin form**, which is the
+        first thing the port to attach-based dispatch showed: a link is a
+        connection to one process, so "which node" is not a routing decision
+        an LB can make per call — it is a property of the link for as long as
+        it is open.
+
+        The handshake is the real one, in the documented order: a ticket
+        fetched over a *different* connection (`ticket_from` names which node
+        issues it, since that is worth being able to vary), a proof over
+        `provider_connect_payload`, and funduq's answer checked against the
+        pinned key before this agrees the link is open.
+        """
+        ticket = (
+            await self.call({"op": "issue_ticket", "public_key": identity.public_key},
+                            node=ticket_from or node)
+        )["ticket"]
+        provider_nonce = new_nonce()
+        reader, writer = await asyncio.open_unix_connection(str(self.socket_path(node)))
+        writer.write(
+            (
+                json.dumps(
+                    {
+                        "op": "attach",
+                        "public_key": identity.public_key,
+                        "ticket": ticket,
+                        "provider_nonce": provider_nonce,
+                        "proof": identity.sign_connect(
+                            FUNDUQ_PUBLIC_KEY, ticket, provider_nonce
+                        ),
+                        "max_concurrent_runs": max_concurrent_runs,
+                    }
+                )
+                + "\n"
+            ).encode()
+        )
+        await writer.drain()
+        answered = json.loads(await reader.readline())
+        if not answered.get("ok"):
+            writer.close()
+            with contextlib.suppress(Exception):
+                await writer.wait_closed()
+            raise NodeError(f"node {node}: {answered.get('error')}")
+        if not verify_signature(
+            FUNDUQ_PUBLIC_KEY,
+            answered["result"]["answer"],
+            funduq_connect_payload(ticket, provider_nonce),
+        ):
+            raise NodeError(f"node {node}: the funduq answering this link did not prove its key")
+        client = ProviderClient(node, identity, reader, writer)
+        self.clients.append(client)
+        return client
+
     async def subscribe(self, run_id: str, *, node: str, timeout: float = 5.0) -> list[Any]:
         """Drain a run's event stream from one specific node, until the stream
         ends or `timeout` passes. Node-specific by necessity: *which* node can
@@ -231,3 +324,104 @@ class Cluster:
             with contextlib.suppress(Exception):
                 await writer.wait_closed()
         return events
+
+
+class ProviderClient:
+    """The provider half of an attached link — the side that receives work.
+
+    A crude stand-in for `ProviderRuntime` over a socket, and crude in the
+    same places node.py is: no reconnect, no backpressure, no framing beyond
+    a newline. What it does not cut corners on is the two things funduq
+    actually depends on. It **answers an offer from its own state, at once**
+    (the receipt that holds the next utterance of the same conversation), and
+    it **checks funduq's answering signature against the pinned key** before
+    it agrees the link is open.
+
+    It records rather than acts: offers and cancels land in lists, so a
+    scenario can assert on what a provider was handed rather than on what
+    some agent did with it.
+    """
+
+    def __init__(
+        self,
+        node: str,
+        identity: ProviderIdentity,
+        reader: asyncio.StreamReader,
+        writer: asyncio.StreamWriter,
+    ) -> None:
+        self.node = node
+        self.identity = identity
+        self.offers: list[dict[str, Any]] = []
+        self.cancels: list[str] = []
+        # What the next offer is answered with: True (accepted), False (full
+        # right now), or a string (a permanent refusal, carrying its reason).
+        self.answer: bool | str = True
+        self._reader = reader
+        self._writer = writer
+        self._replies: dict[int, asyncio.Future] = {}
+        self._next_id = 0
+        self._pump = asyncio.create_task(self._read_loop())
+
+    @property
+    def public_key(self) -> str:
+        return self.identity.public_key
+
+    async def _send(self, frame: dict[str, Any]) -> None:
+        self._writer.write((json.dumps(frame) + "\n").encode())
+        await self._writer.drain()
+
+    async def _read_loop(self) -> None:
+        while line := await self._reader.readline():
+            frame = json.loads(line)
+            if "offer" in frame:
+                self.offers.append(frame["offer"])
+                answer = self.answer
+                await self._send(
+                    {
+                        "ack": frame["offerId"],
+                        "accepted": answer is True,
+                        "refusal": answer if isinstance(answer, str) else None,
+                    }
+                )
+                continue
+            if "cancel" in frame:
+                self.cancels.append(frame["cancel"])
+                continue
+            pending = self._replies.pop(frame.get("id"), None)
+            if pending is not None and not pending.done():
+                pending.set_result(frame)
+
+    async def request(self, request: dict[str, Any]) -> Any:
+        """One request on the open link, answered by the node holding it.
+
+        There is no `node=` here, and that is the finding rather than a
+        limitation of the fixture: a link is a connection to one process, so
+        an LB has nothing to choose between.
+        """
+        request = {**request, "id": self._next_id}
+        self._next_id += 1
+        reply: asyncio.Future = asyncio.get_running_loop().create_future()
+        self._replies[request["id"]] = reply
+        await self._send(request)
+        answered = await reply
+        if not answered.get("ok"):
+            raise NodeError(f"node {self.node}: {answered.get('error')}")
+        return answered["result"]
+
+    async def register(self, *names: str) -> dict[str, Any]:
+        """Publish `names` on this link. Unsigned, because the link is the credential."""
+        return await self.request(
+            {"op": "register_agents", "agents": [{"name": n} for n in names]}
+        )
+
+    async def report_event(self, run_id: str, event: dict[str, Any]) -> bool:
+        return await self.request({"op": "report_event", "run_id": run_id, "event": event})
+
+    async def finish_run(self, run_id: str) -> bool:
+        return await self.request({"op": "finish_run", "run_id": run_id})
+
+    async def close(self) -> None:
+        self._pump.cancel()
+        with contextlib.suppress(Exception):
+            self._writer.close()
+            await self._writer.wait_closed()
