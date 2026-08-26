@@ -20,9 +20,18 @@
 > (2) **AIP 那格的 down-flow / up-flow 二分讀完全文後確認是錯的，已撤下**
 > 並換成 lane-by-lane 的版本。同軸競爭者是 arXiv:2606.08790 (RAILS)。
 >
+> **2026-08-25／26 補篇：`landscape-2026-08-25.md`** — 產品與規格側的重查，
+> 本檔先前完全沒有。它加了兩節：**§2.7 委派鏈規格**（2026 上半年至少五個
+> 設計，其中一份掛 Okta 與 Cisco）與 **§2.8 廠商平台一手文件**（四家把
+> 邊界畫在自己的信任域上，三家自己寫明）。同時修一條錯引：舊的「116 份
+> 草案只有 5 份用 `authorization_details`」數的是 **scope** 不是 **chain**，
+> 不得拿來支持「沒人在做委派鏈」。
+>
 > 讀全文進度：AIP (2603.24775) ✅、Governance Gaps (2606.31498) ✅、
 > RAILS (2606.08790) ✅、Stop Means Stop (2607.14166) ✅、Governance at the
-> Boundary (2608.16055) ✅、MasDrift (2608.07556) ✅，皆 2026-08-21。
+> Boundary (2608.16055) ✅、MasDrift (2608.07556) ✅，皆 2026-08-21；
+> `draft-liu-oauth-chain-delegation-00` ✅、HDP (2604.04522) ✅，
+> 2026-08-25，兩者的引文皆逐字比對過原文。
 > **§1 必讀清單已清空**；原有的三個 read-before-writing 旗標仍未讀
 > （2604.00892 / 2606.06460 / 2603.25100）。
 >
@@ -66,7 +75,11 @@ The likely reviewer community; this section is the handshake with it.
 | Blaze, Feigenbaum, Lacy, *PolicyMaker* (IEEE S&P 1996); KeyNote | Decentralized trust management precursors |
 | **Pagnia & Gärtner, *On the Impossibility of Fair Exchange without a Trusted Third Party*** (TUD-BS-1999-02, TU Darmstadt, 1999-03); Even & Yacobi (1980); Zhou & Gollmann, fair non-repudiation | **Lineage and contrast for §4.5 — cite it to say what we are *not*.** It proves strong fair exchange is impossible without a TTP, and in that literature **the TTP is a judge**: the protocols carry abort and recovery sub-protocols plus a dispute-resolution policy specifying how a judge settles. Citing it as our necessity argument would import an adjudicator and contradict rule zero — a reviewer who knows this line would say their third party judges, ours refuses to, so the theorem does not reach us. We also do not attempt fair exchange: a provider declining to extend is a boundary, not an unfair abort. **What we borrow is the shape, not the conclusion.** Our property is *distinguishability* (declined-to-extend versus erased hop), which is strictly weaker than fairness and needs a party that **sees both edges**, not one that may rule — hence *witness*, not arbiter, and the weaker requirement is the deployability argument. Verify the exact report number and date before it ships |
 | **AIP** — [arXiv:2603.24775](https://arxiv.org/abs/2603.24775) v1, 2026-03-25 (+ same author's LDP, Provenance Paradox) | The near neighbor. **Full text read 2026-08-21; the earlier "AIP governs down-flow, we govern up-flow" slogan was wrong and is retired** — §3.2's Completion block (result hash, verification status, resource consumption, cost) is appended back onto the same token, and §3.3 defines three trust levels (self-reported / counter-signed / third-party attested). AIP *does* have an up-flow. The differentiation that survives the full text, per lane: **escalation path — absent; visibility — absent; blame — raw material only, signed by the party being judged; funding attribution — raw material only, budget is a per-token ceiling, never a running balance** (§3.4: "Aggregate spend enforcement is the runtime's responsibility, not the token's" — funduq is that runtime). So AIP's up-flow is *a self-report with no observer*, and its own Limitations concede the point, citing the Provenance Paradox: self-claimed quality "systematically selects the worst delegates"; counter-signing and third-party attestation "exist as trust escalation options but are not enforced in v1". **Argue the differentiation out of AIP's own limitations section, never out of a down/up dichotomy.** Also verified: no break concept (§3.7 is attenuation-only + bounded depth, default 3); no HITL/interrupt/cancel content anywhere; no revocation (§7: sub-hour TTL, CRL endpoint is MAY and no reference implementation checks it) — contrasts with rule zero. Weight it accordingly: single author (ISB India), self-citing trilogy, evaluation is single-machine localhost with no production deployment, by its own admission |
-| IETF drafts: AIMS, WIMSE, Agentic JWT, SCIM-for-agents | Industry standardization pulse |
+| IETF drafts: AIMS, WIMSE, Agentic JWT, SCIM-for-agents | Industry standardization pulse. **Superseded in specificity by §2.7** — that section names the drafts that actually carry delegation chains |
+| **HDP** — [arXiv:2604.04522](https://arxiv.org/abs/2604.04522), Helixar (single author, NZ), 2026-03; also `draft-helixar-hdp-agentic-delegation-00` | **Full text read 2026-08-25 (PDF text extracted, quotes matched character for character). The closest thing to our mechanism, and it says our sentence**: §4.2.3 "Semantic validation of agent actions against declared scope is an application-layer concern; **HDP provides the record, not the enforcement**." The line must be drawn on *what is recorded*, not on record-versus-enforce, or a reviewer will say it is already said. Three differences, all from its own text: (1) **§7.1** — "HDP v0.1 uses the issuer's key for all hop signatures, meaning agents do not sign with their own keys… hop signatures attest that **a hop was recorded at the issuer**, not that the specific agent produced it"; per-agent keys are a v0.2 plan. (2) It records scope — a free-text `intent`, `authorized_tools`, `data_classification`, `network_egress`, `persistence`, `max_hops` — and pushes checking to the application layer (§7.2). (3) Time and session: `expires_at` defaults to 24h and a `session_id` bound out of band; replay defence is expiry plus session binding, with **no possession check**. Its §5.4 concedes the semantic boundary: a legitimate agent recording a genuine hop with a misleading `action_summary` "is not detectable by the protocol alone" |
+| **SentinelAgent** — [arXiv:2604.02767](https://arxiv.org/html/2604.02767v1) | The adjudicator row's contemporary instance: a central Delegation Authority Service issues, intercepts and **blocks**, with NIST 800-53 controls inside the token and an intent vector per hop. Self-reported weakness worth quoting: 13% TPR against adversarial intent paraphrasing. `[待逐字查證 — currently a summary]` |
+| **Auditable Agents** — [arXiv:2604.05485](https://arxiv.org/html/2604.05485) v2, USC/ASU/JHU, **2026-08-13** | **The §1 hook.** Five auditability dimensions, the fourth being **Responsibility Attribution** — "full delegation chains recoverable from immediate executor to originating principal". Two lines: "**no existing work covers all five dimensions jointly**" (Evidence Integrity and Lifecycle Coverage most neglected), and open problem **OP3, "Capturing full responsibility chains across multi-agent delegation"**; **OP6** is cross-party audit aggregation when several organisations hold partial traces. Three institutions, two weeks old, and it writes our subject up as unsolved — stronger than the CSA percentages, whose n was never verified and which are now dropped. Caveats it states about itself: evidence comes from the authors' own tools, no end-to-end audit on a deployed system, open-source projects only. `[待逐字查證 — quotes currently from a summary]` |
+| **Authorization Propagation as Infrastructure** — [arXiv:2605.05440](https://arxiv.org/html/2605.05440v1), Kamiwaza, 2026-05 | Requirements-only (R1–R7), proposes no mechanism, and concedes "Whether these mechanisms can be composed without introducing new failure modes remains an open architectural question". Demand-side citation, not a rival. `[待逐字查證]` |
 
 ## §2.4 HITL, mixed initiative, interruptibility
 
@@ -106,6 +119,38 @@ The theorem-3 (interjection) conversation partners; richest 2026 harvest.
 | ERC-8004 empirical study — [arXiv:2606.26028](https://arxiv.org/html/2606.26028) | Academic counterpart of the A2A trust-evidence discussions (#1631) |
 | *From Logic Monopoly to Social Contract* — [arXiv:2603.25100](https://arxiv.org/pdf/2603.25100) | **Read-before-writing.** Title suggests our mechanism/policy philosophy — check for convergence or collision before we claim the framing |
 
+## §2.7 Delegation-chain specifications (IETF) — the direct rivals
+
+> **Added 2026-08-25.** This section is why the old "116 drafts, 5 with
+> `authorization_details`" figure must not be cited for nobody-does-chains:
+> that number counts **scope**, not **chains**. Between March and June 2026 at
+> least five signed-hop-chain designs appeared. See
+> `landscape-2026-08-25.md` for the full table.
+
+| Entry | Supports |
+|---|---|
+| **`draft-liu-oauth-chain-delegation-00`** — Alibaba ×2, Cisco, **Okta**, 2026-06-06, individual submission | **The nearest rival, and the one to watch — if the OAuth WG adopts it, `funduq-contract` goes from complement to competitor. Full text read 2026-08-25; every quote below matched character for character against the document.** Its framing is the field's in one sentence: "Each delegation hop must **preserve the original user's authorization intent** while **constraining what each downstream agent is permitted to do**." Central issuer: `as_signature` REQUIRED, `delegator_signature` only RECOMMENDED, and "the Resource Server **MUST** use token introspection… to retrieve **the authoritative `delegation_chain` from the AS**, rather than trusting any client-supplied chain data." Vocabulary given up in three steps: "**This field is typically absent.**"; "…Rego…, ALFA…, XACML, or **any other policy representation agreed upon by the delegator and the Authorization Server**"; and where subset checking is "computationally expensive or **undecidable**, the RS **MAY rely on the AS's attestation**". Bounds it states: "focuses on **linear** delegation chains", diamond topologies deferred, "A RECOMMENDED default maximum depth is **5 hops**". **The paragraph to build §2 around**: its own second gap is our mechanism — "The `act` claim is **constructed unilaterally by the Authorization Server**. The delegating agent leaves **no independent cryptographic evidence** that it authorized a specific delegation. This limits non-repudiation and post-hoc audit capabilities" — and then it makes that signature the optional one. They found the same hole and made it a MAY |
+| **`draft-niyikiza-oauth-attenuating-agent-tokens-01`** — Tenuo (single author), 2026-06-15 | Attenuating capability tokens: `par_hash` links each token to its parent's exact bytes, the holder is `cnf.jwk` with no `sub`, capabilities in `authorization_details` must narrow monotonically, verification is offline against a **configured root trust anchor**. Out of scope by its own text: revocation, and transport binding. No concept of declining to extend. `[待逐字查證]` |
+| **`draft-sato-soos-mjwt-00`** — MyAuberge (single author), 2026-05-24 | `delegation_chain` plus **Cedar actions** written into the credential, a constant `human_principal_id` as authorization root, GEC signatures per hop. `[待逐字查證]` |
+| **`draft-haberkamp-ipp-00`** (IPP) | Same problem, Ed25519 append-only chains. Read via HDP §2.5's comparison, not directly: IPP requires polling a central revocation registry and carries a "genesis seal" binding every token to the specification author's key at a URL. **Verify against IPP itself before repeating either claim** |
+| **`draft-ietf-oauth-identity-chaining-17`** — OAuth WG, at IESG, 2026-07-19 | **The mature one, and it is not about this.** Token Exchange plus JWT grant to carry identity across trust domains. Cite for the shape of the gap the standards track leaves open — but `[待逐字查證]`: whether it states audit/accountability as out of scope, or simply does not mention them. **Those are different claims and may not stand in for each other** |
+| `draft-sharif-agent-audit-trail-00` | A standard logging format for autonomous systems; adjacent, unread |
+
+## §2.8 Vendor platforms — primary documentation
+
+> **Added 2026-08-26.** A draft is a proposal; a shipped product is a decision
+> already taken. Four vendors drew their boundary exactly where §1 says the
+> three supports run out, and three of the four wrote it down themselves.
+> Every quote here is from a primary document.
+
+| Entry | Supports |
+|---|---|
+| **Microsoft Entra Agent ID** — `MicrosoftDocs/entra-docs`, `docs/agent-id/agent-identities.md` and `faq.yml`, read 2026-08-26 | **The agent-as-principal row should quote this, not characterise it.** "Agent identities can only be issued tokens in the Microsoft Entra tenant where they're created. **They can't access resources or APIs in other tenants.**" A multitenant blueprint does not cross: it "creates **tenant-local** agent identities… **The agent identities themselves always remain single-tenant.**" So one agent is two identities in two organisations with nothing joining them. Also from the FAQ, against responsibility attribution: audit logs "**don't distinguish agent identities from other Microsoft Entra identity types by default**… Operations initiated by agent identities appear as **service principals**." And the neighbour to handle rather than dismiss: Copilot Studio records the creating user as the agent's **sponsor** — one per agent for its lifetime, where a responsibility chain is one per piece of work |
+| **A2A, "Enterprise-Ready Features"** — `a2a-protocol.org/latest/topics/enterprise-ready/`, read 2026-08-26 | **Closes the hand-off chain, and gives §6.1 its explanation.** "A2A delegates authentication to standard web mechanisms." and "A2A protocol payloads, such as `JSON-RPC` messages, **don't carry user or client identity information directly. Identity is established at the transport/HTTP layer.**" The second sentence is why authenticating the presenter must stay outside the door while the comparison stays inside. **Note the silence honestly**: the page does not say it excludes responsibility chains or cross-hop audit — it simply does not raise them, and the two quotes above carry the point without needing our inference |
+| **Google agent identity** — `docs.cloud.google.com/agent-builder/agent-engine/agent-identity` | SPIFFE identity with an auto-provisioned X.509 certificate; "Unlike service accounts, agent identities are **not shared by multiple workloads by default, can't be impersonated**, and don't allow developers to generate long-lived service account keys." User delegation is 3-legged OAuth. **Cross-organisation is not discussed** — record as *not stated*, never as an exclusion |
+| **AWS Bedrock AgentCore Identity** — `docs.aws.amazon.com/bedrock-agentcore/latest/devguide/identity.html` | Agent identities are workload identities; inbound IAM SigV4 or external-IdP JWT, outbound credential providers, to "access AWS resources and third-party services **on behalf of users**". One-hop on-behalf-of plus credential vaulting. Cross-account exists (Memory, 2026-06); cross-organisation and any multi-hop record do not |
+| **IBM watsonx Orchestrate — Agentic Control Plane** (2026-06) | Centralised identity and credential management, policy enforcement, audit logging and isolation, governing "agents from any source with consistent policy enforcement and full auditability" **"across your entire enterprise environment"**. Its Agent Catalog is the closest thing to funduq's position inside one vendor. `[待逐字查證 — the announcement page returns 403; wording is second-hand and must not ship as a quote]` |
+
 ## §7 Federation precedents (one sentence each, from domain knowledge)
 
 SMTP, XMPP, Matrix, ActivityPub — outbound-connection + federated-identity precedents supporting the `agent@funduq` direction.
@@ -113,6 +158,11 @@ SMTP, XMPP, Matrix, ActivityPub — outbound-connection + federated-identity pre
 ## Pre-writing checklist
 
 1. Verify every classical entry's exact bibliographic details.
+0. **Clear every `[待逐字查證]` in §2.3, §2.7 and §2.8.** Read to date, verbatim
+   and matched against the document: `draft-liu-oauth-chain-delegation-00` and
+   HDP only. Everything else in those sections rests on a summary. A summary is
+   not a quote, and **"does not say" may not stand in for "says it is out of
+   scope"**.
 2. Full-read the three flagged papers (InterruptBench; Will the Agent Recuse; Logic Monopoly).
 3. Re-run all arXiv links; note versions cited.
 4. Sweep arXiv cs.MA current listings once more the week of submission — this space moves weekly.
