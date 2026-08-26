@@ -417,18 +417,30 @@ class RunBroker:
         protocol: str,
         handlers: HandlerMap,
         seq: int = 0,
-    ) -> Run:
+    ) -> Run | None:
         """Queues a new run for `agent`, gives it its own lane, and — if it is
         its conversation's turn — asks that lane to try handing it over.
 
-        Two refusals, both because accepting would create a run nothing could
-        ever finish. The broker must be `start()`-ed, or nothing runs the
-        clocks. And **the agent must be served right now**: a run is only ever
-        born with a provider online (the doors record `agent_offline` rather
-        than queue one), and the lane is written to open by offering rather
-        than by waiting for somebody to appear. A provider leaving afterwards
-        is an ordinary thing that happens to a live run; never having had one
-        is not.
+        **Returns None when nobody is serving `agent`**, having queued
+        nothing. A run is only ever born with a provider online, and the lane
+        is written to open by offering rather than by waiting for somebody to
+        appear; a provider leaving afterwards is an ordinary thing that
+        happens to a live run, never having had one is not, and taking such a
+        run would mean holding something nothing could ever finish.
+
+        That refusal is a **value** rather than an exception because the door
+        cannot ask the question first. It used to: `dispatch` read the roster,
+        committed, then called this, and the commit is a suspension point —
+        on Postgres a network round trip — so a provider closing its socket
+        inside it produced an unhandled `RuntimeError` where the door
+        promises `agent_offline`, a run left `queued` forever, and a broker
+        that had never heard of it. Two parties reading one fact at two
+        moments. Now one party reads it, in the same synchronous breath as
+        the insert it guards, and the other acts on the answer.
+
+        Being asked while the broker is stopped stays an exception: nothing
+        runs the clocks then, and that is a programming error rather than
+        something that can become true between two lines.
 
         `handlers` is required. A run without one is a run whose lane could
         record nothing and whose end nobody would hear.
@@ -439,11 +451,7 @@ class RunBroker:
                 "dispatched — call Funduq.start() (or RunBroker.start()) first"
             )
         if self._live.serving(agent) is None:
-            raise RuntimeError(
-                f"run {run_id}: no provider is serving '{agent}', so nothing would ever "
-                "be offered this run — a caller-facing door records agent_offline "
-                "instead of queueing"
-            )
+            return None
         run = Run(
             run_id=run_id,
             agent=agent,
