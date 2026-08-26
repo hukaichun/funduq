@@ -181,7 +181,11 @@ it buys:
 
 - **"Routed through funduq" becomes verifiable.** A consumer that pins a
   funduq key can require its hops in the path; a chain that bypassed funduq,
-  or was fabricated whole, doesn't have them.
+  or was fabricated whole, doesn't have them. `verify_chain` hands back the
+  hops it parsed, so that check is
+  `any(h.actor_public_key == pinned and h.dispatched_to for h in result.hops)`.
+  Both halves, always: `dispatched_to` alone is a claim anyone can write,
+  and it is the pinned key that makes it a witness's.
 - **Erasure becomes detectable**, because the hop names *the agent it
   dispatched to* (`dispatchedTo`). An agent is addressed as `(provider_key, name)`
   (`AgentRef`), and the provider half of that pair is the same key that
@@ -190,7 +194,10 @@ it buys:
   P, therefore the hop after funduq's must be signed by P. A branch breaks
   that relation — the hop says P and the next hop is signed by someone
   else — and dropping funduq's hop instead leaves a gap a consumer
-  requiring funduq hops can refuse. Without the field, the branch
+  requiring funduq hops can refuse. The one party exempt from that relation
+  is funduq itself, re-offering work nobody took; that exemption is a second
+  *dispatch* hop, never a plain one, because a witness appears in a chain
+  only as a witness. Without the field, the branch
   `caller → funduq → B` is indistinguishable from an honest direct
   dispatch. This is the one thing that reaches the completeness gap; the
   presenter check does not, because a branching party does not lie about

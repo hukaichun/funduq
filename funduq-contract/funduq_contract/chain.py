@@ -48,18 +48,20 @@ class Hop:
     `isinstance(value, dict)` in one place and `value is None` in another, so
     a `dispatchedTo` of the wrong shape counted as absent for one branch and
     present for the other, and the disagreement was a way through.
+
+    **There is deliberately no `is_witness`.** One shipped in 0.0.3, unused,
+    with a docstring warning against the reading it invites. A hop carrying
+    `dispatchedTo` is a dispatch *claim*; whether it is a witness's is
+    decided by `actor_public_key` — a key the reader pinned — so the honest
+    predicate reads both fields, and a lone bool answers the question that
+    must never be asked alone. Two readings of one thing is what caused the
+    bug above; an accessor offering the second one is not worth its
+    convenience.
     """
 
     actor_public_key: str
     prev_hash: str | None
     dispatched_to: DispatchTarget | None
-
-    @property
-    def is_witness(self) -> bool:
-        """Whether this hop records a dispatch. Says nothing about whether to
-        believe it: what makes a dispatch worth anything is whose key signed
-        it, which is `actor_public_key` and is checked separately."""
-        return self.dispatched_to is not None
 
 
 def _parse_hop(index: int, payload: dict[str, Any]) -> Hop:
@@ -99,9 +101,24 @@ def _parse_hop(index: int, payload: dict[str, Any]) -> Hop:
 
 @dataclass(frozen=True)
 class ChainResult:
-    """A verified chain: each hop's signing key, in order, head first."""
+    """A verified chain: every hop, in order, head first.
 
-    actor_public_keys: list[str]
+    It used to be the signing keys alone, and that was too little to write
+    the check this package's own documentation describes — pin funduq's key,
+    require a hop of funduq's on the path. A consumer wanting that had to
+    decode the JWT and index the claim mapping by hand, which is not an
+    inconvenience: it is the posture that produced the dispatch bug, and ten
+    call sites in this repository were standing in it. `verify_chain` already
+    parses every hop; handing back only part of what it parsed sent everyone
+    else back to the wire.
+    """
+
+    hops: list[Hop]
+
+    @property
+    def actor_public_keys(self) -> list[str]:
+        """Each hop's signing key, in order. The chain's shape, without its claims."""
+        return [hop.actor_public_key for hop in self.hops]
 
     @property
     def head(self) -> str:
@@ -171,10 +188,16 @@ def extend_chain(private_key: Ed25519PrivateKey, prev_chain: list[str]) -> list[
 
 
 def dispatch_hop(
-    private_key: Ed25519PrivateKey, prev_chain: list[str], provider_key: str, agent_name: str
+    private_key: Ed25519PrivateKey, prev_chain: list[str], target: DispatchTarget
 ) -> list[str]:
     """Extends `prev_chain` with a hop recording a dispatch to one agent,
     as `{"providerKey", "name"}` under `dispatchedTo`.
+
+    `target` is one argument of one type because it used to be two adjacent
+    interchangeable strings. Swapping them signed happily and verified
+    happily; what broke was the *honest* provider extending it, refused with
+    a message pointing at the innocent successor. The type that already
+    existed for this stopped six lines short of the signature people call.
 
     This is the one thing that reaches a chain's **completeness**. Signatures
     and links prove nobody was inserted, reordered or spliced in; never that
@@ -187,14 +210,7 @@ def dispatch_hop(
     a branch cannot satisfy both. Dropping the hop instead leaves a gap a
     consumer requiring these hops can refuse.
     """
-    return [
-        *prev_chain,
-        sign_hop(
-            private_key,
-            prev_chain[-1],
-            DispatchTarget(provider_key=provider_key, name=agent_name),
-        ),
-    ]
+    return [*prev_chain, sign_hop(private_key, prev_chain[-1], target)]
 
 
 def verify_chain(chain: list[str]) -> ChainResult:
@@ -216,10 +232,18 @@ def verify_chain(chain: list[str]) -> ChainResult:
     `dispatchedTo` is a witness saying where it handed the work, and the hop
     after it must be signed by one of exactly two keys: the provider that was
     named, or **the same key that signed the dispatching hop** — the witness
-    offering the same work onward because nobody took it. Anyone else is a
-    chain rewritten to leave someone out. A chain that *ends* at a dispatch
-    hop is also legal: the named party never accepted, which is a break
-    rather than a defect.
+    offering the same work onward because nobody took it, which is itself
+    another dispatch. Anyone else is a chain rewritten to leave someone out.
+    A chain that *ends* at a dispatch hop is also legal: the named party
+    never accepted, which is a break rather than a defect.
+
+    That second allowance is narrow on purpose: **a witness appears in a
+    chain only as a witness.** It never heads a segment and never does the
+    work, so a plain hop under its key is a witness signing as a party and is
+    refused. Nothing outside funduq can reach that case — it needs funduq's
+    key — so this is not a hole being closed; it is the code's edge being
+    moved back to where the sentence above always said it was. A rule whose
+    real edge sits wider than its stated one is the shape the bug below had.
 
     **The successor's own claims decide nothing.** The first version of this
     check skipped itself whenever the next hop carried a `dispatchedTo` of
@@ -241,7 +265,7 @@ def verify_chain(chain: list[str]) -> ChainResult:
     if not chain:
         raise InvalidChain("empty actor chain")
 
-    actor_public_keys: list[str] = []
+    hops: list[Hop] = []
     prev_token: str | None = None
     previous: Hop | None = None
 
@@ -269,11 +293,19 @@ def verify_chain(chain: list[str]) -> ChainResult:
             )
 
         if previous is not None and previous.dispatched_to is not None:
-            may_sign_here = (
-                previous.dispatched_to.provider_key,  # the party it named accepted
-                previous.actor_public_key,  # or the witness offers it onward
-            )
-            if hop.actor_public_key not in may_sign_here:
+            if hop.actor_public_key == previous.dispatched_to.provider_key:
+                pass  # the party it named accepted
+            elif hop.actor_public_key == previous.actor_public_key:
+                # The witness itself, which it may be only to offer the same
+                # work onward — and offering is another dispatch.
+                if hop.dispatched_to is None:
+                    raise InvalidChain(
+                        f"hop {i}: signed by the witness that dispatched at hop {i - 1}, "
+                        "but it is not itself a dispatch — a witness appears in a chain "
+                        "only as a witness, so it may re-offer work nobody took and may "
+                        "never sign as a party"
+                    )
+            else:
                 raise InvalidChain(
                     f"hop {i}: the hop before it dispatched to "
                     f"{previous.dispatched_to.provider_key[:16]}…, but this hop is signed "
@@ -282,7 +314,7 @@ def verify_chain(chain: list[str]) -> ChainResult:
                     "that named it may sign here"
                 )
 
-        actor_public_keys.append(hop.actor_public_key)
+        hops.append(hop)
         prev_token, previous = token, hop
 
-    return ChainResult(actor_public_keys=actor_public_keys)
+    return ChainResult(hops=hops)

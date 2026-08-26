@@ -24,6 +24,7 @@ if TYPE_CHECKING:
 from funduq_contract import (
     FINGERPRINT_HEX_LENGTH,
     ChainResult,
+    DispatchTarget as DispatchTarget,
     InvalidChain as InvalidChain,
     cancel_payload as cancel_payload,
     delegation_payload as delegation_payload,
@@ -194,13 +195,19 @@ class FunduqIdentity:
     def dispatch_hop(self, prev_chain: list[str], agent: "AgentRef") -> list[str]:
         """Extends `prev_chain` with this funduq's hop for a dispatch to `agent`.
 
-        The `AgentRef` is unpacked here rather than handed on, because
+        The `AgentRef` is translated here rather than handed on, because
         funduq-contract does not know core's types and should not have to —
         what the format needs is the pair `(provider_key, name)` an agent is
-        addressed by. See `funduq_contract.dispatch_hop` for what naming the
-        destination buys.
+        addressed by, and it has its own type for that pair. Translating one
+        structure into another is the whole of this method; the two halves are
+        never loose strings on either side of the call. See
+        `funduq_contract.dispatch_hop` for what naming the destination buys.
         """
-        return _dispatch_hop(self._private_key, prev_chain, agent.provider_key, agent.name)
+        return _dispatch_hop(
+            self._private_key,
+            prev_chain,
+            DispatchTarget(provider_key=agent.provider_key, name=agent.name),
+        )
 
     @classmethod
     def from_hex(cls, private_key_hex: str) -> "FunduqIdentity":

@@ -18,7 +18,7 @@ different jobs, which is what lets this sit under core and an SDK at once
 without either lending the other its keys.
 """
 
-CONTRACT_REVISION = 6
+CONTRACT_REVISION = 7
 """Which revision of funduq's contract this package implements.
 
 Package versions and contract revisions answer different questions. A

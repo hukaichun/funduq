@@ -18,7 +18,9 @@ network or a database; the dependencies are `cryptography` and `pyjwt`.
   being spent as another.
 - `chain` — `sign_hop`, `new_chain`, `extend_chain`, `dispatch_hop`, and
   `verify_chain`. A hop carries the signer's key and a hash-link to the hop
-  before it, and nothing else — no subject, and no time.
+  before it, and nothing else — no subject, and no time. `verify_chain`
+  returns the hops it parsed, so reading a dispatch is `result.hops[-1]
+  .dispatched_to`, never a hand-decoded JWT.
 - `signatures` — `verify_signature`, `new_nonce`, provider fingerprints.
 
 ## Implementing funduq's contract in another language

@@ -15,8 +15,11 @@ pip install funduq-contract
 - **`payloads`** — one function per act, each returning the canonical byte
   string a signer signs. Pure, and taking no key.
 - **`chain`** — the hop format: `sign_hop`, `new_chain`, `extend_chain`,
-  `dispatch_hop`, and `verify_chain` with its `ChainResult` (whose `head` and
-  `presenter` are the two ends a caller-side check compares).
+  `dispatch_hop` (which takes a `DispatchTarget`, one argument rather than
+  two loose strings), and `verify_chain` with its `ChainResult` — `head` and
+  `presenter` are the two ends a caller-side check compares, and `hops` is
+  every hop already parsed into a `Hop`, so a consumer never decodes a JWT
+  to read `dispatched_to`.
 - **`signatures`** — `verify_signature`, `new_nonce`, and the provider
   fingerprint helpers.
 

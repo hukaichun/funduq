@@ -8,6 +8,8 @@ from funduq_provider_sdk.contract import (
 from funduq_provider_sdk.inprocess import InProcessLink
 from funduq_provider_sdk.link import FunduqLink
 from funduq_provider_sdk.identity import (
+    DispatchTarget,
+    Hop,
     InvalidChain,
     ProviderIdentity,
     VerifiedChain,
@@ -35,6 +37,8 @@ from funduq_provider_sdk.runtime import ProviderRuntime
 
 __all__ = [
     "KyokForwardedProps",
+    "DispatchTarget",
+    "Hop",
     "InvalidChain",
     "VerifiedChain",
     "delegation_payload",

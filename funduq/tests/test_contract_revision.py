@@ -79,6 +79,11 @@ def test_the_surface_holds_the_things_an_implementation_is_written_against() -> 
     surface = contract.surface()
 
     assert surface["vectors"], "the signing payloads and wire frames themselves"
+    assert any(item.startswith("sign_hop(") for item in surface["contract_api"]), (
+        "funduq_contract's exported signatures — a parameter changing type is a break "
+        "for every Python implementer, and one shipped under a changelog entry saying "
+        "nothing had changed for them"
+    )
     assert "identity_private_key:required" in surface["settings"], (
         "settings and their requiredness — this one stops an existing deployment "
         "from starting, and arrived unannounced once already"

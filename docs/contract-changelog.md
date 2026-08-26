@@ -14,13 +14,75 @@ courtesy someone remembers.
 **The surface** is what an outside implementation would have to change its
 own code to keep up with: the vectors themselves, `CoreSettings` fields and
 whether each is required, the provider link's verbs, the A2A protocol
-version and transport bindings, and whether each package ships its PEP 561
-marker. Prose and internals are not in it — see `funduq/tests/contract_surface.py`, which
+version and transport bindings, whether each package ships its PEP 561
+marker, and every public name `funduq_contract` exports with the shape it
+exports it as. Prose and internals are not in it — see `funduq/tests/contract_surface.py`, which
 reads every part of it live rather than from a copy.
 
-Nothing has been published yet, so nothing here is a migration burden on a
-real deployment. It is a record from the beginning rather than one started
-after the first person was hurt.
+This started before anything was published, which is the point: it is a
+record from the beginning rather than one begun after the first person was
+hurt. Revisions 1–5 predate any release. From `funduq-contract` 0.0.1
+onwards a stranger can install a version and be wrong about it, so the
+entries below say what to change and not only what moved.
+
+---
+
+## Revision 7 — 2026-08-26
+
+**The types reach the signatures**, and the surface reaches the Python API
+that had been breaking outside it.
+
+- **`dispatch_hop` takes a `DispatchTarget`.** It used to take
+  `provider_key` and `agent_name` — two adjacent, same-typed, interchangeable
+  strings. Handing them over backwards signed happily and verified happily;
+  what broke was the *honest* provider extending the chain, refused with a
+  message naming the innocent successor. `DispatchTarget` already existed and
+  stopped six lines short of the function people call. *Change
+  `dispatch_hop(key, chain, provider_key, name)` to
+  `dispatch_hop(key, chain, DispatchTarget(provider_key=…, name=…))`.*
+
+- **`verify_chain` hands back the hops it parsed.** `ChainResult.hops` is a
+  list of `Hop`, each with `actor_public_key`, `prev_hash` and a typed
+  `dispatched_to`; `actor_public_keys` is now derived from it and every
+  existing use of it, `head` and `presenter` is unchanged. This is what makes
+  the check `mechanisms/actor-chain.md` describes — pin funduq's key, require
+  a hop of funduq's on the path — writable without decoding a JWT by hand.
+  Ten call sites in this repository were doing exactly that, which is not an
+  inconvenience: it is the posture that produced the revision 6 bug.
+
+- **`Hop.is_witness` is gone**, one revision after arriving. It was never
+  used, and its own docstring warned against the reading it invites. Whether
+  a hop is a witness's is decided by `actor_public_key` — a key the reader
+  pinned — so the honest predicate reads two fields, and a lone bool answers
+  the question that must never be asked alone. *Write
+  `hop.dispatched_to is not None and hop.actor_public_key == pinned_key`.*
+
+- **A witness appears in a chain only as a witness.** Revision 6 allowed the
+  hop after a dispatch to be signed by the dispatching key, for a witness
+  re-offering work nobody took — and re-offering is another dispatch, but the
+  code accepted any hop that key signed, including a plain one. Nothing
+  outside funduq can reach that (it needs funduq's key), so this closes no
+  hole; it moves the code's edge back to where the sentence always said it
+  was. **A chain your implementation used to accept may now be refused**: a
+  plain hop signed by the key that dispatched immediately before it.
+
+- **`funduq_contract`'s exported signatures are in the surface now.** They
+  were not, which is why the break below shipped described as no break at
+  all. Wire compatibility is not the whole of the contract when one of the
+  four distributions *is* the contract.
+
+> **Revision 6 broke Python callers and said it did not.** Its entry reads
+> "chains you were building are unaffected", which is true of every byte on
+> the wire and false of anyone's code: `sign_hop`'s third parameter went from
+> `dict[str, str] | None` to `DispatchTarget | None` in 0.0.3, so a call
+> written against 0.0.2 raises `AttributeError: 'dict' object has no
+> attribute 'provider_key'` from inside a function the caller never wrote.
+> Corrected here rather than edited into that entry, and the surface widened
+> above so the next one fails a test instead of a stranger.
+
+*For an implementation in any other language*: one rule changed — a plain hop
+signed by the key that dispatched before it is now refused. The vectors are
+otherwise untouched, and every other item above is Python only.
 
 ---
 
