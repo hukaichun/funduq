@@ -207,3 +207,77 @@ async def test_the_agent_sees_the_same_chain_on_every_round(funduq, serve, new_i
     assert keeper.public_key not in signers, (
         "the party that answered the pause does not become who the work is for"
     )
+
+
+async def test_the_agui_door_relays_the_runs_chain_on_a_resume_too(funduq, serve, new_identity):
+    """The same rule as the A2A door, asserted at the other one.
+
+    Both doors carry their own copy of the choice — whether to relay the
+    chain the run was opened under or the one the answering party presented
+    — and only A2A's was under test. Gutting the AG-UI branch left all 515
+    tests green: it was reached five times, never once with a chain attached,
+    so nothing was watching which chain the agent received. The bug this
+    guards against could have walked back in through this door alone.
+    """
+    from ag_ui.core import RunAgentInput, UserMessage
+    from ag_ui.core.types import ResumeEntry
+
+    from funduq.identity import resolve_payload
+    from funduq.protocols.agui import AGUIAdapter
+
+    from .test_facade import _until
+    from .test_responsibility_chains import AskingAgent
+
+    provider = AskingAgent()
+    served = await serve(provider, "agui-asker")
+    agent = served.agents["agui-asker"]
+    head, keeper = new_identity(), served.identity
+    adapter = AGUIAdapter(funduq)
+
+    def _body(thread_id, text, metadata, resume=None):
+        return RunAgentInput(
+            thread_id=thread_id, run_id="ignored", state={},
+            messages=[UserMessage(id="m1", role="user", content=text)],
+            tools=[], context=[], forwarded_props={}, metadata=metadata, resume=resume,
+        )
+
+    first = await adapter.run(
+        agent, _body("t-resumed", "go", {"actorChain": [head.sign_chain_hop()]})
+    )
+    [_ async for _ in first.events]
+    await _until(lambda: first.run_id not in funduq.active_runs())
+
+    timestamp = int(time.time())
+    answered = await adapter.run(
+        agent,
+        _body(
+            # The door mints its own thread and discards the caller's, so the
+            # answer has to be addressed at the one it actually opened.
+            first.thread_id,
+            "the provider answers its own ask",
+            {
+                "actorChain": [keeper.sign_chain_hop()],
+                "resolution": {
+                    "publicKey": keeper.public_key,
+                    "timestamp": timestamp,
+                    "signature": keeper.sign(resolve_payload(first.run_id, timestamp)),
+                },
+            },
+            resume=[ResumeEntry.model_validate(
+                {"interruptId": "int_1", "status": "resolved", "payload": {"answer": 42}}
+            )],
+        ),
+    )
+    [_ async for _ in answered.events]
+    await _until(lambda: first.run_id not in funduq.active_runs())
+
+    rounds = [(r.forwarded_props or {}).get("actorChain") for r in provider.rounds]
+    assert len(rounds) == 2, "the ask was answered, so the agent ran twice"
+    assert rounds[0] == rounds[1], "the same run, so the same chain"
+
+    signers = [
+        jwt.decode(hop, options={"verify_signature": False})["actorPublicKey"]
+        for hop in rounds[1]
+    ]
+    assert signers[0] == head.public_key
+    assert keeper.public_key not in signers

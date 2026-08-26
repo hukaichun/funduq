@@ -18,7 +18,7 @@ different jobs, which is what lets this sit under core and an SDK at once
 without either lending the other its keys.
 """
 
-CONTRACT_REVISION = 5
+CONTRACT_REVISION = 6
 """Which revision of funduq's contract this package implements.
 
 Package versions and contract revisions answer different questions. A
@@ -36,6 +36,8 @@ fingerprint moves and the suite stays red until it is updated.
 """
 
 from funduq_contract.chain import (
+    DispatchTarget,
+    Hop,
     ChainResult,
     InvalidChain,
     dispatch_hop,
@@ -65,6 +67,8 @@ __all__ = [
     "CONTRACT_REVISION",
     "FINGERPRINT_HEX_LENGTH",
     "ChainResult",
+    "DispatchTarget",
+    "Hop",
     "InvalidChain",
     "cancel_payload",
     "delegation_payload",

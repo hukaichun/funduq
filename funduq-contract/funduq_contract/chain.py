@@ -26,6 +26,78 @@ class InvalidChain(ValueError):
 
 
 @dataclass(frozen=True)
+class DispatchTarget:
+    """Where a witness handed the work: one agent, addressed as it always is.
+
+    A pair rather than a key alone because that is what an agent *is* here —
+    a provider may serve several — and the provider half is what the check
+    needs, since it is the key that signs the next hop when that provider
+    accepts.
+    """
+
+    provider_key: str
+    name: str
+
+
+@dataclass(frozen=True)
+class Hop:
+    """One hop, after parsing. Everything past `_parse_hop` works on this.
+
+    The JWT payload is the wire and stops there. Reaching into the claim
+    mapping further in is how the dispatch check first went wrong: it asked
+    `isinstance(value, dict)` in one place and `value is None` in another, so
+    a `dispatchedTo` of the wrong shape counted as absent for one branch and
+    present for the other, and the disagreement was a way through.
+    """
+
+    actor_public_key: str
+    prev_hash: str | None
+    dispatched_to: DispatchTarget | None
+
+    @property
+    def is_witness(self) -> bool:
+        """Whether this hop records a dispatch. Says nothing about whether to
+        believe it: what makes a dispatch worth anything is whose key signed
+        it, which is `actor_public_key` and is checked separately."""
+        return self.dispatched_to is not None
+
+
+def _parse_hop(index: int, payload: dict[str, Any]) -> Hop:
+    """The one place claims become a `Hop`. Refuses a malformed one.
+
+    A claim funduq does not know is ignored — a verifier failing on those
+    would break on every future addition. `dispatchedTo` is not unknown, it
+    is ours, and a known claim of the wrong shape is malformed rather than
+    absent; treating it as absent is what let a branching party opt out of
+    being checked. Unrecognised *keys inside* it are still ignored, so the
+    target can gain fields without old verifiers refusing new chains.
+    """
+    actor_public_key = payload.get("actorPublicKey")
+    if not isinstance(actor_public_key, str):
+        raise InvalidChain(f"hop {index}: missing actorPublicKey")
+
+    prev_hash = payload.get("prevHash")
+    if prev_hash is not None and not isinstance(prev_hash, str):
+        raise InvalidChain(f"hop {index}: prevHash is not a string")
+
+    dispatched_to: DispatchTarget | None = None
+    if "dispatchedTo" in payload:
+        claimed = payload["dispatchedTo"]
+        if not isinstance(claimed, dict):
+            raise InvalidChain(f"hop {index}: dispatchedTo is not an object")
+        provider_key, name = claimed.get("providerKey"), claimed.get("name")
+        if not isinstance(provider_key, str) or not isinstance(name, str):
+            raise InvalidChain(
+                f"hop {index}: dispatchedTo needs a providerKey and a name, both strings"
+            )
+        dispatched_to = DispatchTarget(provider_key=provider_key, name=name)
+
+    return Hop(
+        actor_public_key=actor_public_key, prev_hash=prev_hash, dispatched_to=dispatched_to
+    )
+
+
+@dataclass(frozen=True)
 class ChainResult:
     """A verified chain: each hop's signing key, in order, head first."""
 
@@ -56,15 +128,23 @@ def hop_hash(token: str) -> str:
 def sign_hop(
     private_key: Ed25519PrivateKey,
     prev_token: str | None = None,
-    dispatched_to: dict[str, str] | None = None,
+    dispatched_to: DispatchTarget | None = None,
 ) -> str:
-    """One hop, signed by `private_key`, linked to `prev_token` if there is one."""
+    """One hop, signed by `private_key`, linked to `prev_token` if there is one.
+
+    The claim names are written here and read in `_parse_hop`, and nowhere
+    else: those two functions are the wire, and everything between them
+    works on `Hop`.
+    """
     claims: dict[str, Any] = {
         "actorPublicKey": private_key.public_key().public_bytes_raw().hex(),
         "prevHash": hop_hash(prev_token) if prev_token is not None else None,
     }
     if dispatched_to is not None:
-        claims["dispatchedTo"] = dispatched_to
+        claims["dispatchedTo"] = {
+            "providerKey": dispatched_to.provider_key,
+            "name": dispatched_to.name,
+        }
     return jwt.encode(claims, private_key, algorithm="EdDSA")
 
 
@@ -109,7 +189,11 @@ def dispatch_hop(
     """
     return [
         *prev_chain,
-        sign_hop(private_key, prev_chain[-1], {"providerKey": provider_key, "name": agent_name}),
+        sign_hop(
+            private_key,
+            prev_chain[-1],
+            DispatchTarget(provider_key=provider_key, name=agent_name),
+        ),
     ]
 
 
@@ -129,13 +213,23 @@ def verify_chain(chain: list[str]) -> ChainResult:
     verifier that failed on them would break on every future addition.
 
     **A dispatch hop names the party that must sign next.** A hop carrying
-    `dispatchedTo` is a witness saying where it handed the work; the party
-    hop after it must be signed by that provider key, and one signed by
-    anyone else is a chain rewritten to leave someone out. Two shapes are
-    deliberately still legal: a chain that *ends* at a dispatch hop (the
-    named party never accepted — that is a break, not a defect), and a
-    dispatch hop followed by another dispatch hop (the same work offered
-    onward without the first party ever signing).
+    `dispatchedTo` is a witness saying where it handed the work, and the hop
+    after it must be signed by one of exactly two keys: the provider that was
+    named, or **the same key that signed the dispatching hop** — the witness
+    offering the same work onward because nobody took it. Anyone else is a
+    chain rewritten to leave someone out. A chain that *ends* at a dispatch
+    hop is also legal: the named party never accepted, which is a break
+    rather than a defect.
+
+    **The successor's own claims decide nothing.** The first version of this
+    check skipped itself whenever the next hop carried a `dispatchedTo` of
+    its own, on the reasoning that one dispatch may follow another — which
+    made the whole rule opt-out, since the party being checked writes that
+    field. A branching party simply added it and passed, and a malformed
+    value did worse: it slipped past the check *and* cleared the pending
+    dispatch, so the hop after it went unchecked too. Whether a hop is a
+    witness's is decided by whose key signed it, never by what it says about
+    itself.
 
     This check was writable for as long as `dispatchedTo` has existed and
     was not read, so the property it gives — a branch contradicting itself
@@ -149,7 +243,7 @@ def verify_chain(chain: list[str]) -> ChainResult:
 
     actor_public_keys: list[str] = []
     prev_token: str | None = None
-    dispatched_to: dict | None = None
+    previous: Hop | None = None
 
     for i, token in enumerate(chain):
         try:
@@ -157,39 +251,38 @@ def verify_chain(chain: list[str]) -> ChainResult:
         except jwt.PyJWTError as e:
             raise InvalidChain(f"hop {i}: unparseable token: {e}") from e
 
-        actor_public_key = unverified.get("actorPublicKey")
-        if not isinstance(actor_public_key, str):
-            raise InvalidChain(f"hop {i}: missing actorPublicKey")
+        hop = _parse_hop(i, unverified)
         try:
-            public_key = Ed25519PublicKey.from_public_bytes(bytes.fromhex(actor_public_key))
+            public_key = Ed25519PublicKey.from_public_bytes(bytes.fromhex(hop.actor_public_key))
         except ValueError as e:
             raise InvalidChain(f"hop {i}: malformed actorPublicKey: {e}") from e
 
         try:
-            payload = jwt.decode(
-                token, key=public_key, algorithms=["EdDSA"], options={"verify_exp": False}
-            )
+            jwt.decode(token, key=public_key, algorithms=["EdDSA"], options={"verify_exp": False})
         except jwt.PyJWTError as e:
             raise InvalidChain(f"hop {i}: signature check failed: {e}") from e
 
         expected_prev_hash = hop_hash(prev_token) if prev_token is not None else None
-        if payload.get("prevHash") != expected_prev_hash:
+        if hop.prev_hash != expected_prev_hash:
             raise InvalidChain(
                 f"hop {i}: prevHash doesn't match — chain reordered, truncated, or spliced"
             )
 
-        hop_dispatch = payload.get("dispatchedTo")
-        if dispatched_to is not None and hop_dispatch is None:
-            expected = dispatched_to.get("providerKey")
-            if actor_public_key != expected:
+        if previous is not None and previous.dispatched_to is not None:
+            may_sign_here = (
+                previous.dispatched_to.provider_key,  # the party it named accepted
+                previous.actor_public_key,  # or the witness offers it onward
+            )
+            if hop.actor_public_key not in may_sign_here:
                 raise InvalidChain(
-                    f"hop {i}: the hop before it dispatched to {str(expected)[:16]}…, "
-                    f"but this hop is signed by {actor_public_key[:16]}… — a hop that "
-                    "dispatched and its successor must agree"
+                    f"hop {i}: the hop before it dispatched to "
+                    f"{previous.dispatched_to.provider_key[:16]}…, but this hop is signed "
+                    f"by {hop.actor_public_key[:16]}… — a hop that dispatched and its "
+                    "successor must agree, and only the party it named or the witness "
+                    "that named it may sign here"
                 )
-        dispatched_to = hop_dispatch if isinstance(hop_dispatch, dict) else None
 
-        actor_public_keys.append(actor_public_key)
-        prev_token = token
+        actor_public_keys.append(hop.actor_public_key)
+        prev_token, previous = token, hop
 
     return ChainResult(actor_public_keys=actor_public_keys)

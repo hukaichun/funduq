@@ -14,6 +14,7 @@ import jwt
 import pytest
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
+from funduq_contract.chain import hop_hash
 from funduq_contract import (
     InvalidChain,
     cancel_payload,
@@ -139,16 +140,64 @@ def test_a_chain_may_end_at_a_dispatch_nobody_answered():
     assert verify_chain(dispatched).presenter == _hex(funduq_key)
 
 
-def test_one_dispatch_may_follow_another():
-    """The same work offered onward without the first party ever signing.
-    Only a *party* hop has to answer for the dispatch before it; a second
-    dispatch is the witness still looking for someone to take the work."""
+def test_the_same_witness_may_offer_the_work_onward():
+    """Nobody took it, so the witness names somebody else. Legal because the
+    second dispatch is signed by **the same key** as the first — the witness
+    is still the one handing the work over, and it is the signer that says so
+    rather than anything the hop claims about itself."""
     funduq_key, caller, first, second = _key(), _key(), _key(), _key()
 
     chain = dispatch_hop(funduq_key, new_chain(caller), _hex(first), "translator")
     chain = dispatch_hop(funduq_key, chain, _hex(second), "translator")
 
     assert verify_chain(extend_chain(second, chain)).presenter == _hex(second)
+
+
+@pytest.mark.parametrize(
+    ("claimed", "refusal"),
+    [
+        pytest.param(
+            {"providerKey": "self-appointed", "name": "x"}, "must agree", id="well-formed"
+        ),
+        pytest.param("not-a-dict", "not an object", id="not an object"),
+        pytest.param({"providerKey": 1, "name": "x"}, "both strings", id="wrong field type"),
+        pytest.param({"name": "x"}, "both strings", id="missing a field"),
+    ],
+)
+def test_a_branching_party_cannot_excuse_itself_by_claiming_a_dispatch(claimed, refusal):
+    """The check may not be switched off by the hop being checked.
+
+    Its first version skipped itself whenever the successor carried a
+    `dispatchedTo`, on the reasoning that one dispatch may follow another —
+    and the party being checked is the one writing that field, so the whole
+    rule was opt-out. A branching party added it and passed. The malformed
+    case was worse: it slipped the check *and* cleared the pending dispatch,
+    so the hop after it went unchecked too.
+
+    What decides whether a hop is a witness's is whose key signed it. The
+    second dispatch in the test above is legal because funduq signed it, not
+    because it looks like one.
+
+    A well-formed claim is refused by the rule; a malformed one is refused as
+    malformed, because `dispatchedTo` is funduq's own claim rather than an
+    unknown one, and a known claim of the wrong shape is not the same as an
+    absent claim. Reading it as absent is exactly what the first version did.
+    """
+    funduq_key, caller, intended, brancher = _key(), _key(), _key(), _key()
+    dispatched = dispatch_hop(funduq_key, new_chain(caller), _hex(intended), "translator")
+
+    forged = jwt.encode(
+        {
+            "actorPublicKey": _hex(brancher),
+            "prevHash": hop_hash(dispatched[-1]),
+            "dispatchedTo": claimed,
+        },
+        brancher,
+        algorithm="EdDSA",
+    )
+
+    with pytest.raises(InvalidChain, match=refusal):
+        verify_chain([*dispatched, forged])
 
 
 def test_a_forged_hop_is_refused():
