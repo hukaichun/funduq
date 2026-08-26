@@ -74,14 +74,31 @@ A party that forwards a chain without extending it produces a chain that
 still verifies — it has merely erased itself from the path. funduq does
 not force anyone to sign and takes no position on whether it should have.
 
-The design record calls this **priced, not compelled**, and that phrase
-needs its condition stated: the price is *the consumer's*, and it exists
-only where a consumer's policy knows the expected call graph and controls
-something worth withholding. KYOK is the worked example — an agent whose
-chain does not match gets no completions. In an ordinary delegation tree
-there is no such consumer, so there is no price: a receiving agent that
-sees `[A]` cannot tell whether a hop is missing. Silence is free there,
-and the branching case above is the same erasure aimed at someone else.
+**Behind an authenticating seat this is now closed, and that changes what
+the old wording claimed.** Forwarding `[A]` unextended means presenting a
+chain whose last hop is A's; the presenter check compares the seat's
+authenticated key against exactly that hop and refuses. So a party in front
+of a seat cannot erase *itself* — it either signs, or it does not present.
+The page used to describe self-erasure as an option that was merely
+*priced*; where a seat exists, it is not an option.
+
+Where no seat exists, `presenter_key` is None and nothing compares — the
+mechanism is opt-in for a deployment that has one, and withdrawing authority
+from callers who have no seat in front of them would be a different change.
+There the old phrase still applies: the design record calls it **priced, not
+compelled**, and the price is *the consumer's*, existing only where a
+consumer's policy knows the expected call graph and controls something worth
+withholding. KYOK is the worked example — an agent whose chain does not match
+gets no completions. In an ordinary delegation tree there is no such
+consumer, so there is no price: a receiving agent that sees `[A]` cannot tell
+whether a hop is missing.
+
+**What no seat closes is the erasure aimed at someone else.** A presenter
+signs the hop it presents and cannot drop the head, so both ends are pinned
+— and everyone *between* them can still be erased by a party that holds an
+earlier hop's token and extends that instead. That is the branching case
+above, it is a consequence of a hop naming only its signer and never its
+recipient, and the dispatch hop below is what narrows it.
 
 ## The record keeps the head, not the path
 
