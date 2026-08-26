@@ -146,9 +146,14 @@ who it is, so the presenter check passes it. Only funduq signing each
 dispatch **with the agent it dispatched to** makes a presented chain
 contradict itself: an agent is `(provider_key, name)`, and that provider
 key is exactly the key that signs the next hop when the provider extends,
-so funduq's hop and its successor can be checked against each other. And
-funduq keeps no chain today, only the head key, so the erasure is also
-unnoticeable afterwards.
+so funduq's hop and its successor can be checked against each other —
+though `verify_chain` writes `dispatchedTo` and does not yet read it, so
+today that contradiction is available rather than enforced. The run does
+keep the chain it arrived with (`runs.actor_chain`), which this record
+once said it did not: the claim was written when only the head key was
+stored and was left standing after that changed. See
+[A hop names the party it hands to](#a-hop-names-the-party-it-hands-to)
+for what closes the rebuild itself.
 
 See [Actor chain](mechanisms/actor-chain.md)
 
@@ -755,6 +760,86 @@ deployment's gateway; and discovery queries respect segment
 boundaries, so a broken-off subtree is simply never enumerated
 upstream — invisibility honest about being non-enumeration, not
 secrecy.
+
+### A hop names the party it hands to
+
+A chain hop says only "this key signed here". It does not say what the
+signature was *for*, and that is the whole reason a chain can be rebuilt: a
+party holding the caller's hop zero can extend it directly, producing
+`caller → B` from `caller → A → B` while forging nothing.
+
+Every other signed act in funduq names what it authorises —
+`funduq-resolve:{run_id}:{timestamp}`, `funduq-cancel:{run_id}:{timestamp}`,
+`funduq-delegate:{delegatePublicKey}:{expiresAt}`,
+`funduq-kyok-call:{bearer}:{timestamp}:{bodyHash}`. The chain hop is the
+one exception, and a signature that names no act authorises every act.
+
+**The fix is one field on the party's own hop: the recipient it hands to,
+as `(providerKey, name)` — the same pair funduq's dispatch hop already
+carries.** Verification then reads, for each hop: a witness hop must repeat
+the `to` its predecessor wrote and may not change it; any other hop must be
+signed by the key its predecessor named. Written out against every cut, the
+result was:
+
+| cut | outcome |
+|---|---|
+| rebuild from hop zero | refused — the named party is not the signer |
+| remove a party in the middle | refused by `prevHash`, as it already was |
+| present someone else's chain tail and ask for a dispatch | refused — the last hop named nobody, so there is nothing to dispatch |
+| a witness redirecting to a party the delegator did not name | refused |
+| a party handing off without a witness | **accepted, and visible** — the edge simply has no witness hop |
+
+The last row is the point rather than a leak. Declining to route through a
+witness stays possible, because compelling it would be the thing this
+project refuses; what the format owes is that the decline is *legible*, and
+an edge with no witness hop between its two parties says so on its face.
+
+**Naming the recipient constrains the witness too**, which was not the
+reason for adding it and is the better half. funduq can only witness that
+it delivered the work to the party the delegator named; it cannot redirect,
+and it cannot claim a handover the delegator never declared. A witness that
+cannot choose is easier to be.
+
+**Rejected: a matching `from` on the witness's own hop.** It was proposed
+first, on the reasoning that funduq should attest independently to whom it
+received the work from. Run against the same cuts, it turned out to catch
+nothing the recipient field does not already catch: the sequence of signers
+is fully determined once each hop names its successor, so a witness
+attesting to the previous signer only repeats what the chain already
+forces. Four cautions had been written about how core would honestly obtain
+that value — the presenter key is compared at the door and discarded, never
+reaches dispatch, and would have to be persisted across a restart — and all
+four dissolved with the field. **The caller's own signature already says
+who it is and who it hands to; there was nothing left for the witness to
+observe independently.**
+
+**What this does not replace: the presenter check.** The recipient field
+governs who may *continue* a chain; it says nothing about who may *hand one
+in*. A party that wants to trigger work under someone else's head does not
+need to continue anything — it re-presents the head's own first hop, and
+the dispatch that follows matches what that hop named, so the chain is
+satisfied and the presenter appears nowhere. The sharp form is a provider
+re-presenting hop zero to have work dispatched to *itself*, repeatedly, on
+the head's account: the recipient field permits it precisely because the
+provider is the party named. Nothing else bounds it either —
+`thread_queue_limit` is per thread and new threads are free, and the
+provider is a member of any thread it serves. Only the seat's answer
+refuses it.
+
+**So the absence of a seat should be recorded, not merely allowed.**
+Whether a run's presenter was authenticated is a fact funduq observes and
+currently keeps nowhere, so a reader cannot tell a record that passed a
+check from one where no check existed. It belongs in the run's own
+observed-metadata key, under the same rule as the party that answered a
+pause: written when observed, absent otherwise, never filled in with a
+guess. Deployments without a seat keep working — and each record they
+produce says, on its own, that this column was nobody's job.
+
+Status: designed, not built. `to` is a contract revision, `funduq-contract`
+is already published, and the fingerprint and changelog path applies.
+
+See [Actor chain](mechanisms/actor-chain.md),
+[Responsibility chains](mechanisms/responsibility-chains.md)
 
 ### Authorization is not disclosure
 
