@@ -156,8 +156,7 @@ async def test_a_provider_past_its_abnormality_allowance_is_withdrawn():
         assert b.quality()["pk_provider"].misdeclared == 2
         offered_when_withdrawn = list(provider.offered)
 
-        with pytest.raises(RuntimeError, match="no provider is serving"):
-            _enqueue(b, "run_2")
+        assert _enqueue(b, "run_2") is None, "withdrawn means not serving"
         await asyncio.sleep(0.2)
         assert provider.offered == offered_when_withdrawn, (
             "withdrawn means withdrawn — no more offers"
@@ -768,14 +767,18 @@ async def test_several_reasons_to_try_at_once_ask_the_run_once(broker):
 
 
 async def test_a_run_is_not_accepted_for_an_agent_nobody_is_serving(broker):
-    """A run is only ever born with a provider online — the caller-facing doors
-    record `agent_offline` rather than queue one — and the lane is written to
-    open by offering rather than by waiting for somebody to appear. Losing a
+    """A run is only ever born with a provider online, and the lane is written
+    to open by offering rather than by waiting for somebody to appear. Losing a
     provider later is an ordinary thing that happens to a live run; never
     having had one is not, and taking such a run would mean holding something
-    nothing could ever finish."""
-    with pytest.raises(RuntimeError, match="no provider is serving"):
-        _enqueue(broker, "run_1")
+    nothing could ever finish.
+
+    The refusal is a **value**, because the door cannot ask this first and
+    then act on the answer: `await session.commit()` sits between, and a
+    provider leaving inside it made the two readings disagree. One party
+    reads the roster, with the insert it guards; the door acts on what it
+    gets back — see `tests/test_a_provider_leaving_during_dispatch.py`."""
+    assert _enqueue(broker, "run_1") is None
 
     broker.register_provider({AGENT: Recording()})
     _enqueue(broker, "run_2")

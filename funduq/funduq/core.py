@@ -910,7 +910,12 @@ class Funduq:
         input_json: dict[str, Any],
         protocol: str,
         seq: int = 0,
-    ) -> RunSnapshot:
+    ) -> RunSnapshot | None:
+        """Hands the run to the broker; None if nobody is serving its agent.
+
+        The answer is the broker's, taken with the insert it guards — see
+        `RunBroker.enqueue_run` for why the door must not have asked first.
+        """
         return self.broker.enqueue_run(
             run_id,
             agent,

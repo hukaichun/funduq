@@ -198,26 +198,35 @@ async def dispatch(
     starting_seq: int,
 ) -> bool:
     """Appends the inbound messages to the thread, builds the provider's AG-UI input, commits,
-    and hands the run to the broker. Returns False without enqueuing if the agent is registered
-    but nobody is currently serving it — the run is recorded `failed`/`agent_offline` and
-    committed, because a run nothing will dispatch must not read as `queued` forever.
+    and hands the run to the broker. Returns False if the agent is registered but nobody is
+    serving it — the run is recorded `failed`/`agent_offline` and committed, because a run
+    nothing will dispatch must not read as `queued` forever.
 
     Raises `InvalidRunInput` if the assembled input is not valid AG-UI.
 
+    **Whether anyone is serving is asked once, by the broker.** This used to
+    ask first and let `enqueue_run` ask again, with `await session.commit()`
+    between the two — a network round trip on Postgres, and a provider
+    closing its socket inside it left the caller holding an unhandled
+    `RuntimeError` where this docstring promises `agent_offline`, the run
+    `queued` forever, and the broker unaware of it: the "run nothing could
+    ever finish" that second check exists to refuse. Narrowing the window
+    would have kept two parties reading one fact at two moments. The reading
+    that counts is the one taken with the insert it guards, so this waits for
+    it and acts on the answer.
+
     This is the far side of every door and it names no protocol. The KYOK
     binding is established after the commit for the same reason it always
-    was: it is in-memory state about a run that must exist first.
+    was: it is in-memory state about a run that must exist first — and before
+    the enqueue, because a run can be offered the moment it is queued, so a
+    binding established afterwards would be a race of its own. A run the
+    broker did not take is discarded from the relay by the same verb the
+    broker's own `forget` uses; nothing ever ran, so nothing is being
+    revoked.
     """
     messages = await repo.append_thread_messages(
         session, thread_id, run_id, inbound.messages
     )
-
-    if not funduq.is_serving(inbound.agent):
-        await funduq.mark_run_status(
-            session, run_id, "failed", metadata={"failureReason": "agent_offline"}
-        )
-        await session.commit()
-        return False
 
     kyok_ref = inbound.kyok_ref
 
@@ -264,9 +273,18 @@ async def dispatch(
                 actor_chain=inbound.actor_chain,
             ),
         )
-    funduq.enqueue_run(
-        run_id, inbound.agent, thread_id, input_json, inbound.protocol, seq=starting_seq
-    )
+    if (
+        funduq.enqueue_run(
+            run_id, inbound.agent, thread_id, input_json, inbound.protocol, seq=starting_seq
+        )
+        is None
+    ):
+        funduq.kyok_relay.discard(run_id)
+        await funduq.mark_run_status(
+            session, run_id, "failed", metadata={"failureReason": "agent_offline"}
+        )
+        await session.commit()
+        return False
     return True
 
 

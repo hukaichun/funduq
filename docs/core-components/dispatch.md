@@ -79,10 +79,18 @@ on it; it says what happened, and the run decides.
 Two refusals at the door of `enqueue_run`, both because accepting would
 create a run nothing could ever finish: the broker must be started, and
 **the agent must be served right now**. A run is only ever born with a
-provider online — the caller-facing doors record `agent_offline` rather
-than queue one — so the lane opens by offering rather than by waiting
+provider online, so the lane opens by offering rather than by waiting
 for somebody to appear. Losing a provider afterwards is an ordinary
 thing that happens to a live run; never having had one is not.
+
+The second refusal is a **returned `None`**, not an exception, and the
+caller-facing door records `agent_offline` on it. The door does not ask
+the question itself: it used to, with `await session.commit()` between
+its reading and this one, which meant a provider closing its socket
+inside the commit reached the caller as an unhandled error and left a
+run `queued` that the broker had never heard of. One party reads the
+roster, in the same breath as the insert it guards; everyone else acts
+on the answer.
 
 1. **Try.** Asked whether it can be handed over now, a run reads four
    things it owns or can see: it is not already dispatched, it is its

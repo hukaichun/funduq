@@ -1273,11 +1273,29 @@ Two things made it affordable rather than a new kind of complexity.
 Duplicate reasons to try are coalesced into one pending question — three
 things changing at once used to mean three offers for one dispatchable
 moment, and three counts against a provider for one decline. And
-`enqueue_run` now refuses a run whose agent nobody is serving, which was
-already true on every production path (the doors record `agent_offline`
-instead of queueing) but was not relied on: with it, the lane opens by
-offering rather than by waiting for someone to appear, and "no provider"
-is a recovery path rather than an entry state.
+`enqueue_run` now refuses a run whose agent nobody is serving, so the lane
+opens by offering rather than by waiting for someone to appear, and "no
+provider" is a recovery path rather than an entry state.
+
+> **The second one was justified with a claim that was not true.** It read:
+> already true on every production path, since the doors record
+> `agent_offline` instead of queueing, but not relied on. The doors could
+> not make it true. `dispatch` read the roster, `await session.commit()` —
+> a network round trip on Postgres — and only then called `enqueue_run`,
+> which read it again and raised. A provider closing its socket inside that
+> commit is ordinary, and it produced all three things this record is about
+> at once: an unhandled `RuntimeError` where the door promises
+> `agent_offline` (a 500 at either protocol door), a run left `queued`
+> forever, and a broker that had never heard of it — the very "run nothing
+> could ever finish" the refusal exists to prevent.
+>
+> The cause is this record's own cause wearing different clothes: two
+> parties reading one fact at two moments, with a suspension point between
+> them. Narrowing the window would have kept both parties. The door stopped
+> asking, and `enqueue_run` answers `None` instead of raising, so the
+> reading that counts is the one taken in the same synchronous breath as
+> the insert it guards. Being asked while the broker is stopped is still an
+> exception: that cannot become true between two lines.
 
 Four of the twelve counted items survived, and they belong to a
 different cause: `in_flight` is both a count of what a provider holds
