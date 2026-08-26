@@ -31,6 +31,7 @@ from funduq.doors import (
     dispatch,
     offline_events,
     open_run,
+    relayed_chain,
     resolve_kyok,
     verify_caller,
 )
@@ -946,6 +947,8 @@ class Funduq:
         async with self.session() as session:
             caller_metadata, head_key, actor_chain = await verify_caller(session, metadata or {}, presenter_key=presenter_key)
             caller_metadata, kyok = await resolve_kyok(session, caller_metadata)
+            # Signed here, once, so the run stores exactly what the agent gets.
+            chain = relayed_chain(self, actor_chain, agent)
             resolved_thread_id = await repo.ensure_thread(
                 session, agent, thread_id, metadata=caller_metadata,
                 create_if_missing=True, head_key=head_key,
@@ -961,7 +964,7 @@ class Funduq:
                 run_input=run_input,
                 metadata=caller_metadata,
                 head_key=head_key,
-                actor_chain=actor_chain,
+                actor_chain=chain,
                 protocol="ag-ui",
             )
             live = await dispatch(
@@ -971,7 +974,7 @@ class Funduq:
                     messages=run_input.get("messages", []),
                     metadata=caller_metadata,
                     head_key=head_key,
-                    actor_chain=actor_chain,
+                    actor_chain=chain,
                     kyok=kyok,
                     state=run_input.get("state"),
                     tools=run_input.get("tools"),
@@ -1056,8 +1059,11 @@ class Funduq:
                     agent=agent,
                     messages=run_input.get("messages", []),
                     metadata=caller_metadata,
-                    head_key=head_key,
-                    actor_chain=actor_chain,
+                    # The run's own, not the answering party's: this is the
+                    # same run continuing, and what the agent verifies must
+                    # not change because somebody else answered its pause.
+                    head_key=stored.head_key,
+                    actor_chain=stored.actor_chain,
                     kyok=kyok,
                     state=run_input.get("state"),
                     tools=run_input.get("tools"),

@@ -13,7 +13,7 @@ from a2a.utils.errors import InvalidParamsError, TaskNotCancelableError, TaskNot
 from google.protobuf.json_format import ParseDict, ParseError
 
 from funduq import repo
-from funduq.doors import InboundRun, dispatch, resolve_kyok, verify_caller
+from funduq.doors import InboundRun, dispatch, relayed_chain, resolve_kyok, verify_caller
 from funduq.errors import (
     AgentNotFound,
     InvalidRunInput,
@@ -427,13 +427,19 @@ class A2AAdapter:
             if reopened:
                 run_id = task_id
                 starting_seq = await repo.get_last_event_seq(session, run_id)
+                # A resume is the same run continuing: relay the chain and
+                # head it was opened under, not the answering party's.
+                chain, head_key = addressed.actor_chain, addressed.head_key
             else:
+                # Signed before the run is created, so the record keeps
+                # exactly what the agent receives.
+                chain = relayed_chain(funduq, actor_chain, agent)
                 await repo.ensure_queue_room(
                     session, thread_id, funduq.settings.thread_queue_limit
                 )
                 created = await repo.create_run(
                     session, thread_id, agent, "a2a", run_input,
-                    metadata=metadata, head_key=head_key, actor_chain=actor_chain,
+                    metadata=metadata, head_key=head_key, actor_chain=chain,
                 )
                 run_id = created["run_id"]
                 starting_seq = 0
@@ -443,7 +449,7 @@ class A2AAdapter:
                 messages=messages,
                 metadata=metadata,
                 head_key=head_key,
-                actor_chain=actor_chain,
+                actor_chain=chain,
                 kyok=kyok,
                 # The extension convention puts the key in the Message's own
                 # metadata map; the request-level map is accepted too.
