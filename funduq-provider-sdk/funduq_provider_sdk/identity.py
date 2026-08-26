@@ -13,6 +13,8 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 # twice.
 from funduq_contract import (
     ChainResult as VerifiedChain,
+    DispatchTarget,
+    Hop,
     InvalidChain,
     cancel_payload,
     delegation_payload,

@@ -148,7 +148,7 @@ wheels = [
 
 [[package]]
 name = "funduq-contract"
-version = "0.0.1"
+version = "0.0.3"
 source = { editable = "." }
 dependencies = [
     { name = "cryptography" },

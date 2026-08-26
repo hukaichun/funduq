@@ -22,8 +22,14 @@ condition of a green suite rather than a courtesy.
 **What counts as the surface** is the judgement in this file, and it is
 deliberately narrow: things an outside implementation would have to change
 its own code to keep up with. Prose, internal helpers and private names are
-not in it. Everything here is read live from the code, never copied — a copy is
-another thing to drift.
+not in it. That judgement has been wrong once and been corrected here rather
+than apologised for: `funduq_contract`'s exported Python signatures were
+outside it, so a parameter changing type shipped with a changelog entry
+saying nothing had changed for anyone. Wire compatibility is not the whole
+of the contract when one of the four distributions *is* the contract.
+
+Everything here is read live from the code, never copied — a copy is another
+thing to drift.
 
 **It lives beside the tests rather than in the package**, for two reasons
 that point the same way: it reads the provider SDK's port, which core is
@@ -104,6 +110,50 @@ def _typing_surface() -> list[str]:
     return sorted(f"{p.name}:{'typed' if (p / 'py.typed').exists() else 'untyped'}" for p in packages)
 
 
+def _contract_api_surface() -> list[str]:
+    """Every public name `funduq_contract` exports, with the shape it exports it as.
+
+    In the surface because of a break that landed without one. `sign_hop`'s
+    third parameter went from `dict[str, str] | None` to `DispatchTarget |
+    None` between 0.0.2 and 0.0.3 — no byte on the wire moved, so the vectors
+    did not move, so the fingerprint did not move, and the changelog entry
+    said "chains you were building are unaffected". True of the wire, false
+    of anyone's code: the old call raised `AttributeError` from inside a
+    function they never wrote.
+
+    That gap was in the *definition* of the surface, not in someone's
+    diligence. This package is the reference implementation every Python
+    implementer builds against — its exported signatures are as much a thing
+    they must change their own code to keep up with as a renamed A2A method
+    is. Reading them live is the same trick used everywhere else here: a copy
+    would drift, and drift is the thing being detected.
+
+    Not extended to core or the provider SDK. Those are one implementation of
+    a contract other languages may implement differently; this package *is*
+    the contract, and the line is drawn where the changelog's own definition
+    draws it.
+    """
+    import funduq_contract
+
+    def shape(name: str) -> str:
+        member = getattr(funduq_contract, name)
+        if inspect.isclass(member):
+            fields = getattr(member, "__dataclass_fields__", {})
+            parts = [f"{f.name}:{f.type}" for f in fields.values()]
+            parts += sorted(
+                f"{attr}()"
+                for attr, value in vars(member).items()
+                if not attr.startswith("_")
+                and (inspect.isfunction(value) or isinstance(value, property))
+            )
+            return f"{name}(class):{','.join(parts)}"
+        if inspect.isfunction(member):
+            return f"{name}{inspect.signature(member)}"
+        return f"{name}={member!r}"
+
+    return sorted(shape(name) for name in funduq_contract.__all__)
+
+
 def _without_prose(value: Any) -> Any:
     """Drops `note` and `comment` keys, at any depth.
 
@@ -149,6 +199,7 @@ def surface() -> dict[str, Any]:
     """Everything an outside implementation depends on, gathered live."""
     return {
         "declared_revision": _revision_surface(),
+        "contract_api": _contract_api_surface(),
         "vectors": _vectors_surface(),
         "settings": _settings_surface(),
         "link": _link_surface(),

@@ -43,7 +43,6 @@ import os
 import tempfile
 from pathlib import Path
 
-import jwt
 from alembic import command
 from alembic.config import Config
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
@@ -186,8 +185,9 @@ async def main() -> int:
         # passed no witness at all — the agent always got the longer one and
         # only the record was short.
         kept_what_arrived = stored[: len(branched)] == branched
-        witnessed = len(stored) == len(branched) + 1 and "dispatchedTo" in jwt.decode(
-            stored[-1], options={"verify_signature": False}
+        witnessed = (
+            len(stored) == len(branched) + 1
+            and verify_chain(stored).hops[-1].dispatched_to is not None
         )
         findings.record(
             "the record keeps the chain as dispatched",
@@ -205,7 +205,9 @@ async def main() -> int:
         # the agent it dispatched to.
         as_dispatched = funduq.identity.dispatch_hop(new_chain(caller), agent)
         rebranched = extend_chain(b_key, as_dispatched)
-        claimed = jwt.decode(as_dispatched[-1], options={"verify_signature": False})["dispatchedTo"]
+        # Read off the verified chain, not off the JWT. Hand-decoding here was
+        # the same posture that produced the bug this step exists for.
+        claimed = verify_chain(as_dispatched).hops[-1].dispatched_to
 
         # This comparison used to be performed *here*, by the probe, because
         # `verify_chain` wrote `dispatchedTo` and never read it: the property
@@ -222,8 +224,8 @@ async def main() -> int:
         findings.record(
             "an erased hand is refused",
             refused is not None,
-            f"funduq's hop says it dispatched to provider {claimed['providerKey'][:8]}… "
-            f"(agent '{claimed['name']}'), and verification refuses the hop after it: "
+            f"funduq's hop says it dispatched to provider {claimed.provider_key[:8]}… "
+            f"(agent '{claimed.name}'), and verification refuses the hop after it: "
             f"{refused} — an agent is (provider_key, name), and that provider key is "
             "exactly the key that signs the next hop when it extends honestly, so the "
             "hop and its successor check each other"

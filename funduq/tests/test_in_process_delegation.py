@@ -3,10 +3,10 @@ from __future__ import annotations
 import time
 
 import pytest
-import jwt
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
 from funduq.identity import (
+    DispatchTarget,
     InvalidChain,
     verify_chain,
     extend_chain,
@@ -89,11 +89,11 @@ async def test_the_callers_own_hops_reach_the_agent_untouched_on_both_roads(fund
         seen = served.provider.seen_chain
         assert seen[: len(chain)] == chain, "the caller's hops, unmodified"
         assert len(seen) == len(chain) + 1, "plus funduq's own"
-        assert verify_chain(seen).presenter == funduq.identity_public_key
-        assert jwt.decode(seen[-1], options={"verify_signature": False})["dispatchedTo"] == {
-            "providerKey": served.identity.public_key,
-            "name": name,
-        }
+        verified = verify_chain(seen)
+        assert verified.presenter == funduq.identity_public_key
+        assert verified.hops[-1].dispatched_to == DispatchTarget(
+            provider_key=served.identity.public_key, name=name
+        )
 
 
 async def test_identity_is_carried_through_an_in_process_hop(funduq, serve):

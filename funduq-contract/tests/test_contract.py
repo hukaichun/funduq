@@ -16,6 +16,7 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
 from funduq_contract.chain import hop_hash
 from funduq_contract import (
+    DispatchTarget,
     InvalidChain,
     cancel_payload,
     delegation_payload,
@@ -37,6 +38,17 @@ def _key() -> Ed25519PrivateKey:
 
 def _hex(key: Ed25519PrivateKey) -> str:
     return key.public_key().public_bytes_raw().hex()
+
+
+def _target(provider: Ed25519PrivateKey, name: str) -> DispatchTarget:
+    """The agent a dispatch names, built the way `dispatch_hop` now takes it.
+
+    A helper because the two halves used to be two adjacent string arguments:
+    swapping them signed happily, verified happily, and rejected the *honest*
+    successor with a message pointing at it. One argument of one type cannot
+    be handed over backwards.
+    """
+    return DispatchTarget(provider_key=_hex(provider), name=name)
 
 
 def test_no_two_acts_produce_the_same_bytes():
@@ -101,7 +113,11 @@ def test_a_dispatch_hop_names_where_it_went():
     honestly."""
     funduq_key, caller = _key(), _key()
 
-    chain = dispatch_hop(funduq_key, new_chain(caller), "provider-key-hex", "translator")
+    chain = dispatch_hop(
+        funduq_key,
+        new_chain(caller),
+        DispatchTarget(provider_key="provider-key-hex", name="translator"),
+    )
 
     claims = jwt.decode(chain[-1], options={"verify_signature": False})
     assert claims["dispatchedTo"] == {"providerKey": "provider-key-hex", "name": "translator"}
@@ -122,7 +138,7 @@ def test_a_hop_that_dispatched_and_its_successor_must_agree():
     comparison and the verifier did not.
     """
     funduq_key, caller, intended, impostor = _key(), _key(), _key(), _key()
-    dispatched = dispatch_hop(funduq_key, new_chain(caller), _hex(intended), "translator")
+    dispatched = dispatch_hop(funduq_key, new_chain(caller), _target(intended, "translator"))
 
     assert verify_chain(extend_chain(intended, dispatched)).presenter == _hex(intended)
 
@@ -135,7 +151,7 @@ def test_a_chain_may_end_at_a_dispatch_nobody_answered():
     and a break is a boundary rather than a defect, so the chain stands as the
     record of a handover that stopped there."""
     funduq_key, caller = _key(), _key()
-    dispatched = dispatch_hop(funduq_key, new_chain(caller), _hex(_key()), "translator")
+    dispatched = dispatch_hop(funduq_key, new_chain(caller), _target(_key(), "translator"))
 
     assert verify_chain(dispatched).presenter == _hex(funduq_key)
 
@@ -147,10 +163,62 @@ def test_the_same_witness_may_offer_the_work_onward():
     rather than anything the hop claims about itself."""
     funduq_key, caller, first, second = _key(), _key(), _key(), _key()
 
-    chain = dispatch_hop(funduq_key, new_chain(caller), _hex(first), "translator")
-    chain = dispatch_hop(funduq_key, chain, _hex(second), "translator")
+    chain = dispatch_hop(funduq_key, new_chain(caller), _target(first, "translator"))
+    chain = dispatch_hop(funduq_key, chain, _target(second, "translator"))
 
     assert verify_chain(extend_chain(second, chain)).presenter == _hex(second)
+
+
+def test_a_witness_appears_in_a_chain_only_as_a_witness():
+    """The exemption above is for **re-offering**, and re-offering is another
+    dispatch. A witness signing a plain hop after its own dispatch would be
+    appearing as a party, which is the one thing a witness is not: it never
+    heads a segment and never does the work.
+
+    Nothing outside funduq can reach this — you need funduq's key to sign the
+    hop — so it is not a hole, and that is the reason it was written the loose
+    way. But the docstring said "the witness offering the same work onward"
+    while the code accepted any hop the witness signed, and the rule's real
+    edge sitting wider than its stated edge is precisely the shape the
+    opt-out bug had. The narrow reading is also the true one, so the code
+    moves to meet the prose.
+    """
+    funduq_key, caller, intended = _key(), _key(), _key()
+    dispatched = dispatch_hop(funduq_key, new_chain(caller), _target(intended, "translator"))
+
+    with pytest.raises(InvalidChain, match="only as a witness"):
+        verify_chain(extend_chain(funduq_key, dispatched))
+
+
+def test_a_verified_chain_hands_back_its_hops():
+    """What a consumer needs in order to perform the check the docs describe.
+
+    `mechanisms/actor-chain.md` tells a consumer to pin funduq's key and
+    require a hop of funduq's on the path. Until now the only way to write
+    that was to decode the JWT and index into the claim mapping by hand —
+    which is not an inconvenience, it is the posture that produced the bug
+    this rule exists for: two places reading the same claim and disagreeing
+    about its shape. A verifier that returns only the keys leaves every
+    consumer to re-derive the rest from the wire.
+    """
+    funduq_key, caller, provider = _key(), _key(), _key()
+    chain = extend_chain(
+        provider,
+        dispatch_hop(funduq_key, new_chain(caller), _target(provider, "translator")),
+    )
+
+    result = verify_chain(chain)
+
+    assert [hop.actor_public_key for hop in result.hops] == result.actor_public_keys
+    assert result.hops[0].dispatched_to is None
+    assert result.hops[1].dispatched_to == DispatchTarget(
+        provider_key=_hex(provider), name="translator"
+    )
+    # The documented consumer check, written without touching a JWT.
+    assert any(
+        hop.actor_public_key == _hex(funduq_key) and hop.dispatched_to is not None
+        for hop in result.hops
+    ), "this work passed a witness whose key I pinned"
 
 
 @pytest.mark.parametrize(
@@ -184,7 +252,7 @@ def test_a_branching_party_cannot_excuse_itself_by_claiming_a_dispatch(claimed, 
     absent claim. Reading it as absent is exactly what the first version did.
     """
     funduq_key, caller, intended, brancher = _key(), _key(), _key(), _key()
-    dispatched = dispatch_hop(funduq_key, new_chain(caller), _hex(intended), "translator")
+    dispatched = dispatch_hop(funduq_key, new_chain(caller), _target(intended, "translator"))
 
     forged = jwt.encode(
         {
