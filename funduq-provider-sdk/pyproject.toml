@@ -1,6 +1,6 @@
 [project]
 name = "funduq-provider-sdk"
-version = "0.0.2"
+version = "0.0.3"
 description = "What a provider and funduq agree on, from the provider's side: identity, the ports, and the provider's own worker loop — for an agent provider, or an LLM provider with the `llm` extra"
 requires-python = ">=3.12"
 license = "Apache-2.0"
@@ -40,6 +40,11 @@ dependencies = [
     # Actor-chain hops are JWTs. Signing, not transport.
     "pyjwt[crypto]>=2.9",
     "ag-ui-protocol>=0.1.19",
+    # Direct since the protocol frames are models: the wire form is
+    # `model_dump(by_alias=True)` and `model_validate`, so pydantic is
+    # something this package programs against rather than something it happens
+    # to receive through ag-ui-protocol.
+    "pydantic>=2.7",
 ]
 
 [project.optional-dependencies]
