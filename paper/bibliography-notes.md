@@ -110,6 +110,18 @@ The theorem-3 (interjection) conversation partners; richest 2026 harvest.
 
 SMTP, XMPP, Matrix, ActivityPub — outbound-connection + federated-identity precedents supporting the `agent@funduq` direction.
 
+## Where the receipts live
+
+`reference/` — one file per source: who wrote it, when, **how far it has
+actually been read**, and **the exact strings the draft quotes**, each with
+the section it appears in and the claim it carries. This file is the map;
+that directory is the receipt, and the split exists because "HDP concedes
+single-key signing" is not checkable by anyone and the sentence with its
+section number is.
+
+Its status table is the honest count: **five of eleven sources are not yet
+safe to ship**, including the one the introduction opens on.
+
 ## Pre-writing checklist
 
 1. Verify every classical entry's exact bibliographic details.
