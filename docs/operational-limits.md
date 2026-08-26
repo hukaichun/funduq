@@ -104,25 +104,47 @@ behalf.
 
 **Running one funduq as several processes is not supported.** That is a
 different thing from the paragraph above: it is horizontal scaling of a
-single funduq, and `scripts/probes/probe_multiprocess.py` is its acceptance
-test — **0 of 8 scenarios pass**, measured on 2026-08-27 against two real
-processes sharing one database, identically on SQLite and Postgres. Do not
-read the missing feature as a limit on delegation; a delegation tree has
-never had to fit in one process.
+single funduq. Do not read the missing feature as a limit on delegation; a
+delegation tree has never had to fit in one process.
 
-Two of those eight are the whole shape of it, and both are about the
-provider's link rather than the run. **The link belongs to one process, and
-so does the ticket that admits it** — a provider that fetches its ticket
-through a load balancer and then opens its link through the same balancer
-is refused outright, because the ticket was minted in the other process's
-memory. And a caller who lands on a node that does not hold that link has
-their run recorded `failed` / `agent_offline`, which is the paragraph above
-seen from the caller's side. The remaining six are consequences: a booting
-replica reaps another node's live runs, an event reported at the wrong node
-is answered `False`, a stream opened at the wrong node stays empty, a
-SIGKILLed node leaves its runs `running` forever, and a provider that
-re-attaches to the survivor is offered nothing — the claim and the queues
-were process state on the node that died.
+Measured on 2026-08-27, against two real OS processes sharing one database
+with a load balancer that round-robins every caller-side call: **0 of 8
+scenarios pass**, identically on SQLite and on Postgres. The fixture that
+produced it lived at `scripts/probes/{node,cluster,probe_multiprocess}.py`
+and is
+[kept in git history at 6ed67be](https://github.com/hukaichun/funduq/blob/6ed67be/scripts/probes/probe_multiprocess.py)
+rather than in the tree — it was retired in the same breath as the
+measurement, because nothing ran it and a fixture nothing runs stops
+working without anyone finding out, which is how the previous baseline came
+to be quoted for months after it stopped being measurable at all.
+
+The two findings that decide the shape of it are about the provider's
+**link**, not about any run:
+
+- **The link belongs to one process, and so does the ticket that admits
+  it.** A provider that fetches its ticket through the load balancer and
+  opens its link through the same balancer is refused outright: the ticket
+  was minted in the other process's memory. Behind a balancer a provider
+  cannot reliably connect *at all* — this fails at the door, not at the
+  edges. It is also newer than it looks: when work was pulled rather than
+  handed down, admission rode a token any node could verify from the shared
+  secret, so this is a consequence of inverting dispatch that nothing
+  measured until now.
+- **A provider that re-attaches after its node dies is offered nothing.**
+  The run is alive in the database and its provider is back, but the claim,
+  the queues and the subscribers were process state on the node that died.
+
+The other six are the ones a shared database makes obvious once you look: a
+caller who lands on a node that does not hold the link has the run recorded
+`failed` / `agent_offline` (the paragraph above, from the caller's side); a
+booting replica reaps another node's live runs while their owner keeps
+writing into them; an event reported at the wrong node is answered `False`
+and the reporter is not told which node holds it; a stream opened at the
+wrong node stays empty; and a SIGKILLed node leaves its runs `running`
+forever, because nothing keys off a node being gone.
+
+Those eight are the requirements list for the scaling work, whatever it is
+eventually built on.
 
 ## Timing an embedder cannot reach
 
