@@ -404,7 +404,7 @@ wheels = [
 
 [[package]]
 name = "funduq"
-version = "0.0.1"
+version = "0.0.2"
 source = { editable = "." }
 dependencies = [
     { name = "a2a-sdk" },
@@ -456,7 +456,7 @@ dev = [
 
 [[package]]
 name = "funduq-contract"
-version = "0.0.1"
+version = "0.0.2"
 source = { editable = "../funduq-contract" }
 dependencies = [
     { name = "cryptography" },
