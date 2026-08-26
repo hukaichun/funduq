@@ -2,10 +2,18 @@
 
 Part of [funduq's mechanisms](../mechanisms.md).
 
-**Status: design, not implementation.** The design below is settled; no
-code enforces it yet, and where it changes something the code currently
-does (the `subject` field, notably), the code is the past and this page
-is the direction. The earlier full record is
+**Status: implemented, except vouchers.** This header used to read
+"design, not implementation" long after the code had caught up — the same
+mistake as the extensions table, and recorded once already: believing a page
+that lags the code rather than the code. What is enforced today lives in
+`doors.py` (birth binding, membership, the authority set for resolutions and
+cancels, the presenter check), `identity.py` (the signed-act verifiers),
+`repo.py` (the head and chain a run is opened under, and who answered) and
+`funduq_contract.chain`; the tests are `test_responsibility_chains.py`,
+`test_delegation_chain.py`, `test_run_keeps_its_chain.py`,
+`test_pause_resume.py` and `test_the_record_names_who_answered.py`. The one
+genuinely unbuilt part is the **voucher** — see "The chain is only keys". The
+earlier full record is
 [`design/responsibility-chains.md`](https://github.com/hukaichun/funduq/blob/d78d0638c0ec2126167240c62471651b5468d35b/design/responsibility-chains.md),
 pinned to history; this page supersedes it where they differ.
 
@@ -15,6 +23,15 @@ A user talks to a main agent; the main agent delegates to a sub-agent;
 the sub-agent pauses for a human answer (`input-required`). Who may
 answer, what proves they were entitled to, and what records that it was
 them? The spec of neither protocol says; funduq has to.
+
+**What "responsibility" means here, and what it does not.** A chain records
+*who was drawn in*, never *who is to blame*. The second is a judgement — it
+moves with a jurisdiction, a contract, and someone entitled to make it. The
+first is a fact: one party handed work out, another took it. That is why a
+chain crosses an organizational boundary where a permission cannot. Both
+sides can read "these hands touched this" without first agreeing on any
+vocabulary, and nobody has to be entitled to anything to read it. Rule zero
+in other words: funduq records, and does not adjudicate.
 
 ## The frame: two entrances, one of them gated
 
@@ -128,10 +145,18 @@ head.
 
 Segment boundaries are therefore **derived, never registered**: a
 sub-thread carrying the same head is the same segment; a new head or no
-chain ends it. The forwarded-without-signing case keeps its existing
-meaning (a silent hop: the chain verifies, the forwarder erased itself
-— priced where a consumer's policy knows the expected call graph, free
-where none does; see [Actor chain](actor-chain.md)).
+chain ends it.
+
+This buys the property at a cost that has to be said in the same breath:
+**declining to extend and erasing a hop are the same shape.** Both leave the
+chain shorter and both verify. What narrows it is funduq's own **dispatch
+hop** — a hop funduq signs naming where it sent the work, `dispatchedTo:
+{providerKey, name}` — because an agent is addressed as (provider key, name)
+and that provider key is what signs the next hop when the provider extends
+honestly. A hop and its successor then check each other, and a hidden branch
+cannot satisfy both. See [Actor chain](actor-chain.md), which carries the
+probe, and "Why a witness" below for why no protocol between only two
+parties can do this.
 
 ## Lineage and responsibility are different layers
 
@@ -182,13 +207,102 @@ thread is never retroactively locked against its own opener.
   being enumerated — never a pretense of secrecy for a party who
   already holds the id.
 
+## Why a witness
+
+A chain is signed by its own parties, hash-linked, and verifies offline.
+**It does not need funduq to hold it.** So the reason a broker exists at all
+cannot be "someone has to keep the record" — it has to be a property that
+two parties cannot reach between themselves.
+
+**The property.** Given A delegating to B, an outside reader must be able to
+tell apart:
+
+- **(i)** B did not delegate onward, and did the work itself;
+- **(ii)** B delegated to C and left no record of it.
+
+Responsibility lands in different places. Under (i) B heads that segment and
+there is no subtree. Under (ii) C was drawn in and nobody can see it.
+
+**Two parties cannot.** Every piece of evidence about B→C is produced and
+held by B and C. B will not offer it, and C has no relationship to A — it
+does not know A exists and has no reason to speak to it. So under everything
+A can obtain, (i) and (ii) are the same shape. Cryptography does not help
+here: the problem is not that a signature might be forged, it is that **a
+signature never produced leaves no gap**.
+
+```mermaid
+flowchart LR
+  subgraph one["(i) B did the work"]
+    direction LR
+    A1(("A")) -->|signs| B1(("B"))
+  end
+  subgraph two["(ii) B delegated and hid it"]
+    direction LR
+    A2(("A")) -->|signs| B2(("B"))
+    B2 -.->|no record| C2(("C"))
+  end
+```
+
+Both leave the same chain: `[A, B]`.
+
+**What separates them** is a party that *both edges pass through*, signing
+where the work went. Under (i) it signs one dispatch; under (ii) it signs
+two, and the second names C.
+
+```mermaid
+flowchart LR
+  subgraph three["(i) through the witness"]
+    direction LR
+    A3(("A")) --> W3{{"funduq"}}
+    W3 -->|"dispatchedTo: B"| B3(("B"))
+  end
+  subgraph four["(ii) through the witness"]
+    direction LR
+    A4(("A")) --> W4{{"funduq"}}
+    W4 -->|"dispatchedTo: B"| B4(("B"))
+    B4 --> W4b{{"funduq"}}
+    W4b -->|"dispatchedTo: C"| C4(("C"))
+  end
+```
+
+**It has to see; it does not have to judge.** This is what fixes which kind
+of third party funduq is. The fair-exchange literature proves strong fair
+exchange is impossible without a trusted third party — and *there* the third
+party is a judge: those protocols carry abort and recovery sub-protocols and
+a dispute-resolution policy saying how a judge settles (Pagnia & Gärtner,
+TUD-BS-1999-02, 1999). The property above is strictly weaker. It is
+**distinguishability**, not fairness, and distinguishing (i) from (ii) needs
+only a party that sees both edges — nobody has to be entitled to rule on
+anything. funduq is a **witness, not an arbiter**, and asking for less is
+exactly why it is deployable between parties who do not agree on much.
+
+**Necessary, not sufficient, and the scope is on the label.** This covers
+delegation that *passes through* the witness. If B hands the work to C
+entirely outside funduq, distinguishability is not weakened — it is gone.
+
+```mermaid
+flowchart LR
+  subgraph five["(ii') routed around the witness"]
+    direction LR
+    A5(("A")) --> W5{{"funduq"}}
+    W5 -->|"dispatchedTo: B"| B5(("B"))
+    B5 -.->|outside funduq| C5(("C"))
+  end
+```
+
+Which is the same chain as (i) again. The probe for this is still red, and
+[Actor chain](actor-chain.md) carries it. funduq does not claim to have
+closed (ii); it claims to have narrowed it from **invisible** to **invisible
+only outside what the witness sees**.
+
 ## The complete invention list
 
 Three signed-payload families and three enforcement points; nothing else.
 
-1. **Hop** — `{actorPublicKey, prevHash, iat, exp}`, signed. Exists
-   (minus `subject`). The chain's growth is the responsibility
-   declaration.
+1. **Hop** — `{actorPublicKey, prevHash}`, signed, and nothing else.
+   Exists. The chain's growth is the responsibility declaration. (This
+   entry read `{actorPublicKey, prevHash, iat, exp}` while the section
+   above it said a hop carries no time; the section was right.)
 2. **Session delegation certificate** — durable key names an ephemeral
    key with an expiry. New. Custody's bridge.
 3. **Voucher** — a knowing party binds a key to a name. New, opt-in.
