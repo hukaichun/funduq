@@ -33,9 +33,34 @@ __all__ = [
     "dispatch",
     "offline_events",
     "open_run",
+    "relayed_chain",
     "resolve_kyok",
     "verify_caller",
 ]
+
+
+def relayed_chain(funduq: "Funduq", chain: Any, agent: AgentRef) -> Any:
+    """The chain as it will leave funduq: the caller's, plus one hop funduq
+    signs for the dispatch it is making, naming where the run went.
+
+    Called at the door, **before the run is created**, because the same
+    object has to be two things — what the record keeps and what the agent
+    receives. Building it later, inside dispatch, made those two differ:
+    the run stored what arrived and the agent got something else, so
+    funduq's own books could not tell a run it had dispatched from a chain
+    that reached it having passed no witness at all.
+
+    Only ever an extension: a run carrying no chain gets none, since
+    starting one would make funduq the segment's head, which it is not.
+
+    A **resume does not call this**. It is the same run continuing, nobody
+    is being handed anything, and the chain to relay is the one the run
+    already stores — signing a second dispatch hop would record one
+    delegation as several, and relaying the answering party's chain instead
+    (which is what happened before) told the agent it was working for
+    whoever answered rather than for the run's head.
+    """
+    return funduq.identity.dispatch_hop(chain, agent) if chain else chain
 
 
 async def verify_caller(
@@ -196,15 +221,13 @@ async def dispatch(
 
     kyok_ref = inbound.kyok_ref
 
-    # funduq bears the same responsibility on a chain that a provider does, so
-    # it signs one hop for the dispatch it is making, naming where the run
-    # went. Only ever an extension: a run that carried no chain gets none —
-    # starting one would make funduq the segment's head, which it is not.
-    relayed_chain = (
-        funduq.identity.dispatch_hop(inbound.actor_chain, inbound.agent)
-        if inbound.actor_chain
-        else inbound.actor_chain
-    )
+    # Relayed exactly as handed in. The dispatch hop is signed at the door by
+    # `relayed_chain` before the run is created, so the same object is what
+    # the run stores and what the agent receives — and a resume relays the
+    # run's own stored chain rather than re-signing a handover that is not
+    # happening. Deciding it here instead would need a flag saying which of
+    # those this call is, and the door already knows.
+    relayed_chain = inbound.actor_chain
 
     try:
         input_json = build_run_agent_input(

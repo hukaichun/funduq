@@ -178,35 +178,57 @@ async def main() -> int:
             pass
         async with funduq.session() as session:
             run = await repo.get_run(session, handle.run_id)
+        stored = run.actor_chain or []
+        # As dispatched: every hop the branching party presented, and then the
+        # one funduq signs naming where it sent the run. The record used to
+        # keep the presented chain alone, which left funduq's own books unable
+        # to tell a run it had dispatched from a chain that reached it having
+        # passed no witness at all — the agent always got the longer one and
+        # only the record was short.
+        kept_what_arrived = stored[: len(branched)] == branched
+        witnessed = len(stored) == len(branched) + 1 and "dispatchedTo" in jwt.decode(
+            stored[-1], options={"verify_signature": False}
+        )
         findings.record(
-            "the record keeps the chain that was presented",
-            run.actor_chain == branched,
-            f"run {handle.run_id[:8]}… keeps all {len(run.actor_chain or [])} hop(s) it "
-            f"arrived with, under head_key {(run.head_key or '')[:16]}… — so an auditor can "
-            "at least read the path that was claimed, which was impossible while only the "
-            "head was stored"
-            if run.actor_chain == branched
-            else f"stored {run.actor_chain!r}, presented {branched!r}",
+            "the record keeps the chain as dispatched",
+            kept_what_arrived and witnessed,
+            f"run {handle.run_id[:8]}… keeps all {len(branched)} hop(s) it arrived with "
+            f"under head_key {(run.head_key or '')[:16]}…, and funduq's own dispatch hop "
+            "after them — so an auditor reads both the path that was claimed and the fact "
+            "that this one passed a witness"
+            if kept_what_arrived and witnessed
+            else f"stored {stored!r}, presented {branched!r}",
         )
         # --- 4. what funduq's own hop makes visible
         print("[4] B does the same thing to a chain that went out through funduq")
         # As A would have received it: the caller's hop, then funduq's, naming
         # the agent it dispatched to.
         as_dispatched = funduq.identity.dispatch_hop(new_chain(caller), agent)
-        rebranched = extend_chain(b_key, as_dispatched[:-1] + [as_dispatched[-1]])
+        rebranched = extend_chain(b_key, as_dispatched)
         claimed = jwt.decode(as_dispatched[-1], options={"verify_signature": False})["dispatchedTo"]
-        next_signer = verify_chain(rebranched).actor_public_keys[-1]
+
+        # This comparison used to be performed *here*, by the probe, because
+        # `verify_chain` wrote `dispatchedTo` and never read it: the property
+        # was available and nothing enforced it. It is the verifier's now, so
+        # what this step checks is that the verifier refuses — a probe that
+        # keeps doing the work itself would stay green if the rule were ever
+        # taken back out.
+        try:
+            verify_chain(rebranched)
+            refused = None
+        except InvalidChain as e:
+            refused = str(e)
 
         findings.record(
-            "an erased hand can be noticed",
-            claimed["providerKey"] != next_signer,
+            "an erased hand is refused",
+            refused is not None,
             f"funduq's hop says it dispatched to provider {claimed['providerKey'][:8]}… "
-            f"(agent '{claimed['name']}'), and the hop after it is signed by "
-            f"{next_signer[:8]}… — the two contradict each other, which is what a branch "
-            "cannot avoid: an agent is (provider_key, name), and that provider key is "
-            "exactly the key that signs the next hop when it extends honestly"
-            if claimed["providerKey"] != next_signer
-            else "the chain is consistent — no branch to notice here",
+            f"(agent '{claimed['name']}'), and verification refuses the hop after it: "
+            f"{refused} — an agent is (provider_key, name), and that provider key is "
+            "exactly the key that signs the next hop when it extends honestly, so the "
+            "hop and its successor check each other"
+            if refused is not None
+            else "verification accepted the branch — the rule is not being applied",
         )
 
         # --- 5. what the design does guarantee

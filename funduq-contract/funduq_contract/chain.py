@@ -128,6 +128,20 @@ def verify_chain(chain: list[str]) -> ChainResult:
     ignored for the same reason unknown fields are ignored elsewhere — a
     verifier that failed on them would break on every future addition.
 
+    **A dispatch hop names the party that must sign next.** A hop carrying
+    `dispatchedTo` is a witness saying where it handed the work; the party
+    hop after it must be signed by that provider key, and one signed by
+    anyone else is a chain rewritten to leave someone out. Two shapes are
+    deliberately still legal: a chain that *ends* at a dispatch hop (the
+    named party never accepted — that is a break, not a defect), and a
+    dispatch hop followed by another dispatch hop (the same work offered
+    onward without the first party ever signing).
+
+    This check was writable for as long as `dispatchedTo` has existed and
+    was not read, so the property it gives — a branch contradicting itself
+    — was available rather than enforced, and a probe rather than the
+    verifier was the only thing performing it.
+
     Raises `InvalidChain` on any failure, including an empty chain.
     """
     if not chain:
@@ -135,6 +149,7 @@ def verify_chain(chain: list[str]) -> ChainResult:
 
     actor_public_keys: list[str] = []
     prev_token: str | None = None
+    dispatched_to: dict | None = None
 
     for i, token in enumerate(chain):
         try:
@@ -162,6 +177,17 @@ def verify_chain(chain: list[str]) -> ChainResult:
             raise InvalidChain(
                 f"hop {i}: prevHash doesn't match — chain reordered, truncated, or spliced"
             )
+
+        hop_dispatch = payload.get("dispatchedTo")
+        if dispatched_to is not None and hop_dispatch is None:
+            expected = dispatched_to.get("providerKey")
+            if actor_public_key != expected:
+                raise InvalidChain(
+                    f"hop {i}: the hop before it dispatched to {str(expected)[:16]}…, "
+                    f"but this hop is signed by {actor_public_key[:16]}… — a hop that "
+                    "dispatched and its successor must agree"
+                )
+        dispatched_to = hop_dispatch if isinstance(hop_dispatch, dict) else None
 
         actor_public_keys.append(actor_public_key)
         prev_token = token

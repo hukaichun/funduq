@@ -15,6 +15,7 @@ from funduq.doors import (
     dispatch,
     offline_events,
     open_run,
+    relayed_chain,
     resolve_kyok,
     verify_caller,
 )
@@ -141,6 +142,11 @@ class AGUIAdapter:
             if isinstance(input_dump.get("metadata"), dict):
                 input_dump["metadata"] = strip_kyok_context(input_dump["metadata"])
 
+            # Signed before the run is created, so the record keeps exactly
+            # what the agent receives. Replaced below when this turned out to
+            # land on an ask: a resume is the same run continuing.
+            chain = relayed_chain(funduq, actor_chain, agent)
+
             opened = await open_run(
                 funduq, session,
                 agent=agent,
@@ -154,7 +160,7 @@ class AGUIAdapter:
                 run_input=input_dump,
                 metadata=metadata,
                 head_key=head_key,
-                actor_chain=actor_chain,
+                actor_chain=chain,
                 protocol="ag-ui",
             )
             if opened is None:
@@ -163,13 +169,17 @@ class AGUIAdapter:
                 # utterance, so the caller gets the thread as it now stands.
                 return ThreadSnapshot(await repo.get_thread_snapshot(session, thread_id))
             run_id, starting_seq = opened.run_id, opened.starting_seq
+            if opened.landed_on_ask:
+                # The run's own chain and head, never the answering party's.
+                landed = await repo.get_run(session, run_id)
+                chain, head_key = landed.actor_chain, landed.head_key
 
             inbound = InboundRun(
                 agent=agent,
                 messages=messages,
                 metadata=metadata,
                 head_key=head_key,
-                actor_chain=actor_chain,
+                actor_chain=chain,
                 kyok=kyok,
                 state=body.state,
                 tools=[t.model_dump(mode="json", by_alias=True) for t in body.tools],

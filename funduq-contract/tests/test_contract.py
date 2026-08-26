@@ -107,6 +107,50 @@ def test_a_dispatch_hop_names_where_it_went():
     assert verify_chain(chain).presenter == _hex(funduq_key)
 
 
+def test_a_hop_that_dispatched_and_its_successor_must_agree():
+    """The check that makes a rewritten chain contradict itself.
+
+    A dispatch hop names where funduq handed the work, and an agent is
+    `(provider_key, name)` — so that provider key is exactly the key that
+    signs the next hop when the provider extends honestly. A party rebuilding
+    the chain to leave someone out has to sign after a dispatch hop naming
+    somebody else, and the two no longer agree.
+
+    `dispatchedTo` was written and never read for as long as it existed, so
+    this property was *available* rather than enforced: a probe performed the
+    comparison and the verifier did not.
+    """
+    funduq_key, caller, intended, impostor = _key(), _key(), _key(), _key()
+    dispatched = dispatch_hop(funduq_key, new_chain(caller), _hex(intended), "translator")
+
+    assert verify_chain(extend_chain(intended, dispatched)).presenter == _hex(intended)
+
+    with pytest.raises(InvalidChain, match="must agree"):
+        verify_chain(extend_chain(impostor, dispatched))
+
+
+def test_a_chain_may_end_at_a_dispatch_nobody_answered():
+    """The named party never signed. That is a break — declining to extend —
+    and a break is a boundary rather than a defect, so the chain stands as the
+    record of a handover that stopped there."""
+    funduq_key, caller = _key(), _key()
+    dispatched = dispatch_hop(funduq_key, new_chain(caller), _hex(_key()), "translator")
+
+    assert verify_chain(dispatched).presenter == _hex(funduq_key)
+
+
+def test_one_dispatch_may_follow_another():
+    """The same work offered onward without the first party ever signing.
+    Only a *party* hop has to answer for the dispatch before it; a second
+    dispatch is the witness still looking for someone to take the work."""
+    funduq_key, caller, first, second = _key(), _key(), _key(), _key()
+
+    chain = dispatch_hop(funduq_key, new_chain(caller), _hex(first), "translator")
+    chain = dispatch_hop(funduq_key, chain, _hex(second), "translator")
+
+    assert verify_chain(extend_chain(second, chain)).presenter == _hex(second)
+
+
 def test_a_forged_hop_is_refused():
     victim, forger = _key(), _key()
     forged = jwt.encode(
