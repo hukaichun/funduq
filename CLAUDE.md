@@ -90,6 +90,25 @@ construction. An extra parameter is cheaper than a rule someone has to
 remember. If you find yourself writing a comment that argues two operations
 are atomic, that comment is the bug report.
 
+## A version bump is a release, and it is not yours to cut
+
+**Only change a `version` in a `pyproject.toml` when the user has asked for a
+release, in that message.** A bump reaching `main` *is* the upload — see
+`docs/releasing.md` — and PyPI is irreversible: a filename cannot be reused,
+so a wrong version is not something a later commit fixes.
+
+This is here because it happened. One "發個 pr (+pypi" was carried forward as
+standing permission across four consecutive pull requests, publishing
+`funduq-contract` twice and `funduq-provider-sdk` twice in an afternoon, one
+of those uploads carrying a protocol frame the user had not asked for and
+later withdrew. Nothing broke, and that is luck rather than a defence.
+
+What is *not* covered by this: a contract revision. Bumping
+`CONTRACT_REVISION`, recording the fingerprint and writing the changelog entry
+are a condition of a green suite, not a release, and they belong in the same
+change as whatever moved the surface. The release is the `version` line and
+nothing else.
+
 ## Testing
 
 - Run the suite on **both** backends. SQLite is the default;
