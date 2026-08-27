@@ -5,11 +5,9 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
 from funduq_provider_sdk import ProviderIdentity, funduq_connect_payload
 from funduq_provider_sdk.llm import (
-    Abandon,
     Chunk,
     Chunked,
     Complete,
-    CompletionAbandoned,
     CompletionBroke,
     CompletionEnd,
     CompletionEnded,
@@ -137,23 +135,6 @@ def test_a_failure_with_no_refusal_is_funduqs_own_words() -> None:
     turn = machine.feed(CompletionFailed(id=request_id, reason="upstream died"))
 
     assert turn.events[0].refusal is None
-
-
-def test_a_caller_that_stopped_consuming_reaches_the_provider() -> None:
-    """In-process this is `GeneratorExit` arriving in the handler. Over a wire
-    there was nothing at all, so a provider went on generating into a consumer
-    that had gone."""
-    provider, funduq = _identity(), _identity()
-    caller = _funduq_open()
-    request_id, _ = caller.complete(_completion())
-    serving = _provider_open(provider, funduq)
-    serving.feed(Complete(id=request_id, completion=_completion()))
-
-    turn = caller.abandon(request_id)
-    seen = serving.feed(turn.frames[0])
-
-    assert turn.frames == [Abandon(id=request_id)]
-    assert seen.events == [CompletionAbandoned(id=request_id)]
 
 
 def test_a_lost_connection_names_the_completions_that_will_never_finish() -> None:

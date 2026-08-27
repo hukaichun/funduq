@@ -220,7 +220,6 @@ correct. The two halves differ here for a reason rather than by accident.
 | `chunk` | provider → funduq | one piece of the answer, never parsed |
 | `completion.end` | provider → funduq | it finished |
 | `completion.failed` | provider → funduq | it did not; `refusal` present is the provider's policy |
-| `abandon` | funduq → provider | the caller stopped consuming |
 
 A completion is `OPEN` until exactly one of `completion.end`,
 `completion.failed` or a lost link. A chunk after the end breaks the link, and
@@ -232,7 +231,7 @@ completion half is an extra. Each link kind has its own codec, which is the
 shape of the thing rather than a workaround: an agent link and an LLM link are
 different connections to different rosters.
 
-## Four things building it found
+## Three things building it found
 
 **`maxConcurrentRuns` had nowhere to travel.**
 
@@ -249,13 +248,6 @@ agents are published as records, offerings as names plus one document
 describing the link's terms. Registration moved out of the shared base and
 into each work family. Sharing the frame would have meant dropping the
 metadata or carrying a field that is always empty on one side.
-
-**A caller that stops consuming had no way to say so.** In-process that is
-`GeneratorExit` arriving in the handler; over a wire nothing reached the
-provider at all, so it went on generating into a consumer that had gone. The
-`abandon` frame is the wire's version, and it needs no new core verb —
-`ConnectedLLMProvider` has none to add, and a driver knows when its own stream
-was closed.
 
 **Core's late-claim path is unreachable from a late answer.**
 `accept_late_ack` is called from `report_event`, when a provider begins
@@ -292,13 +284,23 @@ Core changed nothing: `FunduqSide` calls only `attach_provider`,
 
 ## What is not built yet
 
-- **Resume** ([#214](https://github.com/hukaichun/funduq/issues/214)). The
-  machines are already instantiated per session rather than per connection,
-  which is what resume needs: a drop is `connection_lost()`, a reconnect
-  installs a new send callback, and per-run sequence and delivery watermark
-  can survive both. That state could never have lived in a `FunduqLink`
-  instance, because that instance is what is thrown away on every blip — which
-  is why #214 is not a grace-window keyword argument. The machine would own
-  the resume mechanics; core would own the verdict. Note that
-  `ProviderRuntime._report_output` still drops events emitted while no link is
-  attached, so the runtime has to buffer before any of this is reachable.
+- **Anything about a party that has gone**
+  ([#220](https://github.com/hukaichun/funduq/issues/220)). Reconnecting after
+  a dropped link, replaying what the provider produced while it was away,
+  relaying a cancel that arrived during the outage, and telling a provider its
+  caller stopped consuming are **one question, not four**. They were being
+  answered one at a time, and that is how a frame for the last of them got
+  written and withdrawn: core asks for no such verb —
+  `ConnectedLLMProvider` is `public_key` and `complete`, with no cancel — so
+  inventing it ahead of the need put a vocabulary on the wire that nothing
+  spoke.
+
+  What #220 records, so the next attempt starts from it: where each clock
+  belongs and why, that the blocker is where a *second* ticket comes from
+  rather than anything in the protocol, and that all of it waits on whether
+  this package ships a driver.
+
+- **Resume on the completion half**, for the same reason — and with one of its
+  own: a completion's caller is usually already holding an open stream, so
+  what a resumed completion should look like to *that* caller is a question
+  nobody has answered.
