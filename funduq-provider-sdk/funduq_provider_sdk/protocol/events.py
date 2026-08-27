@@ -4,7 +4,7 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict
 
-from funduq_provider_sdk.provider import DeliveredRun, Refusal
+from funduq_provider_sdk.provider import DeliveredRun, Refusal, Registration
 
 
 class Event(BaseModel):
@@ -41,7 +41,7 @@ class ConnectRequested(Event):
 class Registering(Event):
 
     id: str
-    agents: list[dict[str, Any]]
+    agents: list[Registration]
 
 
 class Deleting(Event):
@@ -50,11 +50,11 @@ class Deleting(Event):
     name: str
 
 
-class Asking(Event):
+class AskingThreadMessages(Event):
 
     id: str
-    method: str
-    args: dict[str, Any]
+    thread_id: str
+    limit: int | None = None
 
 
 class Answered(Event):

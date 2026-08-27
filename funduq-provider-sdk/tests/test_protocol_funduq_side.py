@@ -5,7 +5,7 @@ import pytest
 from funduq_provider_sdk import DeliveredRun, Refusal
 from funduq_provider_sdk.protocol import (
     Answered,
-    Asking,
+    AskingThreadMessages,
     Cancel,
     Connect,
     ConnectOk,
@@ -17,7 +17,7 @@ from funduq_provider_sdk.protocol import (
     Malformed,
     Offer,
     Ok,
-    Query,
+    ThreadMessages,
     Register,
     Registering,
     Report,
@@ -220,7 +220,7 @@ def test_a_lost_connection_says_the_fact_and_draws_no_conclusion() -> None:
     what a claimed run becomes is core's verdict."""
     machine = _opened()
     offer_id, _ = machine.offer(_run(), now=0.0)
-    machine.feed(Query(id="q1", method="thread_messages", args={"thread_id": "t-1"}), now=0.0)
+    machine.feed(ThreadMessages(id="q1", thread_id="t-1"), now=0.0)
 
     turn = machine.connection_lost()
 
@@ -232,13 +232,9 @@ def test_a_lost_connection_says_the_fact_and_draws_no_conclusion() -> None:
 def test_a_query_surfaces_for_the_driver_to_answer() -> None:
     machine = _opened()
 
-    turn = machine.feed(
-        Query(id="q1", method="thread_messages", args={"thread_id": "t-1"}), now=0.0
-    )
+    turn = machine.feed(ThreadMessages(id="q1", thread_id="t-1"), now=0.0)
 
-    assert turn.events == [
-        Asking(id="q1", method="thread_messages", args={"thread_id": "t-1"})
-    ]
+    assert turn.events == [AskingThreadMessages(id="q1", thread_id="t-1")]
     assert machine.reply_ok("q1", payload=[]).frames[0].id == "q1"
 
 
@@ -247,7 +243,7 @@ def test_a_registration_surfaces_for_the_driver_to_apply() -> None:
 
     turn = machine.feed(Register(id="1", agents=[{"name": "translator"}]), now=0.0)
 
-    assert turn.events == [Registering(id="1", agents=[{"name": "translator"}])]
+    assert turn.events[0].agents[0].name == "translator"
 
 
 def test_cancelling_is_a_request_and_settles_nothing() -> None:

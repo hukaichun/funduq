@@ -165,7 +165,7 @@ does not await at all on this path, and the agent's code is nowhere near
 it.
 
 This is the one timing funduq depends on. It holds the next utterance of
-the *same conversation* until this answer lands, which is how a thread's
+the *same conversation* until this run is **claimed**, which is how a thread's
 delivery order survives a transport that guarantees none — and there is
 no such guarantee to lean on instead: an offer is an independent call
 with no position in it, so the only thing that can say "this one came

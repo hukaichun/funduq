@@ -4,7 +4,7 @@ from typing import Annotated, Any, Literal, Union
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from funduq_provider_sdk.provider import DeliveredRun
+from funduq_provider_sdk.provider import DeliveredRun, Registration
 
 
 class Frame(BaseModel):
@@ -69,19 +69,33 @@ class Offer(Frame):
     run: DeliveredRun
 
 
-class Query(Frame):
+class ThreadMessages(Frame):
+    """Ask funduq for a thread's history.
 
-    kind: Literal["query"] = "query"
+    Its own frame rather than a `method` string and a bag of `args`. That
+    shape was published once already — `LINK_QUERY_METHODS` names the method
+    and its argument order, and nothing checks either — and it is the pattern
+    this package exists to stop: a transport ends up writing
+    `args["thread_id"]` by hand, which is how a field name goes wrong
+    silently. A second query kind is a second frame, and adding one moves the
+    contract fingerprint, which is the right price."""
+
+    kind: Literal["query.thread_messages"] = "query.thread_messages"
     id: str
-    method: str
-    args: dict[str, Any] = Field(default_factory=dict)
+    thread_id: str = Field(alias="threadId")
+    limit: int | None = None
 
 
 class Register(Frame):
+    """Publish this link's agents.
+
+    `agents` is a list of `Registration`, not of loose dicts: the shape was
+    already published without a type, so a misspelt key travelled intact and
+    core dropped it silently."""
 
     kind: Literal["register"] = "register"
     id: str
-    agents: list[dict[str, Any]]
+    agents: list[Registration]
 
 
 class Delete(Frame):
@@ -170,7 +184,7 @@ WireFrame = Annotated[
         ConnectOk,
         ConnectErr,
         Offer,
-        Query,
+        ThreadMessages,
         Register,
         Delete,
         Ok,

@@ -186,7 +186,55 @@ never hears about it.
 4. **They do not filter unknown AG-UI event types.**
 5. **They do not reorder.** One link, frames in arrival order.
 
-## Two things building it found
+## The completion half
+
+An LLM link opens the same way — `FunduqLinkMachine` and
+`ProviderLinkMachine` carry the handshake, deleting and querying for both
+kinds, so a fix to the ceremony cannot land in one copy and not the other.
+What differs is the work. Both kinds are answered with a **stream** — a run's
+answer is its events and then its finish — so that is not the difference. Two
+things are:
+
+**A run is admitted first.** An offer is answered three ways before any output
+exists, and funduq holds the next utterance of that conversation until the run
+is *claimed* — a decline answers promptly and holds it anyway, since the run
+goes back to the head of its thread's queue. A completion has no admission step: it is assumed taken and can
+only fail afterwards. So `FunduqLlmSide` and `ProviderLlmSide` have no
+three-valued ack, and no delivery deadline to go with one. `next_deadline()`
+is always `None`, deliberately: the clock that used to sit there was removed
+for blaming a slow model for its own slowness, and liveness is a fact funduq
+holds — whether the link is still here — not a deduction from how long a chunk
+took.
+
+**A run outlives any one offer of it; a completion does not.** A run declined
+once is offered again under a new id, and a provider may claim one late by
+producing for it — so its output is addressed by `runId`, and the machine
+deliberately does not gate it. A completion is asked for exactly once, so its
+chunks are addressed by the request's own id, and gating those on the table is
+correct. The two halves differ here for a reason rather than by accident.
+
+| frame | direction | meaning |
+|---|---|---|
+| `register.llm` | provider → funduq | names plus one metadata document |
+| `complete` | funduq → provider | one request, carrying the delivered-completion envelope |
+| `chunk` | provider → funduq | one piece of the answer, never parsed |
+| `completion.end` | provider → funduq | it finished |
+| `completion.failed` | provider → funduq | it did not; `refusal` present is the provider's policy |
+| `abandon` | funduq → provider | the caller stopped consuming |
+
+A completion is `OPEN` until exactly one of `completion.end`,
+`completion.failed` or a lost link. A chunk after the end breaks the link, and
+so does ending a completion that was never asked for.
+
+They live under `llm/` because they name `DeliveredCompletion`, which reaches
+openai's types — an agent provider must not pay that import, which is why the
+completion half is an extra. Each link kind has its own codec, which is the
+shape of the thing rather than a workaround: an agent link and an LLM link are
+different connections to different rosters.
+
+## Four things building it found
+
+**`maxConcurrentRuns` had nowhere to travel.**
 
 **`maxConcurrentRuns` had nowhere to travel.** Core schedules against
 `ConnectedProvider.max_concurrent_runs`; in-process reads it off the runtime;
@@ -194,6 +242,20 @@ the frame vocabulary had no field for it. It is on `Connect` now — declared at
 the open, because it is a property of the party on the other end and not of
 any agent it publishes. Drawing the tables did not surface this. Wiring a
 driver to a real broker did, immediately.
+
+**The two links do not publish their rosters the same way.** They looked like
+one `register` frame until the LLM roster's `metadata` had nowhere to travel:
+agents are published as records, offerings as names plus one document
+describing the link's terms. Registration moved out of the shared base and
+into each work family. Sharing the frame would have meant dropping the
+metadata or carrying a field that is always empty on one side.
+
+**A caller that stops consuming had no way to say so.** In-process that is
+`GeneratorExit` arriving in the handler; over a wire nothing reached the
+provider at all, so it went on generating into a consumer that had gone. The
+`abandon` frame is the wire's version, and it needs no new core verb —
+`ConnectedLLMProvider` has none to add, and a driver knows when its own stream
+was closed.
 
 **Core's late-claim path is unreachable from a late answer.**
 `accept_late_ack` is called from `report_event`, when a provider begins
@@ -205,7 +267,8 @@ entry point.
 
 ## Conformance
 
-`funduq/tests/test_protocol_loopback.py` wires the two machines to each other
+`funduq/tests/test_protocol_loopback.py` and
+`test_protocol_llm_loopback.py` wire each pair of machines to each other
 **through the codec**, with a real `Funduq` at one end and a real
 `ProviderRuntime` at the other. No socket, no sleep. It lives in core's suite
 because the SDK may not import core — and because a machine only downstream
@@ -229,8 +292,6 @@ Core changed nothing: `FunduqSide` calls only `attach_provider`,
 
 ## What is not built yet
 
-- **The LLM link.** `FunduqLLMLink`'s shape is a stream of chunks rather than
-  one answer, so it needs its own event family.
 - **Resume** ([#214](https://github.com/hukaichun/funduq/issues/214)). The
   machines are already instantiated per session rather than per connection,
   which is what resume needs: a drop is `connection_lost()`, a reconnect

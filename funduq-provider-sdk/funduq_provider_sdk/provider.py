@@ -28,6 +28,29 @@ class Refusal:
     reason: str
 
 
+class Registration(BaseModel):
+    """One agent as it is published on a link — and the declared wire form of one.
+
+    A model rather than a loose dict because the shape was already published
+    without a type: `REGISTRATION_FIELDS` named the keys and nothing checked
+    them, so a misspelt one travelled intact and core dropped it silently
+    (`agent.get("description", "")` cannot tell a missing field from a typo).
+    `extra="forbid"` is the point of the exercise.
+
+    Two dumps, deliberately: `model_dump(by_alias=True)` is the wire form,
+    camelCase like every other frame; plain `model_dump()` is what
+    `Funduq.register_agents` reads, which is snake_case. A transport that
+    carried raw dicts had to know both spellings.
+    """
+
+    model_config = ConfigDict(frozen=True, populate_by_name=True, extra="forbid")
+
+    name: str
+    description: str = ""
+    agent_card_extra: dict[str, Any] = Field(default_factory=dict, alias="agentCardExtra")
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
 class DeliveredRun(BaseModel):
     """The run data handed to a `FunduqLink`, translated from funduq's internal claimed-run representation — and the declared wire form of an offered run.
 

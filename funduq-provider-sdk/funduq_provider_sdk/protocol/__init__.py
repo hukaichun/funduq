@@ -12,7 +12,7 @@ See `docs/link-protocol-machine.md`.
 from funduq_provider_sdk.protocol.codec import decode, encode
 from funduq_provider_sdk.protocol.events import (
     Answered,
-    Asking,
+    AskingThreadMessages,
     Cancelled,
     ConnectRequested,
     Deleting,
@@ -41,7 +41,7 @@ from funduq_provider_sdk.protocol.frames import (
     Malformed,
     Offer,
     Ok,
-    Query,
+    ThreadMessages,
     Register,
     Report,
     WireFrame,
@@ -52,7 +52,7 @@ from funduq_provider_sdk.protocol.turn import Turn
 
 __all__ = [
     "Answered",
-    "Asking",
+    "AskingThreadMessages",
     "Cancel",
     "Cancelled",
     "Connect",
@@ -76,7 +76,7 @@ __all__ = [
     "Ok",
     "Opened",
     "ProviderSide",
-    "Query",
+    "ThreadMessages",
     "Refused",
     "Register",
     "Registering",
