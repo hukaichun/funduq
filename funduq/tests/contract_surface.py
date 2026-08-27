@@ -85,6 +85,53 @@ def _link_surface() -> list[str]:
     )
 
 
+def _protocol_surface() -> list[str]:
+    """The link protocol's frames and both machines' verbs.
+
+    In the surface for the reason `_contract_api_surface` is: this is a
+    published protocol, and a second implementation — the Go probe exists to
+    be one — reads these frames. A renamed `kind`, a renamed aliased field or
+    an added machine verb is a change that implementation has to act on, and
+    none of it moves a vector, because the vectors pin payload shapes and this
+    is a vocabulary.
+
+    Leaving it out would repeat, one package over, the mistake this file
+    already records making once: a surface an outside implementation depends
+    on, sitting outside the fingerprint, so a break ships with a changelog
+    entry saying nothing changed.
+    """
+    from funduq_provider_sdk.protocol import frames as fr
+    from funduq_provider_sdk.protocol import events as ev
+    from funduq_provider_sdk.protocol.funduq_side import FunduqSide
+    from funduq_provider_sdk.protocol.provider_side import ProviderSide
+
+    out: list[str] = []
+    for name in sorted(dir(fr)):
+        member = getattr(fr, name)
+        if not (isinstance(member, type) and issubclass(member, fr.Frame)):
+            continue
+        if member is fr.Frame:
+            continue
+        fields = sorted(
+            field.alias or field_name for field_name, field in member.model_fields.items()
+        )
+        out.append(f"frame:{name}:{','.join(fields)}")
+    for name in sorted(dir(ev)):
+        member = getattr(ev, name)
+        if not (isinstance(member, type) and issubclass(member, ev.Event)) or member is ev.Event:
+            continue
+        out.append(f"event:{name}:{','.join(sorted(member.model_fields))}")
+    for machine in (FunduqSide, ProviderSide):
+        verbs = sorted(
+            attr
+            for attr, member in inspect.getmembers(machine)
+            if not attr.startswith("_")
+            and (inspect.isfunction(member) or isinstance(member, property))
+        )
+        out.append(f"machine:{machine.__name__}:{','.join(verbs)}")
+    return out
+
+
 def _a2a_surface() -> list[str]:
     """The A2A protocol version funduq answers as, and the transport bindings
     it will accept. Both are read from `a2a-sdk` rather than written here, so
@@ -203,6 +250,7 @@ def surface() -> dict[str, Any]:
         "vectors": _vectors_surface(),
         "settings": _settings_surface(),
         "link": _link_surface(),
+        "protocol": _protocol_surface(),
         "a2a": _a2a_surface(),
         "typing": _typing_surface(),
     }

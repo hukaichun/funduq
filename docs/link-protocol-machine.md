@@ -1,74 +1,59 @@
-# Proposed: the link protocol as a machine
+# The link protocol machine
 
-!!! warning "Nothing on this page is built"
+The link's state machine is code, in `funduq_provider_sdk.protocol`. Both
+halves, sans-io: they consume frames, emit frames and events, perform no I/O
+and read no clock.
 
-    This is a design for [#213](https://github.com/hukaichun/funduq/issues/213),
-    written in the future tense on purpose. No identifier here exists yet.
-    When it does, this page is replaced by a tour of the shipped code and
-    [Writing a transport](writing-a-transport.md) is demoted to the same.
+[Writing a transport](writing-a-transport.md) is still the page that explains
+*why* each rule exists. This one is what a transport mounts instead of
+re-deriving them.
 
-## What is actually missing
+## What was actually missing
 
-`funduq_provider_sdk/contract.py` already publishes a machine-readable half
-of the link:
+`funduq_provider_sdk/contract.py` already published a machine-readable half of
+the link — `LINK_REPORT_METHODS`, `LINK_QUERY_METHODS`,
+`CONNECTED_PROVIDER_ATTRS`: method names and argument orders, with not one
+**state** among them. So what shipped was the half that was never expensive,
+and what stayed in prose was the half that is: states, orderings, timers.
 
-```python
-LINK_REPORT_METHODS = {"report_event": ("run_id", "event"), "finish_run": ("run_id",)}
-LINK_QUERY_METHODS  = {"thread_messages": ("thread_id", "limit")}
-CONNECTED_PROVIDER_ATTRS = frozenset({"public_key", "max_concurrent_runs", "deliver", "cancel"})
-```
-
-Method names and argument orders. What it does not contain is a single
-**state**. Every ordering rule lives in [Writing a
-transport](writing-a-transport.md) as English — so what upstream ships is the
-half that was never expensive, and what it keeps in prose is the half that is:
-states, orderings, timers.
-
-The consequence is not hypothetical. "A dropped socket ends nothing" was true
-when four downstream implementations were written against it, and is not true
-now: `unregister_provider` tells the run's lane `ProviderGone` and a claimed
-run fails as `provider_left_holding_it`. No frame changed shape.
+The consequence was not hypothetical. "A dropped socket ends nothing" was true
+when four downstream implementations were written against it, and stopped
+being true when `unregister_provider` began telling a run's lane
+`ProviderGone`. No frame changed shape.
 
 ## The I/O boundary
 
-Three seams, and the machine sits at the innermost one:
+Three seams, and the machines sit at the innermost:
 
 ```
 bytes on a socket      ← the transport's, and never ours
       ↕
 the wire form          ← a codec's; a default JSON one ships and is swappable
       ↕
-Frame                  ← the machine's boundary
+Frame                  ← the machines' boundary
       ↕
 Event                  ← the driver turns each into one Funduq call
 ```
 
-The machine performs no I/O and reads no clock: time enters as `now` and
-leaves as `next_deadline()`. That, not the absence of types, is what sans-io
-buys — and it is what makes the tables below testable, because a race becomes
-an ordered list of `feed` calls and a clock the test sets rather than a sleep.
+Time enters as `now` and leaves as `next_deadline()`. That, not the absence of
+types, is what sans-io buys — and it is what makes the orderings testable: a
+race is an ordered list of `feed` calls and a clock the test sets, rather than
+a sleep. `tests/test_protocol_is_io_free.py` enforces it, statically and
+behaviourally.
 
-```python
-machine.feed(frame: Frame, *, now: float) -> list[Event]
-send_frame(frame: Frame)
-```
+Every method on both machines returns a `Turn` — the frames to send and the
+events to act on — so a driver has one shape to handle and the order is never
+in question.
 
 **Everything crossing either boundary is a pydantic model.** This surface is a
 specification for people implementing against it, and an annotation nothing
-enforces specifies nothing — which is the disease this whole issue is about,
-one document further up. Models also mean the default codec is not a module
-anyone writes: it is `model_dump(by_alias=True)` and `model_validate`, the
-same mechanism `DeliveredRun` already uses and
-[`contract-vectors.json`](contract-vectors.json) already pins, so a vector
-entry validates straight into a frame.
-
-Frames and events differ in one setting, not in kind: **frames carry
-camelCase aliases because they go on a wire, events carry none because they do
-not.**
+enforces specifies nothing. It also means the default codec is not a module
+anyone writes: `model_dump(by_alias=True)` and `model_validate`, the same
+mechanism `DeliveredRun` uses and [`contract-vectors.json`](contract-vectors.json)
+pins. Frames and events differ in one setting — frames carry camelCase
+aliases because they go on a wire, events carry none — not in kind.
 
 ## The frame vocabulary
-
-Four classes, and the class decides the correlation rule.
 
 | class | frames | carries `id` |
 |---|---|---|
@@ -77,88 +62,74 @@ Four classes, and the class decides the correlation rule.
 | reply | `Ok`, `Err` | yes, the request's |
 | notify | `Report`, `Finish`, `Cancel` | no |
 
-Every one is a `BaseModel` with camelCase aliases, nesting the models that
-already exist:
+`Ok` for an offer carries the three-valued answer as an explicit discriminant
+— `verdict` of `accepted`, `declined` or `refused` — and the machine converts
+it to core's own `bool | Refusal` at the event boundary and nowhere else, so
+neither vocabulary leaks into the other. `Err` is reserved for a request
+funduq rejected, so a provider's permanent refusal and a rejection by funduq
+never share a shape.
 
-```python
-class Offer(Frame):
-    model_config = ConfigDict(frozen=True, populate_by_name=True)
-    id: str
-    run: DeliveredRun            # the published delivered-run envelope, unchanged
+`Report.event` is `Any`: the one field the machine must not parse, because an
+event whose `type` funduq does not know is relayed untouched.
 
-class Ok(Frame):
-    id: str
-    verdict: Literal["accepted", "declined", "refused"] | None = None
-    reason: str | None = None
-    payload: Any = None
-```
+A payload the codec cannot read becomes a `Malformed` — a frame like any
+other, never encoded, so the decision about it stays in the transition table
+and the codec never makes a protocol judgement.
 
-The three-valued answer carries an explicit discriminant **on the wire**, and
-the machine converts it to core's own `bool | Refusal` at the event boundary.
-Neither vocabulary leaks into the other: the wire never relies on a union
-being told apart by inspection, and core keeps the two types it already reads.
+!!! warning "Two dump rules that pull opposite ways"
 
-`Err` is reserved for a request funduq rejected, so a provider's permanent
-refusal and a rejection by funduq never share a shape.
+    A **frame** is dumped `by_alias=True` and **without** `exclude_none`; a
+    typed **AG-UI event** is dumped with it.
 
-`Report.event` stays `Any` — the one field that must not be parsed, because an
-event whose `type` funduq does not know is relayed untouched. The dump that
-produces it is the machine's, with `exclude_none=True`, which turns a rule
-every transport currently has to remember into one none of them can get
-wrong: a default dump injects `timestamp: null` and `rawEvent: null` into the
-caller's stream.
+    `RunAgentInput` has required fields that are legitimately `null` —
+    `state`, `forwardedProps` — so stripping nulls from a frame yields a
+    `runInput` the far side cannot rebuild, and a perfectly good run comes
+    back as a permanent refusal. Leaving them in an event injects
+    `timestamp: null` and `rawEvent: null` into the caller's stream.
 
-A frame the codec cannot parse becomes a `Malformed(id, reason)` — a frame
-like any other, so the decision about it stays in the transition table and the
-codec never makes a protocol judgement.
+    The two rules lived in different paragraphs of `writing-a-transport.md`
+    and never met until one function had to do both. The codec carried the
+    flag in its first draft and a test caught it.
 
-## Two machines
-
-`FunduqSide` is what a gateway mounts between its socket and a `Funduq`
-object; it presents exactly `CONNECTED_PROVIDER_ATTRS` to core.
-`ProviderSide` is its mirror. Neither imports asyncio.
-
-Events are models too, without aliases — `Answered`, `Reported`, `Offered`,
-`Gone`. The driver's whole job is to turn each into the one `Funduq` call it
-names.
-
-### FunduqSide — link states
+## FunduqSide — link states
 
 | state | input | → | frames out | events out |
 |---|---|---|---|---|
-| `AWAITING_CONNECT` | `Connect` | `VERIFYING` | — | `ConnectRequested(key, ticket, nonce, proof)` |
-| `AWAITING_CONNECT` | any other frame | `CLOSED` | `ConnectErr` | `LinkFailed("first frame must be Connect")` |
+| `AWAITING_CONNECT` | `Connect` | `VERIFYING` | — | `ConnectRequested` |
+| `AWAITING_CONNECT` | any other frame | `CLOSED` | `ConnectErr` | `LinkFailed` |
 | `VERIFYING` | `accept_connect(answer)` | `OPEN` | `ConnectOk(answer)` | — |
 | `VERIFYING` | `refuse_connect(reason)` | `CLOSED` | `ConnectErr(reason)` | — |
-| `VERIFYING` | any frame | `CLOSED` | `ConnectErr` | `LinkFailed("spoke while connect was being verified")` |
-| `OPEN` | `Connect` | `CLOSED` | `Err` | `LinkFailed("already open")` |
-| `OPEN` | `Register(id, agents)` | `OPEN` | — | `Registering(id, agents)` |
-| `OPEN` | `Delete(id, name)` | `OPEN` | — | `Deleting(id, name)` |
-| `OPEN` | `Query(id, method, args)` | `OPEN` | — | `Asking(id, method, args)` |
-| `OPEN` | `Report(run_id, event)` | `OPEN` | — | `Reported(run_id, event)` |
-| `OPEN` | `Finish(run_id)` | `OPEN` | — | `Finished(run_id)` |
+| `VERIFYING` | any frame | `CLOSED` | `ConnectErr` | `LinkFailed` |
+| `OPEN` | `Connect` | `CLOSED` | `Err` | `LinkFailed` |
+| `OPEN` | `Register(id, agents)` | `OPEN` | — | `Registering` |
+| `OPEN` | `Delete(id, name)` | `OPEN` | — | `Deleting` |
+| `OPEN` | `Query(id, method, args)` | `OPEN` | — | `Asking` |
+| `OPEN` | `Report(run_id, event)` | `OPEN` | — | `Reported` |
+| `OPEN` | `Finish(run_id)` | `OPEN` | — | `Finished` |
 | `OPEN` | `Ok(id, verdict)` | `OPEN` | — | see the offer table |
 | `OPEN` | `Malformed(id, reason)` | `OPEN` | `Err(id, reason)` | — |
 | `OPEN` | `offer(run, now)` *from core* | `OPEN` | `Offer(id, run)` | — |
 | `OPEN` | `cancel(run_id)` *from core* | `OPEN` | `Cancel(run_id)` | — |
-| `OPEN` | `reply_ok/err(id, …)` *from driver* | `OPEN` | `Ok`/`Err(id, …)` | — |
-| any | `connection_lost(now)` | `CLOSED` | — | `Gone(unanswered_offers, dropped_queries)` |
+| any | `connection_lost()` | `CLOSED` | — | `Gone(unanswered, dropped)` |
 
 Two rows are absent on purpose, and their absence is the design:
 
-**There is no registration state.** The link machine never learns which agents
-are served, so an offer arriving before a `Register` has been replied to is
-not an allowance — there is nothing for it to violate. That matters because
-the window is real and wide: `_Roster.register` puts the roster live and
-nudges the broker at `core.py:267`, then does a `touch` and a `commit` — a
-network round trip on Postgres — before `register_agents` returns.
+**There is no registration state.** The machine never learns which agents the
+link serves, so an offer arriving before a `Register` has been answered
+violates nothing. The window is real and wide: `_Roster.register` puts the
+roster live and nudges the broker at `core.py:267`, then does a `touch` and a
+`commit` — a network round trip on Postgres — before `register_agents`
+returns. A machine that refused to offer until it had answered a `Register`
+would deadlock against its own broker.
 
-**There is no ticket frame.** "Do not fetch the ticket over the link" stops
-being a warning and becomes something the vocabulary cannot express.
+**There is no ticket frame.** "Do not fetch it over the link" is no longer a
+warning; it is something the vocabulary cannot say.
 
-### FunduqSide — one offer's states
+## FunduqSide — one offer's states
 
-Keyed by the request `id`, armed with a deadline of `now + deliver_timeout`.
+Keyed by the request `id`, armed with a deadline of `now + deliver_timeout`
+(core's own `deliver_timeout_seconds`, handed in rather than defaulted, so one
+number has one definition).
 
 | state | input | → | events out |
 |---|---|---|---|
@@ -168,143 +139,105 @@ Keyed by the request `id`, armed with a deadline of `now + deliver_timeout`.
 | `OFFERED` | `Ok(refused, reason)` | `REFUSED` | `Answered(id, Refusal(reason))` |
 | `OFFERED` | deadline reached | `UNANSWERED` | `Unanswered(id)` |
 | `UNANSWERED` | `Ok(…)` | `UNANSWERED` | `Answered(id, …, late=True)` |
-| `CLAIMED`/`DECLINED`/`REFUSED` | `Ok(…)` | `CLOSED` | `LinkFailed("second answer for offer <id>")` |
+| settled | `Ok(…)` | `CLOSED` | `LinkFailed("answered twice")` |
 
-The wire's `Literal["accepted","declined","refused"]` becomes core's
-`bool | Refusal` here and nowhere else, which is the whole of the conversion.
+A timed-out offer keeps its id. Forgetting it is the instinct, and it turns a
+provider's late honesty into a protocol error.
 
-`next_deadline()` is the minimum armed deadline; `timeout(now)` fires the ones
-that have passed. The only clock on this side.
-
-### ProviderSide
+## ProviderSide
 
 | state | input | → | frames out | events out |
 |---|---|---|---|---|
-| `IDLE` | `connect(ticket, nonce, proof)` | `CONNECTING` | `Connect(…)` | — |
-| `CONNECTING` | `ConnectOk`, signature verifies | `OPEN` | — | `Opened()` |
-| `CONNECTING` | `ConnectOk`, signature does not | `CLOSED` | — | `LinkFailed(WrongFunduq)` |
+| `IDLE` | `connect(ticket, …)` | `CONNECTING` | `Connect` | — |
+| `CONNECTING` | `ConnectOk`, signature verifies | `OPEN` | — | `Opened` |
+| `CONNECTING` | `ConnectOk`, signature does not | `CLOSED` | — | `LinkFailed` |
 | `CONNECTING` | `ConnectErr(reason)` | `CLOSED` | — | `Refused(reason)` |
-| `CONNECTING` | any other frame | `CLOSED` | — | `LinkFailed("spoke before the answer")` |
+| `CONNECTING` | any other frame | `CLOSED` | — | `LinkFailed` |
 | `OPEN` | `Offer(id, run)` | `OPEN` | — | `Offered(id, run)` |
 | `OPEN` | `Malformed(id, reason)` | `OPEN` | `Ok(id, refused, reason)` | — |
-| `OPEN` | `Cancel(run_id)` | `OPEN` | — | `Cancelled(run_id)` |
-| `OPEN` | `Ok(id, payload)` | `OPEN` | — | `Replied(id, payload)` |
-| `OPEN` | `Err(id, reason)` | `OPEN` | — | `Failed(id, reason)` |
+| `OPEN` | `Cancel(run_id)` | `OPEN` | — | `Cancelled` |
+| `OPEN` | `Ok(id, payload)` / `Err(id, reason)` | `OPEN` | — | `Replied` / `Failed` |
 | `OPEN` | `answer(id, verdict)` *from runtime* | `OPEN` | `Ok(id, verdict)` | — |
-| `OPEN` | `report(run_id, event)` | `OPEN` | `Report(…)` | — |
-| `OPEN` | `finish(run_id)` | `OPEN` | `Finish(…)` | — |
-| `OPEN` | `register(agents)` / `ask(method, args)` | `OPEN` | `Register`/`Query(id, …)` | — |
+| `OPEN` | `report` / `finish` | `OPEN` | `Report` / `Finish` | — |
+| `OPEN` | `register` / `delete` / `ask` | `OPEN` | the request frame | — |
 
-A run that does not validate as `RunAgentInput` never becomes an `Offer` at
-all: the codec yields `Malformed`, and the row above answers it as a permanent
-refusal. That is where `FunduqLink.deliver` does it today, and it is a rule
-about the frame rather than about the provider, so every transport should get
-it without writing it.
+The machine **signs** the connect rather than taking a proof, because the one
+thing a transport author must not get wrong there is *what* is signed: the
+pinned funduq key goes into the bytes, so a proof one funduq coaxes out cannot
+be relayed to attach at another. And "check the answer before producing
+anything" is structural — `CONNECTING` emits no other frame.
 
-Verifying `ConnectOk` is likewise the machine's, using `funduq_contract`'s
-pure `verify_signature` and `funduq_connect_payload` — and "check before
-producing anything" becomes structural, because `CONNECTING` emits no other
-frame.
+A run that will not decode never becomes an `Offer`: the codec yields
+`Malformed` and the row above answers it as a permanent refusal, so the agent
+never hears about it.
 
-## What the machine must not do
+## What the machines do not do
 
-1. **Not gate `event` or `finish` on its own offer table.** They are addressed
-   by `runId`, and authorization is core's, keyed on `claimed_by`. Gating them
-   locally looks obviously right and breaks late-claim (below).
-2. **Not decide a run's outcome on `connection_lost`.** It reports `Gone`;
-   core holds the verdict. funduq never decides on a provider's behalf.
-3. **Not hold or mint a ticket.**
-4. **Not filter unknown AG-UI event types.** Three-way validation is core's,
-   and a relay that filters is not a relay.
-5. **Not reorder.** One link, frames in arrival order.
+1. **They do not gate `Report` or `Finish` on the offer table.** Those are
+   addressed by run, and whether a key may speak for a run is core's question,
+   answered against `claimed_by` — which includes letting a provider claim
+   late by producing for a run funduq had given up waiting for. Gating them
+   here looks obviously right and would make that path unreachable over a wire
+   while leaving it working in-process.
+2. **They do not decide a run's outcome on `connection_lost`.** The machine
+   reports `Gone`; core holds the verdict. funduq never decides on a
+   provider's behalf.
+3. **They do not hold or mint a ticket.**
+4. **They do not filter unknown AG-UI event types.**
+5. **They do not reorder.** One link, frames in arrival order.
 
-## A gap this design found
+## Two things building it found
 
-Core's late-claim path is not reachable from a late answer. `accept_late_ack`
-is called from `report_event`, when the provider begins *producing* for a run
-whose ack funduq gave up on — there is no path that accepts a late `ok`. So
-the `UNANSWERED → Answered(late=True)` row above has no core call behind it;
-the driver can only log it.
+**`maxConcurrentRuns` had nowhere to travel.** Core schedules against
+`ConnectedProvider.max_concurrent_runs`; in-process reads it off the runtime;
+the frame vocabulary had no field for it. It is on `Connect` now — declared at
+the open, because it is a property of the party on the other end and not of
+any agent it publishes. Drawing the tables did not surface this. Wiring a
+driver to a real broker did, immediately.
 
-That is a finding, not a thing to design around: either the row is honest
-about being evidence-only, or `accept_late_ack` grows an ack-shaped entry
-point. Writing the table is what surfaced it — the prose had described this
-area for two transport generations without it showing.
+**Core's late-claim path is unreachable from a late answer.**
+`accept_late_ack` is called from `report_event`, when a provider begins
+producing for a run funduq gave up waiting for; nothing accepts a late `Ok`.
+So `UNANSWERED → Answered(late=True)` has no core call behind it and the
+driver can only log it. Recorded rather than designed around: either the row
+is honest about being evidence only, or `accept_late_ack` grows an ack-shaped
+entry point.
 
 ## Conformance
 
-`FunduqSide` and `ProviderSide` wired to each other through the codec — so
-every frame makes the `model_dump` / `model_validate` round trip the wire
-would make — with a real `Funduq` at one end and a real `ProviderRuntime` at
-the other. No socket, no sleep, clock supplied as data. Every row above becomes an ordered script,
-including the ones no test can reach today: an answer on a second
-fully-credentialed connection, an answer after the timeout, an offer before a
-registration is replied to, a second `Connect` on an open link.
+`funduq/tests/test_protocol_loopback.py` wires the two machines to each other
+**through the codec**, with a real `Funduq` at one end and a real
+`ProviderRuntime` at the other. No socket, no sleep. It lives in core's suite
+because the SDK may not import core — and because a machine only downstream
+exercises would rot the way the prose did.
 
-The loopback lives in this repository's suite. A machine only downstream
-exercises would rot exactly the way the prose did.
+The drivers in that file are the part a transport author writes, and they are
+short on purpose: pump frames, and turn each event into the one `Funduq` call
+it names. Everything else is in the machines.
 
 ## Adoption without a flag day
 
-The machines work in `Frame` models; the default codec is
-`model_dump(by_alias=True)` and `model_validate`, and it is the codec's output
-that gains `contract-vectors.json` entries. A transport that already has a
-wire substitutes its own codec and still takes the state handling — which is
-what makes the seam real, rather than the machine's interface quietly *being*
-the JSON codec's output. The complaint in #213 is being forced into flag days,
-and answering it with one more would answer it badly.
+The machines work in `Frame` models; the codec is a separate seam. A transport
+that already has a wire substitutes its own codec and still takes the state
+handling. `FunduqLink` is unchanged and still supported — it remains the right
+surface for *provider authors*, who should never meet a frame, and stops being
+what *transport authors* subclass.
 
-Note that the vectors cannot carry any invariant on this page — they pin frame
-shapes, and every rule here is an ordering. The conformance suite is new
-machinery, not a replay of the vectors.
+Core changed nothing: `FunduqSide` calls only `attach_provider`,
+`register_agents`, `delete_agent`, `report_event`, `finish_run`,
+`get_thread_messages` and `detach_provider`, and core does not import the SDK.
 
-## Core changes: none
+## What is not built yet
 
-`FunduqSide` calls only `attach_provider`, `register_agents`, `delete_agent`,
-`report_event`, `finish_run`, `thread_messages` and `detach_provider`. Core
-does not import the SDK today and will not after this.
-
-## Where it lives
-
-`funduq_provider_sdk.protocol`, both halves, not a new distribution: the
-package already owns `DeliveredRun`, the ABC and the field sets; the
-funduq-side half imports nothing from core, only the duck-typed shapes core
-already reads; and revisions 5–7 landing in one day is evidence that
-versioning another distribution is a real cost. The name being
-provider-flavoured on both halves is cosmetic.
-
-`FunduqLink` stays — it is the right surface for *provider authors*, who
-should never meet a frame — and stops being what *transport authors*
-subclass. A transport instantiates `ProviderSide` and hands it two callbacks.
-
-Two consequences for the package's neighbours, named rather than tidied away.
-`pydantic` arrives today only through `ag-ui-protocol`; once the protocol
-surface is models it is a direct dependency and belongs in the list. And
-`Refusal` next door stays a frozen dataclass — core duck-types its `.reason`,
-so changing it carries a compatibility bill for no gain here, and the
-inconsistency is real. `AgentHandle.as_registration()`, which hand-writes a
-dict today, is the kind of mapping a `Register` model removes.
-
-## Order of work
-
-1. Frames, `FunduqSide`, `ProviderSide`, and the loopback. Behaviour identical
-   to today, so it is a refactor with a harness rather than a feature.
-2. This page becomes a tour of the shipped code; `writing-a-transport.md`
-   likewise. `test_core_is_network_free`'s guard extends over `protocol/`, so
-   the sans-io claim is enforced rather than asserted.
-3. The LLM link, whose shape is a stream of chunks rather than one answer and
-   so needs its own event family.
-4. Resume ([#214](https://github.com/hukaichun/funduq/issues/214)) — last, and
-   this design exists partly to make it reachable. The machines are
-   instantiated **per session, not per connection**: a drop is
-   `connection_lost()`, a reconnect installs a new `send_frame`, and per-run
-   sequence and delivery watermark survive both. That state cannot live in a
-   `FunduqLink` instance, because that instance is what is thrown away on
-   every blip — which is why #214 is not a grace-window keyword argument.
-
-   The split: the machine owns resume mechanics; core owns the verdict (how
-   long before `provider_left_holding_it`, and whether a resumed run still
-   counts `abandoned`). `ProviderRuntime._report_output` currently drops
-   events emitted while no link is attached, so resume is unreachable until
-   the runtime buffers — more reason it follows the protocol work rather than
-   leading it.
+- **The LLM link.** `FunduqLLMLink`'s shape is a stream of chunks rather than
+  one answer, so it needs its own event family.
+- **Resume** ([#214](https://github.com/hukaichun/funduq/issues/214)). The
+  machines are already instantiated per session rather than per connection,
+  which is what resume needs: a drop is `connection_lost()`, a reconnect
+  installs a new send callback, and per-run sequence and delivery watermark
+  can survive both. That state could never have lived in a `FunduqLink`
+  instance, because that instance is what is thrown away on every blip — which
+  is why #214 is not a grace-window keyword argument. The machine would own
+  the resume mechanics; core would own the verdict. Note that
+  `ProviderRuntime._report_output` still drops events emitted while no link is
+  attached, so the runtime has to buffer before any of this is reachable.

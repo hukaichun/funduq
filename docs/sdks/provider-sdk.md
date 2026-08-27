@@ -36,11 +36,12 @@ in-process transport (in-process is a transport, not a special case);
 each agent's `run_stream`, and reports events back through whatever link
 it is on.
 
-A design exists for taking the link's *state machine* out of prose and into
-this package, after which a transport would mount that machine rather than
-subclass this port, and `FunduqLink` would remain the surface for provider
-authors only — see [the link protocol
-machine](../link-protocol-machine.md). None of it is built.
+`funduq_provider_sdk.protocol` carries the link's *state machine* — both
+halves, sans-io — so a transport mounts `ProviderSide` rather than
+subclassing this port and hand-writing the bridge from frames to answers.
+`FunduqLink` is unchanged and remains the right surface for provider authors,
+who should never meet a frame. See [the link protocol
+machine](../link-protocol-machine.md).
 
 ## The envelopes
 

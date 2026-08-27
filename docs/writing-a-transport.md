@@ -9,14 +9,15 @@ Everything a transport must produce or validate is pinned in
 [`contract-vectors.json`](contract-vectors.json), so you can implement
 this in any language without reading funduq's source.
 
-!!! note "The orderings on this page are proposed for replacement"
+!!! note "The orderings on this page also ship as code"
 
     Everything below that is a *shape* is pinned by the vectors; everything
     that is an *ordering* — the handshake sequence, the three-valued answer,
-    what a dropped link ends — is only pinned by this prose, and each
-    implementation re-derives it. [The link protocol
-    machine](link-protocol-machine.md) is the design for shipping those as
-    code instead. Nothing in it is built; this page is still the contract.
+    what a dropped link ends — used to be pinned only by this prose, and each
+    implementation re-derived it. [The link protocol
+    machine](link-protocol-machine.md) is those orderings as two sans-io state
+    machines you can mount instead. This page still explains *why* each rule
+    exists, and it is what an implementation in another language reads.
 
 ## The opening handshake, in order
 

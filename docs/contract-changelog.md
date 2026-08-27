@@ -13,7 +13,8 @@ courtesy someone remembers.
 
 **The surface** is what an outside implementation would have to change its
 own code to keep up with: the vectors themselves, `CoreSettings` fields and
-whether each is required, the provider link's verbs, the A2A protocol
+whether each is required, the provider link's verbs, the link protocol's
+frames and both machines' verbs, the A2A protocol
 version and transport bindings, whether each package ships its PEP 561
 marker, and every public name `funduq_contract` exports with the shape it
 exports it as. Prose and internals are not in it — see `funduq/tests/contract_surface.py`, which
@@ -24,6 +25,60 @@ record from the beginning rather than one begun after the first person was
 hurt. Revisions 1–5 predate any release. From `funduq-contract` 0.0.1
 onwards a stranger can install a version and be wrong about it, so the
 entries below say what to change and not only what moved.
+
+---
+
+## Revision 8 — 2026-08-27
+
+**The link's state machine ships as code**, in `funduq_provider_sdk.protocol`.
+Nothing already on the wire changed shape; what is new is that the orderings
+around it are no longer only prose.
+
+- **A published frame vocabulary.** Four classes — handshake (`Connect`,
+  `ConnectOk`, `ConnectErr`), request carrying an `id` (`Offer`, `Query`,
+  `Register`, `Delete`), reply carrying the request's `id` (`Ok`, `Err`), and
+  notify carrying none (`Report`, `Finish`, `Cancel`). Every frame is a
+  pydantic model with camelCase aliases, so the mapping is written once rather
+  than once per transport, and `Offer.run` nests the delivered-run envelope
+  unchanged.
+
+- **`Connect` carries `maxConcurrentRuns`.** It had nowhere to travel before:
+  core needs the figure to schedule against, in-process read it off the
+  runtime, and the vocabulary had no field for it. Declared at the open rather
+  than with a registration, because it is a property of the party on the other
+  end and not of any agent it publishes.
+
+- **Two sans-io machines**, `FunduqSide` and `ProviderSide`: frames in, frames
+  and events out, no I/O and no clock — time enters as `now` and leaves as
+  `next_deadline()`. What each one refuses is now a transition rather than a
+  paragraph: a first frame that is not `Connect`, a second `Connect` on an
+  open link, a second answer to one offer, an answer to an offer never made.
+
+- **The dump rule, stated once because it is two rules.** A frame is dumped
+  `by_alias=True` **without** `exclude_none`, and a typed AG-UI event is
+  dumped with it. Both halves are load-bearing and they pull opposite ways:
+  `RunAgentInput` has required fields that are legitimately `null` — `state`,
+  `forwardedProps` — so stripping nulls from a frame produces a `runInput` the
+  far side cannot rebuild, and a perfectly good run comes back as a permanent
+  refusal; while leaving them in an event injects `timestamp: null` and
+  `rawEvent: null` into a caller's stream. They lived in different paragraphs
+  of `writing-a-transport.md` and never met until one function had to do both.
+
+- **An offer is legal before a registration has been answered**, on both
+  sides. Neither machine holds a registration state, which is not an
+  allowance but an absence: core's roster goes live and nudges the broker
+  before `register_agents` does its write and commit, which on Postgres is a
+  network round trip.
+
+*For an implementation in any other language*: nothing you already send or
+parse has changed, and no vector moved. The frames above are new surface you
+may adopt or ignore — the machines are a Python convenience, and the wire they
+speak is now written down. If you do adopt them, the two dump rules are the
+part to copy exactly.
+
+*For a Python transport*: `FunduqLink` is unchanged and still supported. It
+remains the right surface for provider authors; a transport can now mount
+`ProviderSide` instead of subclassing it.
 
 ---
 

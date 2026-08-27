@@ -404,7 +404,7 @@ wheels = [
 
 [[package]]
 name = "funduq"
-version = "0.0.3"
+version = "0.0.4"
 source = { editable = "." }
 dependencies = [
     { name = "a2a-sdk" },
@@ -456,7 +456,7 @@ dev = [
 
 [[package]]
 name = "funduq-contract"
-version = "0.0.3"
+version = "0.0.5"
 source = { editable = "../funduq-contract" }
 dependencies = [
     { name = "cryptography" },
@@ -474,12 +474,13 @@ dev = [{ name = "pytest", specifier = ">=8.0" }]
 
 [[package]]
 name = "funduq-provider-sdk"
-version = "0.0.1"
+version = "0.0.3"
 source = { editable = "../funduq-provider-sdk" }
 dependencies = [
     { name = "ag-ui-protocol" },
     { name = "cryptography" },
     { name = "funduq-contract" },
+    { name = "pydantic" },
     { name = "pyjwt", extra = ["crypto"] },
 ]
 
@@ -494,6 +495,7 @@ requires-dist = [
     { name = "cryptography", specifier = ">=42.0" },
     { name = "funduq-contract", editable = "../funduq-contract" },
     { name = "openai", marker = "extra == 'llm'", specifier = ">=1.50" },
+    { name = "pydantic", specifier = ">=2.7" },
     { name = "pyjwt", extras = ["crypto"], specifier = ">=2.9" },
 ]
 provides-extras = ["llm"]
