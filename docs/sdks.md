@@ -32,7 +32,7 @@ Because the frame a transport carries is exactly
 payload is a pure function to bytes — the wire itself can be exercised
 with no socket anywhere: serialize each crossing to JSON bytes, rebuild
 it on the far side from the published shape, and run the whole loop
-in-process. `funduq/tests/test_wire_loopback.py` does exactly that, as a
+in-process. `funduq/tests/integration/test_wire_loopback.py` does exactly that, as a
 kept proof rather than a claim: a run travels from a standard AG-UI call
 through the connect handshake, the byte-framed delivery, and byte-framed
 events back; a KYOK completion crosses the same way. If a frame shape
