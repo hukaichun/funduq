@@ -60,9 +60,11 @@ class FunduqLink(ABC):
         the agent's startup time.
 
         That matters because of what funduq does with it: the next utterance
-        of the *same conversation* is held until this answer lands, which is
-        how a thread's delivery order survives a transport that guarantees
-        none. Nothing else waits — other conversations, other agents and
+        of the *same conversation* is held until this run is **claimed**, which
+        is how a thread's delivery order survives a transport that guarantees
+        none. A decline answers promptly and holds the conversation anyway —
+        the run goes back to the head of its thread's queue — so answering
+        fast is not the same as getting out of the way. Nothing else waits — other conversations, other agents and
         other providers hand over meanwhile.
         """
         pass

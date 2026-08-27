@@ -37,7 +37,8 @@ shared rather than restated.
   `ProviderLlmSide`. Both kinds of work are answered with a *stream* — a
   run's answer is its events and then its finish — so that is not what
   separates them. Two things do. **A run is admitted first**: an offer is
-  answered three ways before any output exists, while a completion is assumed
+  answered three ways before any output exists and the next utterance of that
+  conversation waits until the run is claimed, while a completion is assumed
   taken and can only fail afterwards, so this half has no three-valued ack and
   no delivery deadline. And **a run outlives any one offer of it**, which is
   why its output is addressed by `runId` while a completion's chunks are

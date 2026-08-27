@@ -196,8 +196,9 @@ answer is its events and then its finish — so that is not the difference. Two
 things are:
 
 **A run is admitted first.** An offer is answered three ways before any output
-exists, and funduq holds the next utterance of that conversation until the
-answer lands. A completion has no admission step: it is assumed taken and can
+exists, and funduq holds the next utterance of that conversation until the run
+is *claimed* — a decline answers promptly and holds it anyway, since the run
+goes back to the head of its thread's queue. A completion has no admission step: it is assumed taken and can
 only fail afterwards. So `FunduqLlmSide` and `ProviderLlmSide` have no
 three-valued ack, and no delivery deadline to go with one. `next_deadline()`
 is always `None`, deliberately: the clock that used to sit there was removed

@@ -8,8 +8,8 @@ Both kinds of work are answered with a **stream** — a run's answer is its
 events and then its finish. Two things differ, and neither is that:
 
 **A run is admitted first.** An offer is answered three ways before any output
-exists, and funduq holds the next utterance of that conversation until the
-answer lands. A completion has no admission step at all: it is assumed taken,
+exists, and funduq holds the next utterance of that conversation until the run
+is claimed. A completion has no admission step at all: it is assumed taken,
 and can only fail afterwards. So this half has no three-valued ack, and no
 delivery deadline to go with one.
 

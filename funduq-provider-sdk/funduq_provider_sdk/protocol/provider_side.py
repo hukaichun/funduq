@@ -67,10 +67,11 @@ class ProviderSide(ProviderLinkMachine):
         The answer is a receipt and must come from the provider's own state —
         whether the run arrived, whether there is room, whether the input
         parses are all known the moment it lands. funduq holds the next
-        utterance of the same conversation until this answer returns, which is
+        utterance of the same conversation until this run is claimed, which is
         how a thread's delivery order survives a transport that guarantees
         none, so a link that waits for the agent to start turns a round trip
-        into the agent's startup time."""
+        into the agent's startup time. A decline does not release the
+        conversation — the run returns to the head of its thread's queue."""
         if offer_id not in self._offers:
             raise RuntimeError(f"offer {offer_id} is not outstanding")
         self._offers.discard(offer_id)
