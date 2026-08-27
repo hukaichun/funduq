@@ -202,11 +202,20 @@ it buys:
   dispatch. This is the one thing that reaches the completeness gap; the
   presenter check does not, because a branching party does not lie about
   who it is.
-- **Federation needs no extra design.** A chain crossing several funduqs
-  carries each funduq's own hops; consumers pin the funduqs they trust, the
-  same act as pinning one. (This is the only mention of federation in these
-  docs, and it sits in an unimplemented section — one funduq handing work
-  to another has no chapter yet.)
+- **Which funduq signs it decides what it is worth.** Where both parties are
+  providers on **one** funduq, every edge passes through a party to neither of
+  them and the argument in
+  [Responsibility chains](responsibility-chains.md#why-a-witness) holds as
+  written — including between parties who know nothing about each other, since
+  a provider is a key and there is no account to be in. Where each side runs
+  **its own** funduq, the hop covering B's onward dispatch is signed by a key B
+  operates: it is B attesting to B, and a chain that omits it still verifies
+  for anyone pinning B's funduq, because that funduq is a legitimate signer
+  that simply did not sign. This page used to call pinning several funduqs
+  "the same act as pinning one". It is not — in one arrangement the signer is
+  a witness, in the other it is the party — and that difference is the whole
+  reason this hop exists. One funduq handing work to another has no chapter
+  yet; this is the first question it owes an answer to.
 
 Deliberately *not* carried on that hop: the run id. Anything riding inside
 a chain is defeated by not attaching the chain at all, so it buys nothing
