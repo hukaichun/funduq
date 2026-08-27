@@ -22,7 +22,7 @@ from funduq.models import AgentRef
 from funduq_provider_sdk import DeliveredRun, ProviderIdentity, ProviderRuntime, Refusal
 from funduq_provider_sdk.protocol import (
     Answered,
-    Asking,
+    AskingThreadMessages,
     Cancelled,
     ConnectRequested,
     Deleting,
@@ -139,7 +139,7 @@ class Loopback:
         return await asyncio.wait_for(reply, 2)
 
     async def ask_thread_messages(self, thread_id: str) -> Any:
-        request_id, turn = self.provider_side.ask("thread_messages", {"thread_id": thread_id})
+        request_id, turn = self.provider_side.ask_thread_messages(thread_id)
         reply: asyncio.Future = asyncio.get_running_loop().create_future()
         self.replies[request_id] = reply
         self._send(turn, self.to_funduq)
@@ -185,13 +185,15 @@ class Loopback:
             )
             self._send(self.funduq_side.accept_connect(answer), self.to_provider)
         elif isinstance(event, Registering):
-            registered = await self.funduq.register_agents(self, event.agents)
+            registered = await self.funduq.register_agents(
+                self, [a.model_dump() for a in event.agents]
+            )
             self._send(self.funduq_side.reply_ok(event.id, registered), self.to_provider)
         elif isinstance(event, Deleting):
             await self.funduq.delete_agent(self, event.name)
             self._send(self.funduq_side.reply_ok(event.id), self.to_provider)
-        elif isinstance(event, Asking):
-            messages = await self.funduq.get_thread_messages(event.args["thread_id"])
+        elif isinstance(event, AskingThreadMessages):
+            messages = await self.funduq.get_thread_messages(event.thread_id)
             self._send(self.funduq_side.reply_ok(event.id, messages), self.to_provider)
         elif isinstance(event, Answered):
             future = self.answers.pop(event.id, None)

@@ -1,20 +1,14 @@
 from __future__ import annotations
 
 from enum import Enum
-from typing import Any
 
 from funduq_provider_sdk.protocol import events as ev
 from funduq_provider_sdk.protocol import frames as fr
+from funduq_provider_sdk.protocol.base import FunduqLinkMachine, Link
 from funduq_provider_sdk.protocol.turn import EMPTY, Turn
 from funduq_provider_sdk.provider import DeliveredRun, Refusal
 
-
-class Link(Enum):
-
-    AWAITING_CONNECT = "awaiting_connect"
-    VERIFYING = "verifying"
-    OPEN = "open"
-    CLOSED = "closed"
+__all__ = ["FunduqSide", "Link", "OfferState"]
 
 
 class OfferState(Enum):
@@ -29,12 +23,13 @@ class OfferState(Enum):
 _SETTLED = (OfferState.CLAIMED, OfferState.DECLINED, OfferState.REFUSED)
 
 
-class FunduqSide:
-    """funduq's half of the link, as a machine: frames in, frames and events out.
+class FunduqSide(FunduqLinkMachine):
+    """funduq's half of an agent link, as a machine: frames in, frames and
+    events out.
 
     It performs no I/O and reads no clock — time enters as `now` and leaves as
     `next_deadline()`. That is what sans-io buys here, and it is what makes
-    every ordering below testable as an ordered script instead of a sleep.
+    every ordering testable as an ordered script instead of a sleep.
 
     A driver mounts this between its connection and a `Funduq` object: it
     presents `CONNECTED_PROVIDER_ATTRS` upward and turns each event into the
@@ -53,53 +48,14 @@ class FunduqSide:
         rather than defaulted here: one number, one definition, and a machine
         that disagreed with the broker it serves would hand a run back while
         the broker was still waiting for it."""
-        self.state = Link.AWAITING_CONNECT
-        self.public_key: str | None = None
-        self.max_concurrent_runs: int | None = None
+        super().__init__()
         self._deliver_timeout = deliver_timeout
         self._offers: dict[str, OfferState] = {}
         self._deadlines: dict[str, float] = {}
-        self._queries: set[str] = set()
-        self._next_id = 0
-        self._connecting: fr.Connect | None = None
 
-    # -- transport -> machine ------------------------------------------
-
-    def feed(self, frame: fr.Frame, *, now: float) -> Turn:
-        """Read one frame and say what it did."""
-        if self.state is Link.CLOSED:
-            return EMPTY
-        if self.state is Link.AWAITING_CONNECT:
-            if isinstance(frame, fr.Connect):
-                self.state = Link.VERIFYING
-                self._connecting = frame
-                return Turn(
-                    [],
-                    [
-                        ev.ConnectRequested(
-                            public_key=frame.public_key,
-                            ticket=frame.ticket,
-                            nonce=frame.nonce,
-                            proof=frame.proof,
-                            max_concurrent_runs=frame.max_concurrent_runs,
-                        )
-                    ],
-                )
-            return self._fail("the first frame on a link must be connect")
-        if self.state is Link.VERIFYING:
-            return self._fail("spoke while its connect was still being verified")
-        return self._opened(frame)
-
-    def _opened(self, frame: fr.Frame) -> Turn:
-        if isinstance(frame, fr.Connect):
-            return self._fail("tried to connect on a link that is already open")
+    def _work(self, frame: fr.Frame, *, now: float) -> Turn:
         if isinstance(frame, fr.Register):
             return Turn([], [ev.Registering(id=frame.id, agents=frame.agents)])
-        if isinstance(frame, fr.Delete):
-            return Turn([], [ev.Deleting(id=frame.id, name=frame.name)])
-        if isinstance(frame, fr.Query):
-            self._queries.add(frame.id)
-            return Turn([], [ev.Asking(id=frame.id, method=frame.method, args=frame.args)])
         if isinstance(frame, fr.Report):
             # Deliberately not checked against `_offers`. Events are addressed
             # by run, and whether this key may speak for that run is core's
@@ -133,17 +89,10 @@ class FunduqSide:
             self._deadlines.pop(frame.id, None)
         return Turn([], [ev.Answered(id=frame.id, verdict=verdict, late=late)])
 
-    def connection_lost(self) -> Turn:
-        """The connection ended. Says the fact and draws no conclusion: what a
-        claimed run becomes is core's verdict, not this machine's."""
-        if self.state is Link.CLOSED:
-            return EMPTY
-        self.state = Link.CLOSED
-        unanswered = sorted(i for i, s in self._offers.items() if s is OfferState.OFFERED)
-        dropped = sorted(self._queries)
+    def _abandoned(self) -> list[str]:
+        abandoned = sorted(i for i, s in self._offers.items() if s is OfferState.OFFERED)
         self._deadlines.clear()
-        self._queries.clear()
-        return Turn([], [ev.Gone(unanswered_offers=unanswered, dropped_queries=dropped)])
+        return abandoned
 
     def timeout(self, now: float) -> Turn:
         """Fires every armed deadline `now` has passed.
@@ -161,31 +110,6 @@ class FunduqSide:
 
     def next_deadline(self) -> float | None:
         return min(self._deadlines.values(), default=None)
-
-    # -- driver and core -> machine ------------------------------------
-
-    def accept_connect(self, answer: str | None) -> Turn:
-        """Let the link in, relaying funduq's answering signature.
-
-        The proof is not verified here: the ticket store is core's, and a
-        ticket is spent only once the key it names matches, so that a stranger
-        who merely saw one cannot burn it. The driver takes `ConnectRequested`
-        to `attach_provider` and brings back what it answered."""
-        if self.state is not Link.VERIFYING:
-            raise RuntimeError("nothing is waiting to be let in")
-        if self._connecting is not None:
-            self.public_key = self._connecting.public_key
-            self.max_concurrent_runs = self._connecting.max_concurrent_runs
-        self._connecting = None
-        self.state = Link.OPEN
-        return Turn([fr.ConnectOk(answer=answer)], [])
-
-    def refuse_connect(self, reason: str) -> Turn:
-        if self.state is not Link.VERIFYING:
-            raise RuntimeError("nothing is waiting to be let in")
-        self._connecting = None
-        self.state = Link.CLOSED
-        return Turn([fr.ConnectErr(reason=reason)], [])
 
     def offer(self, run: DeliveredRun, *, now: float) -> tuple[str, Turn]:
         """Hand `run` down and arm its deadline. Returns the offer's id, which
@@ -208,24 +132,6 @@ class FunduqSide:
         if self.state is not Link.OPEN:
             return EMPTY
         return Turn([fr.Cancel(run_id=run_id)], [])
-
-    def reply_ok(self, id: str, payload: Any = None) -> Turn:
-        self._queries.discard(id)
-        return Turn([fr.Ok(id=id, payload=payload)], [])
-
-    def reply_err(self, id: str, reason: str) -> Turn:
-        self._queries.discard(id)
-        return Turn([fr.Err(id=id, reason=reason)], [])
-
-    # -- internals -----------------------------------------------------
-
-    def _claim_id(self) -> str:
-        self._next_id += 1
-        return str(self._next_id)
-
-    def _fail(self, reason: str) -> Turn:
-        self.state = Link.CLOSED
-        return Turn([], [ev.LinkFailed(reason=reason)])
 
 
 def _verdict_of(frame: fr.Ok) -> bool | Refusal | None:

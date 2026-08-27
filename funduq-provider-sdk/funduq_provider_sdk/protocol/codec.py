@@ -28,16 +28,20 @@ def encode(frame: Frame) -> dict[str, Any]:
     return frame.model_dump(mode="json", by_alias=True)
 
 
-def decode(payload: Any) -> Frame:
+def decode(payload: Any, *, frames: TypeAdapter[Any] | None = None) -> Frame:
     """The frame `payload` is, or a `Malformed` carrying why it is not one.
 
     Decoding never raises and never answers. A codec that replied on its own
     would be making a protocol decision from outside the machine — exactly the
     split this package closes — so a failure becomes an ordinary input and the
     transition table decides.
+
+    `frames` overrides the vocabulary. An agent link and an LLM link are
+    different connections to different rosters, so each has its own set —
+    two codecs is the shape of the thing, not a workaround for one.
     """
     try:
-        return _FRAMES.validate_python(payload)
+        return (frames or _FRAMES).validate_python(payload)
     except ValidationError as exc:
         return Malformed(id=_id_of(payload), reason=str(exc))
 

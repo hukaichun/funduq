@@ -99,29 +99,38 @@ def _protocol_surface() -> list[str]:
     already records making once: a surface an outside implementation depends
     on, sitting outside the fingerprint, so a break ships with a changelog
     entry saying nothing changed.
+
+    Both link kinds, because both are published. `dir()` deduplicates the
+    frames the LLM module re-exports from the agent one, so a frame shared by
+    the two vocabularies is counted once and a rename to it still moves this.
     """
     from funduq_provider_sdk.protocol import frames as fr
     from funduq_provider_sdk.protocol import events as ev
     from funduq_provider_sdk.protocol.funduq_side import FunduqSide
     from funduq_provider_sdk.protocol.provider_side import ProviderSide
+    from funduq_provider_sdk.llm import protocol as llm
 
     out: list[str] = []
-    for name in sorted(dir(fr)):
-        member = getattr(fr, name)
-        if not (isinstance(member, type) and issubclass(member, fr.Frame)):
-            continue
-        if member is fr.Frame:
-            continue
-        fields = sorted(
-            field.alias or field_name for field_name, field in member.model_fields.items()
-        )
-        out.append(f"frame:{name}:{','.join(fields)}")
-    for name in sorted(dir(ev)):
-        member = getattr(ev, name)
-        if not (isinstance(member, type) and issubclass(member, ev.Event)) or member is ev.Event:
-            continue
-        out.append(f"event:{name}:{','.join(sorted(member.model_fields))}")
-    for machine in (FunduqSide, ProviderSide):
+    for module in (fr, llm):
+        for name in sorted(dir(module)):
+            member = getattr(module, name)
+            if not (isinstance(member, type) and issubclass(member, fr.Frame)):
+                continue
+            if member is fr.Frame:
+                continue
+            fields = sorted(
+                field.alias or field_name for field_name, field in member.model_fields.items()
+            )
+            out.append(f"frame:{name}:{','.join(fields)}")
+    for module in (ev, llm):
+        for name in sorted(dir(module)):
+            member = getattr(module, name)
+            if not (isinstance(member, type) and issubclass(member, ev.Event)):
+                continue
+            if member is ev.Event:
+                continue
+            out.append(f"event:{name}:{','.join(sorted(member.model_fields))}")
+    for machine in (FunduqSide, ProviderSide, llm.FunduqLlmSide, llm.ProviderLlmSide):
         verbs = sorted(
             attr
             for attr, member in inspect.getmembers(machine)

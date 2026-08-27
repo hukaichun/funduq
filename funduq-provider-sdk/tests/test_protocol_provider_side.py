@@ -228,9 +228,9 @@ def test_a_query_is_correlated_and_its_answer_comes_back_by_id(
 ) -> None:
     machine = _opened(provider, funduq)
 
-    query_id, turn = machine.ask("thread_messages", {"thread_id": "t-1"})
+    query_id, turn = machine.ask_thread_messages("t-1")
 
-    assert turn.frames[0].method == "thread_messages"
+    assert turn.frames[0].thread_id == "t-1"
     assert machine.feed(Ok(id=query_id, payload=[])).events == [
         Replied(id=query_id, payload=[])
     ]
@@ -252,7 +252,7 @@ def test_a_lost_connection_names_what_will_never_be_answered(
 ) -> None:
     machine = _opened(provider, funduq)
     machine.feed(Offer(id="1", run=_run()))
-    query_id, _ = machine.ask("thread_messages", {"thread_id": "t-1"})
+    query_id, _ = machine.ask_thread_messages("t-1")
 
     turn = machine.connection_lost()
 

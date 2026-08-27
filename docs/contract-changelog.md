@@ -14,7 +14,7 @@ courtesy someone remembers.
 **The surface** is what an outside implementation would have to change its
 own code to keep up with: the vectors themselves, `CoreSettings` fields and
 whether each is required, the provider link's verbs, the link protocol's
-frames and both machines' verbs, the A2A protocol
+frames and every machine's verbs on both link kinds, the A2A protocol
 version and transport bindings, whether each package ships its PEP 561
 marker, and every public name `funduq_contract` exports with the shape it
 exports it as. Prose and internals are not in it — see `funduq/tests/contract_surface.py`, which
@@ -25,6 +25,67 @@ record from the beginning rather than one begun after the first person was
 hurt. Revisions 1–5 predate any release. From `funduq-contract` 0.0.1
 onwards a stranger can install a version and be wrong about it, so the
 entries below say what to change and not only what moved.
+
+---
+
+## Revision 9 — 2026-08-27
+
+**The completion half gets the same treatment**, and the shared opening is
+shared rather than restated.
+
+- **`funduq_provider_sdk.llm.protocol`** carries `FunduqLlmSide` and
+  `ProviderLlmSide`. Both kinds of work are answered with a *stream* — a
+  run's answer is its events and then its finish — so that is not what
+  separates them. Two things do. **A run is admitted first**: an offer is
+  answered three ways before any output exists, while a completion is assumed
+  taken and can only fail afterwards, so this half has no three-valued ack and
+  no delivery deadline. And **a run outlives any one offer of it**, which is
+  why its output is addressed by `runId` while a completion's chunks are
+  addressed by the request's own id. A completion is open until exactly one of
+  `completion.end`, `completion.failed` or a lost link.
+
+- **`abandon` is new, and it closes a hole that had no name.** When a KYOK
+  caller stops consuming, an in-process handler hears `GeneratorExit`; over a
+  wire nothing reached the provider at all, so it went on generating into a
+  consumer that had gone. A driver sends `abandon` when its stream closes.
+  Core needs no new verb for it — `ConnectedLLMProvider` has none to add.
+
+- **Two frames revision 8 shipped as loose dicts are now typed**, and both
+  are breaks against revision 8. They were the same mistake the machines
+  exist to remove, made one level down: a shape whose field names were
+  already published — `REGISTRATION_FIELDS`, `LINK_QUERY_METHODS` — with
+  nothing checking them.
+
+    - `register.agents` is a list of **`Registration`** (`name`,
+      `description`, `agentCardExtra`, `metadata`) with `extra="forbid"`.
+      A misspelt key used to travel intact and be dropped in silence by core,
+      whose reader cannot tell a missing field from a typo
+      (`agent.get("description", "")`). `REGISTRATION_FIELDS` is now read off
+      the model rather than typed out beside it. *`AgentHandle.as_registration()`
+      still returns a dict and still works — it is validated on the way into
+      the frame.*
+    - `query` is gone; the one query it carried is its own frame,
+      **`query.thread_messages`** with `threadId` and `limit`. A `method`
+      string and a bag of `args` meant a transport writing `args["thread_id"]`
+      by hand, which is how a field name goes wrong silently. A second query
+      kind is a second frame, and adding one moves this fingerprint — which is
+      the right price.
+
+- **Registration is per link kind, not shared.** `register.llm` carries
+  `names` and one `metadata` document; the agent link's `register` carries
+  agent records. They looked like one frame until the LLM roster's metadata
+  had nowhere to travel. *If you built against revision 8's `register` for an
+  LLM link, send `register.llm` instead* — nothing else about it moved.
+
+- **The handshake is now stated once** for both link kinds, in
+  `FunduqLinkMachine` and `ProviderLinkMachine`. Nothing about it changed;
+  what changed is that a fix to it can no longer land in one copy and not the
+  other. Deleting and querying stay shared too, because those shapes really
+  are the same.
+
+*For an implementation in any other language*: the agent link is untouched.
+The LLM link's frames above are new surface, and `register.llm` is the one to
+notice if you had assumed the two links published their rosters the same way.
 
 ---
 
