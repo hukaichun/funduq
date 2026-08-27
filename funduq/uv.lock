@@ -456,7 +456,7 @@ dev = [
 
 [[package]]
 name = "funduq-contract"
-version = "0.0.6"
+version = "0.0.7"
 source = { editable = "../funduq-contract" }
 dependencies = [
     { name = "cryptography" },
@@ -474,7 +474,7 @@ dev = [{ name = "pytest", specifier = ">=8.0" }]
 
 [[package]]
 name = "funduq-provider-sdk"
-version = "0.0.4"
+version = "0.0.5"
 source = { editable = "../funduq-provider-sdk" }
 dependencies = [
     { name = "ag-ui-protocol" },
