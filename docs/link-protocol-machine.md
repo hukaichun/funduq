@@ -267,8 +267,8 @@ entry point.
 
 ## Conformance
 
-`funduq/tests/test_protocol_loopback.py` and
-`test_protocol_llm_loopback.py` wire each pair of machines to each other
+`funduq/tests/integration/test_protocol_loopback.py` and
+`integration/test_protocol_llm_loopback.py` wire each pair of machines to each other
 **through the codec**, with a real `Funduq` at one end and a real
 `ProviderRuntime` at the other. No socket, no sleep. It lives in core's suite
 because the SDK may not import core — and because a machine only downstream

@@ -13,7 +13,13 @@ from funduq.identity import (
     verify_signature,
 )
 
-VECTORS = json.loads((Path(__file__).parent.parent.parent / "docs" / "contract-vectors.json").read_text())
+# `parents[3]`, not a chain of `.parent`: this file sits one level deeper than
+# the rest of the suite, and a chain of attributes is the kind of thing that
+# silently walks to the wrong place when a file moves. The count is the thing
+# to read.
+VECTORS = json.loads(
+    (Path(__file__).resolve().parents[3] / "docs" / "contract-vectors.json").read_text()
+)
 
 BUILDERS = {
     "provider-connect": lambda i: provider_connect_payload(
