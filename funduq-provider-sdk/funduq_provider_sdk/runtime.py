@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from collections import deque
 from typing import TYPE_CHECKING, Any
 
 from funduq_provider_sdk.identity import ProviderIdentity
@@ -24,6 +25,7 @@ class ProviderRuntime:
         *,
         max_queued_runs: int = 1,
         max_concurrent_runs: int | None = None,
+        max_buffered_events: int = 1024,
     ) -> None:
         self.identity = identity
         self.provider = provider
@@ -38,6 +40,22 @@ class ProviderRuntime:
             maxsize=max_queued_runs if max_concurrent_runs is not None else 0
         )
         self._output: asyncio.Queue = asyncio.Queue()
+        # What has been produced for each run, whether or not a link was there
+        # to take it. **This used to be a `continue`**: an event produced while
+        # no link was attached was taken off the queue and dropped, so a
+        # provider that reconnected mid-run resumed a stream with a hole in
+        # it — which is not resuming, it is delivering something broken.
+        #
+        # Bounded, because an unbounded buffer is a way to run out of memory
+        # rather than a way to be correct. It only has to cover the window in
+        # which a resume is possible at all, which is funduq's own provider
+        # grace; a gap wider than the buffer abandons the run loudly instead
+        # of resuming it with a hole (see `resume`).
+        self._outbox: dict[str, deque[tuple[int, Any]]] = {}
+        self._seq: dict[str, int] = {}
+        self._sent_upto: dict[str, int] = {}
+        self._stalled: set[str] = set()
+        self.max_buffered_events = max_buffered_events
         self.max_concurrent_runs = max_concurrent_runs
         self._in_flight: dict[str, asyncio.Task] = {}
         self._tasks: set[asyncio.Task] = set()
@@ -133,15 +151,106 @@ class ProviderRuntime:
     async def _report_output(self) -> None:
         while True:
             run_id, event = await self._output.get()
+            seq = self._seq.get(run_id, 0) + 1
+            self._seq[run_id] = seq
+            outbox = self._outbox.setdefault(run_id, deque(maxlen=self.max_buffered_events))
+            outbox.append((seq, event))
+            await self._flush(run_id)
+
+    async def _flush(self, run_id: str) -> None:
+        """Hand over everything this run has produced and not yet handed over.
+
+        A failure here leaves the buffer alone on purpose: the whole point of
+        holding it is that a link which broke mid-send can be picked up, and
+        dropping what it did not manage to carry would make the buffer
+        decorative.
+        """
+        link = self.link
+        if link is None:
+            return
+        outbox = self._outbox.get(run_id)
+        if not outbox:
+            return
+        for seq, event in list(outbox):
+            if seq <= self._sent_upto.get(run_id, 0):
+                continue
             try:
-                if self.link is None:
-                    continue
                 if event is _END:
-                    await self.link.finish_run(run_id)
+                    await link.finish_run(run_id)
                 else:
-                    await self.link.report_event(run_id, event)
+                    await link.report_event(run_id, event, seq=seq)
             except Exception:
-                logger.exception("run %s: reporting failed", run_id)
+                # Once per outage, not once per event. A link that has gone
+                # away fails every buffered event in turn, and a traceback for
+                # each of them buries the one line that matters under a
+                # hundred copies of itself.
+                if run_id not in self._stalled:
+                    self._stalled.add(run_id)
+                    logger.warning(
+                        "run %s: cannot hand over from seq %s; holding %d event(s) "
+                        "until a link is back",
+                        run_id,
+                        seq,
+                        len(outbox),
+                        exc_info=True,
+                    )
+                return
+            self._sent_upto[run_id] = seq
+            self._stalled.discard(run_id)
+
+    def resuming(self) -> list[str]:
+        """The runs this provider still holds output for — what a re-opened
+        link asks funduq about."""
+        return sorted(self._outbox)
+
+    async def resume(self, watermarks: dict[str, int], unknown: list[str]) -> list[str]:
+        """Pick up where the last link left off; returns the runs that could not be.
+
+        `watermarks` is the last sequence funduq accepted per run: anything at
+        or below it is already there and is dropped, everything above it goes
+        again. `unknown` names runs funduq is no longer holding — settled while
+        this provider was away — so producing for them is wasted and their
+        buffers go.
+
+        **A gap wider than the buffer is not resumed.** If the events funduq is
+        missing have already fallen out of it, replaying what is left would
+        hand the caller a stream with a hole in the middle, which is worse than
+        the failure this is trying to avoid. Those runs are abandoned instead:
+        this provider stops producing, funduq's grace runs out, and it records
+        the `provider_left_holding_it` it actually observed.
+        """
+        for run_id in unknown:
+            self.cancel(run_id)
+            self._forget(run_id)
+        lost: list[str] = []
+        for run_id, watermark in watermarks.items():
+            outbox = self._outbox.get(run_id)
+            if outbox is None:
+                continue
+            held_from = outbox[0][0] if outbox else watermark + 1
+            if held_from > watermark + 1:
+                logger.error(
+                    "run %s: funduq has up to seq %s and this provider no longer holds "
+                    "seq %s — the buffer (max_buffered_events=%s) did not cover the "
+                    "outage, so the run is abandoned rather than resumed with a hole",
+                    run_id,
+                    watermark,
+                    watermark + 1,
+                    self.max_buffered_events,
+                )
+                lost.append(run_id)
+                self.cancel(run_id)
+                self._forget(run_id)
+                continue
+            self._sent_upto[run_id] = watermark
+            await self._flush(run_id)
+        return lost
+
+    def _forget(self, run_id: str) -> None:
+        self._stalled.discard(run_id)
+        self._outbox.pop(run_id, None)
+        self._seq.pop(run_id, None)
+        self._sent_upto.pop(run_id, None)
 
 
 _END = object()

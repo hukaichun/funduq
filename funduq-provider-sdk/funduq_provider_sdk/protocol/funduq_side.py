@@ -52,6 +52,7 @@ class FunduqSide(FunduqLinkMachine):
         self._deliver_timeout = deliver_timeout
         self._offers: dict[str, OfferState] = {}
         self._deadlines: dict[str, float] = {}
+        self.received: dict[str, int] = {}
 
     def _work(self, frame: fr.Frame, *, now: float) -> Turn:
         if isinstance(frame, fr.Register):
@@ -63,9 +64,22 @@ class FunduqSide(FunduqLinkMachine):
             # a provider claim late by producing for a run funduq had given up
             # waiting for. A machine that gated this on its own table would
             # look obviously right and would make that path unreachable.
-            return Turn([], [ev.Reported(run_id=frame.run_id, event=frame.event)])
+            if frame.seq is not None:
+                # Advanced on emit rather than on core's answer. A `False` from
+                # `report_event` means the run is unknown or held by someone
+                # else, and in both of those a watermark is moot — while an
+                # extra call per event, on the hottest path there is, would buy
+                # nothing.
+                self.received[frame.run_id] = max(
+                    frame.seq, self.received.get(frame.run_id, 0)
+                )
+            return Turn(
+                [], [ev.Reported(run_id=frame.run_id, event=frame.event, seq=frame.seq)]
+            )
         if isinstance(frame, fr.Finish):
             return Turn([], [ev.Finished(run_id=frame.run_id)])
+        if isinstance(frame, fr.Resume):
+            return Turn([], [ev.Resuming(id=frame.id, run_ids=frame.run_ids)])
         if isinstance(frame, fr.Ok):
             return self._answered(frame)
         if isinstance(frame, fr.Malformed):
@@ -125,6 +139,25 @@ class FunduqSide(FunduqLinkMachine):
         self._offers[offer_id] = OfferState.OFFERED
         self._deadlines[offer_id] = now + self._deliver_timeout
         return offer_id, Turn([fr.Offer(id=offer_id, run=run)], [])
+
+    def resumed(self, id: str, *, still_held: list[str], unknown: list[str]) -> Turn:
+        """Answer a resume: the watermark for each run still held, and the
+        names of the ones that are not.
+
+        Which runs survived is core's answer, not this machine's — the driver
+        asks it and hands the split back. What the machine contributes is the
+        only thing it is the authority on: how much of each it actually saw.
+        """
+        return Turn(
+            [
+                fr.Resumed(
+                    id=id,
+                    watermarks={run_id: self.received.get(run_id, 0) for run_id in still_held},
+                    unknown=unknown,
+                )
+            ],
+            [],
+        )
 
     def cancel(self, run_id: str) -> Turn:
         """Ask the provider to stop. A request to the agent, not a verdict on

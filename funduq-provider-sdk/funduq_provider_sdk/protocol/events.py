@@ -84,6 +84,22 @@ class Reported(Event):
 
     run_id: str
     event: Any = None
+    seq: int | None = None
+
+
+class Resuming(Event):
+    """A reconnected provider is asking what survived. The driver answers with
+    `resumed`, after asking core which of the named runs it still holds."""
+
+    id: str
+    run_ids: list[str]
+
+
+class ResumeAnswered(Event):
+
+    id: str
+    watermarks: dict[str, int] = {}
+    unknown: list[str] = []
 
 
 class Finished(Event):

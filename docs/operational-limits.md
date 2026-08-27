@@ -162,6 +162,29 @@ constructing `RunBroker` yourself and passing it to `Funduq(broker=...)`.
 That is a defect rather than a design — these are policy, the way
 `provider_quality_tolerance` is policy — and it is on the list to fix.
 
+A fourth one is not in that table because it *is* reachable, and it is the
+one a deployment is most likely to need:
+
+| | default | what it bounds |
+|---|---|---|
+| `CoreSettings.provider_grace_seconds` | 0.0 | how long a key whose link went away may still come back before the runs it holds are failed as `provider_left_holding_it` |
+
+**Zero means what funduq has always done**: the link going away settles every
+run that key was holding, at once. Set it to seconds if you serve providers
+that reach you over connections they do not control — a provider behind NAT on
+a consumer link is the party outbound dispatch exists for, and for it a
+two-second drop is weather rather than an abdication. Leave it at zero where a
+lost socket really does mean a lost provider, because then a caller learns
+sooner. Nothing about it is a judgement funduq makes for you, which is why it
+has no opinionated default.
+
+Two things a nonzero value costs, both plainly: a caller whose provider is
+genuinely gone waits that long before its run is recorded failed, and a
+provider must be running an SDK new enough to buffer and replay — an older one
+reconnects into a run funduq is still holding and reports a stream with a hole
+in it. The provider SDK refuses that case rather than hiding it (see
+`ProviderRuntime.resume`), but only for providers that use it.
+
 Unlike the identity-layer timings funduq has been shedding, these cannot
 simply be removed: they model real waiting, and detecting a provider that
 has stopped answering needs a clock. The fix is to move them out to the

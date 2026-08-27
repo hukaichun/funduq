@@ -48,6 +48,24 @@ class CoreSettings(BaseModel):
     # judgment (counters still count). Policy, so it is a setting.
     provider_quality_tolerance: int | None = 3
 
+    # How long a provider whose link went away may still come back before the
+    # runs it was holding are given up on as `provider_left_holding_it`. Zero,
+    # the default, is the behaviour funduq has always had: the link going away
+    # settles them at once.
+    #
+    # Policy, so it is a setting. A provider behind NAT on a consumer
+    # connection — the party outbound dispatch exists for — treats a two-second
+    # blip as weather, and at zero that costs its caller a run and itself an
+    # `abandoned` mark for work it was still doing (funduq#214). A deployment
+    # that serves such providers wants seconds here; one where a lost socket
+    # really does mean a lost provider wants zero, because the caller learns
+    # sooner.
+    #
+    # It is a clock over a fact funduq owns — how long since this link went
+    # away — not a deduction about how the provider is doing. That is the
+    # distinction the inter-chunk timeout failed, and why it was removed.
+    provider_grace_seconds: float = 0.0
+
 
     token_signing_secret: str
 

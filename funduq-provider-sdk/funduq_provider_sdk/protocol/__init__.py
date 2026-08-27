@@ -27,6 +27,8 @@ from funduq_provider_sdk.protocol.events import (
     Registering,
     Replied,
     Reported,
+    ResumeAnswered,
+    Resuming,
     Unanswered,
 )
 from funduq_provider_sdk.protocol.frames import (
@@ -44,6 +46,8 @@ from funduq_provider_sdk.protocol.frames import (
     ThreadMessages,
     Register,
     Report,
+    Resume,
+    Resumed,
     WireFrame,
 )
 from funduq_provider_sdk.protocol.funduq_side import FunduqSide
@@ -83,6 +87,10 @@ __all__ = [
     "Replied",
     "Report",
     "Reported",
+    "Resume",
+    "ResumeAnswered",
+    "Resumed",
+    "Resuming",
     "Turn",
     "Unanswered",
     "WireFrame",

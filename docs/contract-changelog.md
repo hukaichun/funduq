@@ -28,6 +28,58 @@ entries below say what to change and not only what moved.
 
 ---
 
+## Revision 10 — 2026-08-27
+
+**A dropped socket stops ending a run** ([#214](https://github.com/hukaichun/funduq/issues/214)).
+Three things had to move together, which is why it was never a keyword
+argument.
+
+- **`CoreSettings.provider_grace_seconds`, default `0.0`.** How long a key
+  whose link went away may still come back before the runs it holds are given
+  up on. Zero is what funduq has always done — the link going away settles
+  them at once — so **nothing changes for an existing deployment that does not
+  set it.** Core stopped welding two facts together: the roster still loses a
+  key the moment its link goes (nothing new is handed to somebody who is not
+  there), but what it is already holding is no longer given up on in the same
+  breath. `RunBroker.expire_gone_providers` is the clock, and it is a clock
+  over a fact funduq owns — how long since *this link* went away — not a
+  deduction about how the provider is doing.
+
+- **`FunduqLink.report_event` takes `seq`**, keyword-only and defaulted:
+  `async def report_event(self, run_id, event, *, seq: int | None = None)`.
+  *An existing implementation adds `*, seq: int | None = None` and ignores
+  it* — `InProcessLink` does, having no socket to lose.
+  `LINK_REPORT_METHODS["report_event"]` names it now.
+
+- **`report` carries `seq`, and two frames are new.** `resume` names the runs
+  a reconnecting provider is still holding; `resumed` answers with the last
+  `seq` funduq accepted for each of them, plus the ones it is not holding any
+  more. The provider replays from the watermark and stops producing for the
+  rest. The sequence is the *provider's* own count for that run, from 1 — not
+  funduq's, which numbers everything on a run including its own events, so the
+  two could never be the same number.
+
+- **`ProviderRuntime` buffers instead of dropping.** An event produced while
+  no link was attached used to be taken off the queue and discarded, which
+  made resume unreachable no matter what the wire carried: a reconnecting
+  provider would have resumed a stream with a hole in it.
+  `max_buffered_events` (default 1024) bounds it, and **a gap wider than the
+  buffer abandons the run rather than resuming it with a hole** — funduq's
+  grace then runs out and it records the `provider_left_holding_it` it
+  actually observed.
+
+- **Both machines can outlive their connection.** `reopen()` puts a session in
+  front of a new one, keeping what it is the authority on: how much of each
+  run funduq has actually seen. That state could never have lived in a link
+  object, because a link object is what gets thrown away on every blip.
+
+*For an implementation in any other language*: `report` gains an optional
+`seq`, and `resume`/`resumed` are new. Ignore all three and you behave exactly
+as before — a link that sends no `seq` is given a watermark of zero and simply
+never resumes.
+
+---
+
 ## Revision 9 — 2026-08-27
 
 **The completion half gets the same treatment**, and the shared opening is

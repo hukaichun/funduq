@@ -61,7 +61,7 @@ class WireLink:
     def cancel(self, run_id: str) -> None:
         self._runtime.cancel(json.loads(json.dumps(run_id)))
 
-    async def report_event(self, run_id: str, event) -> None:
+    async def report_event(self, run_id: str, event, *, seq: int | None = None) -> None:
         frame = json.dumps({"runId": run_id, "event": event}).encode()
         decoded = json.loads(frame)
         self._funduq.report_event(decoded["runId"], decoded["event"], claimed_by=self.public_key)

@@ -58,7 +58,7 @@ class QueuedLink(FunduqLink):
     def cancel(self, run_id: str) -> None:
         self.cancelled.append(run_id)
 
-    async def report_event(self, run_id: str, event) -> None:
+    async def report_event(self, run_id: str, event, *, seq: int | None = None) -> None:
         self.reported.append((run_id, event))
 
     async def finish_run(self, run_id: str) -> None:
@@ -123,7 +123,7 @@ def test_a_transport_that_declares_nothing_is_not_constructible():
         def cancel(self, run_id: str) -> None:
             pass
 
-        async def report_event(self, run_id: str, event) -> None:
+        async def report_event(self, run_id: str, event, *, seq: int | None = None) -> None:
             pass
 
         async def finish_run(self, run_id: str) -> None:
@@ -159,7 +159,7 @@ class LoopbackLink(FunduqLink):
     def cancel(self, run_id: str) -> None:
         self._runtime.cancel(run_id)
 
-    async def report_event(self, run_id: str, event) -> None:
+    async def report_event(self, run_id: str, event, *, seq: int | None = None) -> None:
         self.reported.append((run_id, event))
 
     async def finish_run(self, run_id: str) -> None:

@@ -147,6 +147,14 @@ class Report(Frame):
     kind: Literal["report"] = "report"
     run_id: str = Field(alias="runId")
     event: Any = None
+    seq: int | None = None
+    """This provider's own count of what it has sent for this run, from 1.
+
+    Not funduq's — funduq numbers everything on a run, its own events
+    included, so the two can never be the same number. It exists so a link
+    that drops mid-run can be picked up where it left off: the provider asks
+    for the watermark and replays from there. `None` from a link that does not
+    resume, which is every link that existed before this."""
 
 
 class Finish(Frame):
@@ -162,6 +170,32 @@ class Cancel(Frame):
 
     kind: Literal["cancel"] = "cancel"
     run_id: str = Field(alias="runId")
+
+
+class Resume(Frame):
+    """Ask which of these runs funduq is still holding, and how much of each it
+    already has.
+
+    Sent after a re-open, before producing anything. The provider names the
+    runs because it is the party that knows what it is still working on;
+    funduq answers with the runs it still holds, because it is the party that
+    knows which of them survived."""
+
+    kind: Literal["resume"] = "resume"
+    id: str
+    run_ids: list[str] = Field(alias="runIds")
+
+
+class Resumed(Frame):
+    """`watermarks` is the last `seq` funduq accepted per run — replay from the
+    next one. `unknown` names the runs it is not holding any more, which the
+    provider should stop producing for: they were settled while it was away,
+    and nothing it sends about them will be relayed."""
+
+    kind: Literal["resumed"] = "resumed"
+    id: str
+    watermarks: dict[str, int] = Field(default_factory=dict)
+    unknown: list[str] = Field(default_factory=list)
 
 
 class Malformed(Frame):
@@ -185,6 +219,8 @@ WireFrame = Annotated[
         ConnectErr,
         Offer,
         ThreadMessages,
+        Resume,
+        Resumed,
         Register,
         Delete,
         Ok,

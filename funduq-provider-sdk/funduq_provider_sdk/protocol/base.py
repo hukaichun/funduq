@@ -112,6 +112,20 @@ class FunduqLinkMachine:
         self._queries.clear()
         return Turn([], [ev.Gone(unanswered_offers=abandoned, dropped_queries=dropped)])
 
+    def reopen(self) -> None:
+        """Put this session back in front of a new connection.
+
+        The machine is per **session**, not per connection: a dropped socket
+        ends the connection, and what the session knows — how much of each run
+        funduq has actually seen — is exactly what a reconnecting provider
+        needs to be told. Keeping it in the machine is why resume is possible
+        at all; it could never have lived in a link object, because a link
+        object is what gets thrown away on every blip.
+        """
+        self.state = Link.AWAITING_CONNECT
+        self._connecting = None
+        self._queries.clear()
+
     def next_deadline(self) -> float | None:
         return None
 
@@ -267,6 +281,14 @@ class ProviderLinkMachine:
         )
         self._outstanding.clear()
         return Turn([], [gone])
+
+    def reopen(self) -> None:
+        """Put this session back in front of a new connection — the provider's
+        half of `FunduqLinkMachine.reopen`."""
+        self.state = Link.IDLE
+        self._ticket = None
+        self._nonce = None
+        self._outstanding.clear()
 
     def delete(self, name: str) -> tuple[str, Turn]:
         return self._request(lambda i: fr.Delete(id=i, name=name))

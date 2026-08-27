@@ -75,8 +75,16 @@ class FunduqLink(ABC):
 
 
     @abstractmethod
-    async def report_event(self, run_id: str, event: Any) -> None:
-        pass
+    async def report_event(self, run_id: str, event: Any, *, seq: int | None = None) -> None:
+        """Relay one event.
+
+        `seq` is the runtime's own count for this run, from 1, and a link that
+        cannot be resumed may ignore it entirely — `InProcessLink` does, having
+        no socket to lose. A link that carries it lets a provider reconnecting
+        mid-run be told where funduq got to, which is the difference between
+        resuming and re-sending the whole stream or, worse, resuming with a
+        hole. Keyword-only and defaulted, so an existing implementation adds
+        `*, seq: int | None = None` and nothing else."""
 
     @abstractmethod
     async def finish_run(self, run_id: str) -> None:

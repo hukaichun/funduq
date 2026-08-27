@@ -1,6 +1,6 @@
 [project]
 name = "funduq-provider-sdk"
-version = "0.0.4"
+version = "0.0.5"
 description = "What a provider and funduq agree on, from the provider's side: identity, the ports, and the provider's own worker loop — for an agent provider, or an LLM provider with the `llm` extra"
 requires-python = ">=3.12"
 license = "Apache-2.0"

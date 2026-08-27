@@ -302,6 +302,7 @@ class RunBroker:
         unserved_timeout_seconds: float = 45.0,
         deliver_timeout_seconds: float = 5.0,
         undelivered_window_seconds: float = 1800.0,
+        provider_grace_seconds: float = 0.0,
         quality_tolerance: int | None = None,
     ) -> None:
         self._spawn = spawn or self._spawn_unsupervised
@@ -315,6 +316,10 @@ class RunBroker:
             ("misdeclared", "abandoned", "undelivered", "unanswered", "answered_late")
         )
         self._unserved_since: dict[AgentRef, datetime] = {}
+        # Keys whose last link went away and whose grace has not run out.
+        # Empty when `provider_grace_seconds` is 0, which is the default and
+        # the behaviour every existing deployment already has.
+        self._gone_since: dict[str, datetime] = {}
         self._capacity: dict[str, _Capacity] = {}
         self._handlers: dict[str, HandlerMap] = {}
         self._lane_tasks: set[asyncio.Task] = set()
@@ -322,6 +327,22 @@ class RunBroker:
         self.undelivered_window_seconds = undelivered_window_seconds
         self.unserved_timeout_seconds = unserved_timeout_seconds
         self.deliver_timeout_seconds = deliver_timeout_seconds
+        # How long a key that has lost its link may still come back before the
+        # runs it holds are given up on. **Zero means no grace**, which is the
+        # behaviour funduq has always had: a link going away settles every run
+        # that key was holding, at once.
+        #
+        # It is a clock over a fact funduq owns — how long since *this link*
+        # went away — and not a deduction about how the provider is doing.
+        # That distinction is why it is allowed here at all: the
+        # [inter-chunk timeout](../../docs/design-records.md) was removed for
+        # measuring the provider's silence and blaming it for the wait.
+        #
+        # Default zero because a nonzero one changes when a caller learns its
+        # run failed, and that is a deployment's judgement rather than a
+        # library's. A provider behind NAT on a consumer connection is the
+        # case it exists for — see funduq#214.
+        self.provider_grace_seconds = provider_grace_seconds
         self.quality_tolerance = quality_tolerance
         self._loop_task: asyncio.Task | None = None
         self._work_to_do = asyncio.Event()
@@ -393,13 +414,20 @@ class RunBroker:
             try:
                 self.note_undelivered(self.undelivered_window_seconds)
                 self.expire_queued(self.unserved_timeout_seconds)
+                self.expire_gone_providers(self.provider_grace_seconds)
                 self._work_to_do.clear()
                 self._nudge_waiting()
                 with contextlib.suppress(TimeoutError):
                     # Sleep no longer than the shortest window this loop is
                     # responsible for observing, or the observation misses it.
                     async with asyncio.timeout(
-                        min(self.unserved_timeout_seconds, self.undelivered_window_seconds)
+                        min(
+                            self.unserved_timeout_seconds,
+                            self.undelivered_window_seconds,
+                            *( [self.provider_grace_seconds]
+                               if self.provider_grace_seconds > 0
+                               else [] ),
+                        )
                     ):
                         await self._work_to_do.wait()
             except asyncio.CancelledError:
@@ -478,6 +506,10 @@ class RunBroker:
         self._live.attach(mapping)
         for agent in mapping:
             self._unserved_since.pop(agent, None)
+            # Back before its grace ran out: nothing was ever said to the runs
+            # this key holds, so there is nothing to undo — only the clock to
+            # stop.
+            self._gone_since.pop(agent.provider_key, None)
         for provider in mapping.values():
             self._capacity.setdefault(
                 provider.public_key, _Capacity(declared=provider.max_concurrent_runs)
@@ -514,16 +546,52 @@ class RunBroker:
         """
         now = datetime.now(timezone.utc)
         self._live.withdraw(agents)
+        graced = self.provider_grace_seconds > 0
         for agent in agents:
             if self._live.serving(agent) is not None:
                 continue
             self._unserved_since[agent] = now
+            if graced:
+                # The roster still loses them — nothing new is handed to a key
+                # that is not here — but what it holds is not given up on yet.
+                # The two used to be one act, and welding them together is
+                # what made a two-second blip cost a caller its run and the
+                # provider an `abandoned` mark for work it was still doing.
+                self._gone_since.setdefault(agent.provider_key, now)
+                continue
             for run in list(self._runs.values()):
                 if run.agent != agent:
                     continue
                 key = run.claimed_by or run.offered_to
                 if key is not None:
                     run.in_queue.put_nowait(ProviderGone(key))
+
+    def expire_gone_providers(self, timeout_seconds: float) -> list[str]:
+        """Gives up on the keys whose link went away longer than
+        `timeout_seconds` ago and never came back, telling every run they were
+        holding, and returns those keys.
+
+        The mirror of `expire_queued`, over the fact next door: that one asks
+        whether a run's agent is served, this one asks how long ago this key
+        stopped being here. Both are clocks over something funduq observed
+        rather than deductions about how a provider is doing — which is the
+        line the inter-chunk timeout crossed and was removed for.
+
+        A key that re-registers before this fires never reaches it:
+        `register_provider` forgets it, and the runs it was holding were never
+        told anything, so a reconnecting provider finishes them as if the
+        socket had not blinked.
+        """
+        if timeout_seconds <= 0 or not self._gone_since:
+            return []
+        cutoff = datetime.now(timezone.utc) - timedelta(seconds=timeout_seconds)
+        expired = [key for key, since in self._gone_since.items() if since <= cutoff]
+        for key in expired:
+            del self._gone_since[key]
+            for run in list(self._runs.values()):
+                if (run.claimed_by or run.offered_to) == key:
+                    run.in_queue.put_nowait(ProviderGone(key))
+        return expired
 
     def _nudge_waiting(self) -> None:
         """Asks the head of every waiting conversation to try handing itself

@@ -72,7 +72,7 @@ class InProcessLink(FunduqLink):
         self._runtime.cancel(run_id)
 
 
-    async def report_event(self, run_id: str, event: Any) -> None:
+    async def report_event(self, run_id: str, event: Any, *, seq: int | None = None) -> None:
         self._funduq.report_event(run_id, event, claimed_by=self.public_key)
 
     async def finish_run(self, run_id: str) -> None:

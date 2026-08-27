@@ -92,7 +92,7 @@ def test_a_link_that_only_reports_is_not_constructible():
         def cancel(self, run_id):
             pass
 
-        async def report_event(self, run_id, event):
+        async def report_event(self, run_id, event, *, seq=None):
             pass
 
         async def finish_run(self, run_id):

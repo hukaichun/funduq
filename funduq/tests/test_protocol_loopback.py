@@ -37,6 +37,8 @@ from funduq_provider_sdk.protocol import (
     Registering,
     Replied,
     Reported,
+    ResumeAnswered,
+    Resuming,
     FunduqSide,
     decode,
     encode,
@@ -155,6 +157,29 @@ class Loopback:
         # an agent still holding a run would hang the suite rather than fail it.
         await self.runtime.aclose(cancel_in_flight=True)
 
+    async def reconnect(self) -> None:
+        """A new socket for the same session — machines kept, queues fresh."""
+        self.funduq_side.reopen()
+        self.provider_side.reopen()
+        self.to_provider = asyncio.Queue()
+        self.to_funduq = asyncio.Queue()
+        self.opened = asyncio.get_running_loop().create_future()
+        self._tasks = [
+            asyncio.create_task(self._pump_funduq()),
+            asyncio.create_task(self._pump_provider()),
+        ]
+        ticket = self.funduq.issue_ticket(self.identity.public_key)
+        self._send(
+            self.provider_side.connect(
+                ticket=ticket, nonce="n-2", max_concurrent_runs=self.max_concurrent_runs
+            ),
+            self.to_funduq,
+        )
+        await asyncio.wait_for(self.opened, 2)
+        await self.register(["translator"])
+        request_id, turn = self.provider_side.resume(self.runtime.resuming())
+        self._send(turn, self.to_funduq)
+
     async def drop(self) -> None:
         """Lose the connection without a polite goodbye — what a wifi blip
         looks like from funduq's side."""
@@ -162,6 +187,7 @@ class Loopback:
             task.cancel()
         turn = self.funduq_side.connection_lost()
         assert isinstance(turn.events[0], Gone)
+        self.provider_side.connection_lost()
         self.funduq.detach_provider(self.public_key, self)
 
     # -- the drivers ---------------------------------------------------
@@ -192,6 +218,13 @@ class Loopback:
         elif isinstance(event, Deleting):
             await self.funduq.delete_agent(self, event.name)
             self._send(self.funduq_side.reply_ok(event.id), self.to_provider)
+        elif isinstance(event, Resuming):
+            held = [r for r in event.run_ids if self.funduq.broker.get(r) is not None]
+            unknown = [r for r in event.run_ids if r not in held]
+            self._send(
+                self.funduq_side.resumed(event.id, still_held=held, unknown=unknown),
+                self.to_provider,
+            )
         elif isinstance(event, AskingThreadMessages):
             messages = await self.funduq.get_thread_messages(event.thread_id)
             self._send(self.funduq_side.reply_ok(event.id, messages), self.to_provider)
@@ -226,6 +259,8 @@ class Loopback:
             self._send(self.provider_side.answer(event.id, accepted), self.to_funduq)
         elif isinstance(event, Cancelled):
             self.runtime.cancel(event.run_id)
+        elif isinstance(event, ResumeAnswered):
+            await self.runtime.resume(event.watermarks, event.unknown)
         elif isinstance(event, (Replied, Failed)):
             future = self.replies.pop(event.id, None)
             if future is not None and not future.done():
@@ -249,9 +284,10 @@ class _ReportingRuntimeLink:
     def public_key(self) -> str:
         return self._loopback.public_key
 
-    async def report_event(self, run_id: str, event: Any) -> None:
+    async def report_event(self, run_id: str, event: Any, *, seq: int | None = None) -> None:
         self._loopback._send(
-            self._loopback.provider_side.report(run_id, event), self._loopback.to_funduq
+            self._loopback.provider_side.report(run_id, event, seq=seq),
+            self._loopback.to_funduq,
         )
 
     async def finish_run(self, run_id: str) -> None:

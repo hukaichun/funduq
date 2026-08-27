@@ -45,6 +45,16 @@ class ProviderSide(ProviderLinkMachine):
             return Turn([], [ev.Offered(id=frame.id, run=frame.run)])
         if isinstance(frame, fr.Cancel):
             return Turn([], [ev.Cancelled(run_id=frame.run_id)])
+        if isinstance(frame, fr.Resumed):
+            self._outstanding.discard(frame.id)
+            return Turn(
+                [],
+                [
+                    ev.ResumeAnswered(
+                        id=frame.id, watermarks=frame.watermarks, unknown=frame.unknown
+                    )
+                ],
+            )
         if isinstance(frame, fr.Malformed):
             # An offered run that will not decode can never succeed on a
             # re-offer, so it is a permanent refusal rather than a decline.
@@ -79,14 +89,18 @@ class ProviderSide(ProviderLinkMachine):
             return Turn([fr.Ok(id=offer_id, verdict="refused", reason=verdict.reason)], [])
         return Turn([fr.Ok(id=offer_id, verdict=_VERDICTS[bool(verdict)])], [])
 
-    def report(self, run_id: str, event: Any) -> Turn:
+    def resume(self, run_ids: list[str]) -> tuple[str, Turn]:
+        """Ask what survived, before producing anything on a re-opened link."""
+        return self._request(lambda i: fr.Resume(id=i, run_ids=run_ids))
+
+    def report(self, run_id: str, event: Any, *, seq: int | None = None) -> Turn:
         """Relay one event.
 
         The dump happens here so no transport has to remember it: a typed
         event dumped without `exclude_none=True` injects `timestamp: null` and
         `rawEvent: null` into the caller's stream, and with it the round trip
         is byte-identical to what the agent produced."""
-        return self._send(fr.Report(run_id=run_id, event=as_json(event)))
+        return self._send(fr.Report(run_id=run_id, event=as_json(event), seq=seq))
 
     def finish(self, run_id: str) -> Turn:
         return self._send(fr.Finish(run_id=run_id))

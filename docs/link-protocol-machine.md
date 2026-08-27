@@ -290,15 +290,59 @@ Core changed nothing: `FunduqSide` calls only `attach_provider`,
 `register_agents`, `delete_agent`, `report_event`, `finish_run`,
 `get_thread_messages` and `detach_provider`, and core does not import the SDK.
 
+## Resume: a blip stops ending a run
+
+A provider behind NAT on a consumer connection is the party outbound dispatch
+exists for, and for that party a two-second drop is weather. It used to cost
+the caller its run and the provider an `abandoned` mark for work it was still
+doing. Three things had to move together, which is why this was never a
+keyword argument.
+
+**Core stopped welding two facts together.** A link going away and a provider
+giving up were one act: `unregister_provider` withdrew the roster *and* told
+every run its provider was gone. Now the roster still loses the key at once —
+nothing new is handed to somebody who is not there — while what it holds waits
+out `CoreSettings.provider_grace_seconds`. `expire_gone_providers` is the
+clock, and it sits beside `expire_queued` for a reason: both are clocks over
+something funduq observed, rather than deductions about how a provider is
+doing. **The default is `0.0`**, which is exactly the behaviour funduq has
+always had; a deployment that serves NAT'd providers sets seconds, one where a
+lost socket really means a lost provider leaves it, because then the caller
+learns sooner.
+
+**The runtime stopped dropping what it produced.**
+`ProviderRuntime._report_output` took each event off its queue and, finding no
+link, discarded it — so resume was unreachable whatever the wire carried, and
+a reconnecting provider would have resumed a stream with a hole in it. It now
+holds a bounded outbox per run. `max_buffered_events` (default 1024) is the
+bound, and **a gap wider than it abandons the run rather than resuming it with
+a hole**: funduq's grace then runs out and it records the
+`provider_left_holding_it` it actually observed.
+
+**The protocol carries enough for the two sides to agree where they were.**
+`report` gained a `seq` — the provider's own count for that run, from 1, not
+funduq's, which numbers everything on a run including its own events. After a
+re-open the provider sends `resume` naming what it still holds; funduq answers
+`resumed` with the last `seq` it accepted for each and the ones it is not
+holding any more. The provider replays from the watermark and stops producing
+for the rest.
+
+And `reopen()` is what makes the machines sessions rather than connections.
+The watermark is the one thing the funduq-side machine is the authority on,
+and it could never have lived in a `FunduqLink` instance — that instance is
+what gets thrown away on every blip. Which is the whole reason this landed
+after the machines rather than before them.
+
+`funduq/tests/test_a_blip_does_not_end_a_run.py` drives it end to end: drop
+mid-run, reconnect, and the caller sees both what arrived before the blip and
+what the provider produced while it was away — with `abandoned` still at zero.
+The provider that does not come back is still recorded as abandoning, because
+the grace forgives a blip and not a departure.
+
 ## What is not built yet
 
-- **Resume** ([#214](https://github.com/hukaichun/funduq/issues/214)). The
-  machines are already instantiated per session rather than per connection,
-  which is what resume needs: a drop is `connection_lost()`, a reconnect
-  installs a new send callback, and per-run sequence and delivery watermark
-  can survive both. That state could never have lived in a `FunduqLink`
-  instance, because that instance is what is thrown away on every blip — which
-  is why #214 is not a grace-window keyword argument. The machine would own
-  the resume mechanics; core would own the verdict. Note that
-  `ProviderRuntime._report_output` still drops events emitted while no link is
-  attached, so the runtime has to buffer before any of this is reachable.
+- **Resume on the completion half.** A dropped LLM link still ends its
+  completions: `Chunk` carries no sequence and there is no `resume` for it.
+  The shape is the agent half's, and the reason to wait is that a completion's
+  caller is usually still holding an open stream, so what a resumed completion
+  should look like to *that* caller is a question this has not answered.

@@ -5,7 +5,7 @@ DELIVERED_RUN_FIELDS = frozenset(
 )
 
 LINK_REPORT_METHODS = {
-    "report_event": ("run_id", "event"),
+    "report_event": ("run_id", "event", "seq"),
     "finish_run": ("run_id",),
 }
 
