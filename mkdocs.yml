@@ -40,6 +40,7 @@ nav:
   - Overview: index.md
   - What each half is for: responsibilities.md
   - The integration contract: integration-contract.md
+  - The agent loop: agent-loop.md
   - What a deployment has to know: operational-limits.md
   - Contract changelog: contract-changelog.md
   - Releasing: releasing.md

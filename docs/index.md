@@ -15,6 +15,9 @@ first; everything else is detail under one of these.
 anyone plugging in. Callers speak AG-UI or A2A with a standard client,
 unmodified, and every funduq invention on that side is opt-in.
 
+**[The agent loop](agent-loop.md)** — what a provider's agent actually
+receives and sends, turn by turn.
+
 **[What a deployment has to know](operational-limits.md)** — the limits that
 are real today, measured rather than estimated.
 
