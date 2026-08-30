@@ -3,7 +3,7 @@
 Part of [the SDKs](../sdks.md).
 
 What an LLM provider and funduq agree on — the party that holds a real key
-and answers [KYOK](../mechanisms/kyok.md) completions. Two dependencies:
+and answers KYOK completions. Two dependencies:
 `funduq-provider-sdk` (identity is identity; the keypair class is shared
 because one keypair may serve agents and models at once) and `openai`
 (the wire shapes are OpenAI's chat completions — types only, no client

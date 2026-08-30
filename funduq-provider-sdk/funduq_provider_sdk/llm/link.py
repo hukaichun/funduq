@@ -10,16 +10,7 @@ from funduq_provider_sdk.llm.provider import DeliveredCompletion
 
 
 class FunduqLLMLink(ABC):
-    """A transport connecting an LLM provider to funduq — the peer of `funduq_provider_sdk.FunduqLink`.
-
-    In-process is a transport, not a special case: `InProcessLLMProvider` is
-    one subclass, a socket is another. The base states the translation once —
-    funduq's completion request becomes a `DeliveredCompletion` before the
-    provider's own code sees it — and `serve` is the interposition point:
-    every completion a run's agent asks for passes through it before any
-    money moves, which is where a caller enforces its own policy (see the
-    package README; the library defines the channel, never the policy).
-    """
+    """A transport connecting an LLM provider to funduq — the peer of `funduq_provider_sdk.FunduqLink`."""
 
     @property
     @abstractmethod

@@ -33,39 +33,20 @@ _KNOWN_EVENT_TYPES = frozenset(member.value for member in EventType)
 
 
 def run_error(message: str, *, code: str | None = None) -> dict:
-    """A `RUN_ERROR` funduq itself authors, built from AG-UI's own model rather than typed out
-    as a dict.
-
-    `exclude_none=True` for the reason the relay uses it: a default dump
-    injects `timestamp: null` and `rawEvent: null` into a caller's stream.
-    With the flag the result is exactly the two or three keys funduq means
-    to say, which is also what makes this a drop-in for the literals it
-    replaced.
-    """
+    """A `RUN_ERROR` funduq itself authors, built from AG-UI's own model rather than typed out as a dict."""
     return RunErrorEvent(message=message, code=code).model_dump(
         mode="json", by_alias=True, exclude_none=True
     )
 
 
 async def _handle_offer(funduq: "Funduq", run: Run, cmd: Offer) -> None:
-    """Mark the run "offering" as it is handed to a provider that has not answered yet.
-
-    Neither "queued" nor "running" is true for the length of that wait —
-    nobody has the run, and nobody has accepted it — and a caller reading the
-    record during it has to be told something.
-    """
+    """Mark the run "offering" as it is handed to a provider that has not answered yet."""
     async with funduq.session() as session:
         await funduq.mark_run_status(session, run.run_id, "offering")
 
 
 async def _handle_requeue(funduq: "Funduq", run: Run, cmd: Requeue) -> None:
-    """Put a run back to "queued" after an offer it was dispatched on was declined,
-    went unanswered, or failed.
-
-    Not `mark_run_status`: that function never writes "queued" on purpose.
-    The guard is the same conditional UPDATE, so a hand-back racing an answer
-    that arrived just in time cannot undo the claim that won the row.
-    """
+    """Put a run back to "queued" after an offer it was dispatched on was declined, went unanswered, or failed."""
     async with funduq.session() as session:
         await funduq.return_run_to_queue(session, run.run_id)
 
@@ -77,19 +58,7 @@ async def _handle_claim(funduq: "Funduq", run: Run, cmd: Claim) -> None:
 
 
 async def _handle_relay(funduq: "Funduq", run: Run, cmd: RelayEvent) -> None:
-    """Validate, persist, and forward a provider event; fail the run on invalid AG-UI.
-
-    Three-way rule. An event whose `type` is one funduq's pinned AG-UI knows is
-    validated strictly, and a validation failure drains the run's queue and
-    pushes a `Fail` — as does an event with no `type` string at all: both are
-    malformation, not version skew. An event whose `type` is a string funduq
-    does not recognise is a newer AG-UI's event, and it is relayed untouched:
-    funduq stores and forwards it and never branches on its content — whether to
-    skip it is the caller's decision (AG-UI's fail-open rule), never the
-    relay's. A `RUN_FINISHED` carrying an interrupt outcome records it as the
-    run's pause payload; a `RUN_ERROR` is remembered so `_handle_finish`
-    doesn't synthesize a second one.
-    """
+    """Validate, persist, and forward a provider event; fail the run on invalid AG-UI."""
     event = cmd.event
     type_tag = event.get("type") if isinstance(event, dict) else None
     if not isinstance(type_tag, str) or type_tag in _KNOWN_EVENT_TYPES:
@@ -121,22 +90,7 @@ async def _handle_relay(funduq: "Funduq", run: Run, cmd: RelayEvent) -> None:
 
 
 async def _handle_finish(funduq: "Funduq", run: Run, cmd: FinishStream) -> None:
-    """Settle the run's final status and, when it completed or paused, fold its events into thread messages.
-
-    Status is "input-required" if the run paused, "completed" if it saw `RUN_FINISHED`,
-    "cancelled" if a cancel was requested, else "failed". A run that ends failed without
-    ever having reported its own `RUN_ERROR` gets one synthesized and appended.
-
-    A run pauses two ways, and the provider's stream ends identically for both.
-    An interrupt outcome is the provider saying so. An unanswered tool call is
-    the provider *not* saying so — `RUN_FINISHED` with `outcome: success`, a
-    call announced and never resulted (see `unanswered_tool_calls`). Both are
-    the same event, and the second is why a run's end cannot be read off
-    `RUN_FINISHED` alone: the provider's **stream** ended, which is all it
-    ever claimed. Whether the **run** ended is funduq's to settle, because
-    funduq is what holds the run's identity across a gap the provider's stream
-    cannot span — the same reason `resume_run` keeps the run id.
-    """
+    """Settle the run's final status and, when it completed or paused, fold its events into thread messages."""
     async with funduq.session() as session:
         round_events = await repo.get_run_events(
             session, run.run_id, since_seq=run.round_starting_seq
@@ -177,12 +131,7 @@ async def _handle_finish(funduq: "Funduq", run: Run, cmd: FinishStream) -> None:
 
 
 async def _handle_cancel(funduq: "Funduq", run: Run, cmd: RequestCancel) -> None:
-    """Cancel immediately if no provider has claimed the run yet; otherwise ask the provider to stop.
-
-    A claimed run is marked "cancelling" (not "cancelled") and its `cancel_notify`
-    callback is invoked — funduq asks the provider to stop, it does not decide the outcome
-    on its behalf.
-    """
+    """Cancel immediately if no provider has claimed the run yet; otherwise ask the provider to stop."""
     if run.claimed_by is None:
         async with funduq.session() as session:
             await funduq.mark_run_status(session, run.run_id, "cancelled")
@@ -219,16 +168,7 @@ def make_handlers(funduq: "Funduq") -> HandlerMap:
 
 
 async def close_with_terminal_event(funduq: "Funduq", run_id: str, failure_reason: str) -> None:
-    """Give a run funduq has just failed its terminal `RUN_ERROR`, whether or not
-    the broker still tracks it.
-
-    A live run gets a `Fail` pushed into its own lane, which appends the event
-    and relays it to any subscriber. A run the broker has already forgotten —
-    an orphan reaped at startup is the one that reaches this — has no lane
-    and no subscriber left, but the record still owes the verdict: the
-    same event is appended directly, so the event stream ends the way the
-    database says the run did. A run that already carries its own `RUN_ERROR`
-    is left alone, same as everywhere else."""
+    """Give a run funduq has just failed its terminal `RUN_ERROR`, whether or not the broker still tracks it."""
     if funduq.broker.push(run_id, Fail(failure_reason)):
         return
     async with funduq.session() as session:

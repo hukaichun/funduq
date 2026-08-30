@@ -1,15 +1,4 @@
-"""Widen ck_runs_status with "offering": the dispatch window is a state.
-
-Between funduq handing a run to a provider and the provider answering,
-"queued" and "running" are both untrue — nobody has the run yet, and nobody
-has accepted it either. The window used to be invisible in the record, which
-is why a cancel arriving inside it could be recorded against a run that was
-handed over a moment later. See docs/mechanisms/requests.md.
-
-Revision ID: c4d9e17b52aa
-Revises: a11c3b7d42e9
-Create Date: 2026-08-23
-"""
+"""Widen ck_runs_status with "offering": the dispatch window is a state."""
 
 from typing import Sequence, Union
 
@@ -35,15 +24,7 @@ _JSON = sa.JSON().with_variant(postgresql.JSONB(astext_type=sa.Text()), "postgre
 
 
 def _runs(status_check: str) -> sa.Table:
-    """The `runs` table as this revision knows it, frozen here rather than
-    imported from `funduq.schema`.
-
-    SQLite cannot alter a CHECK constraint, so batch mode rebuilds the table
-    — and it rebuilds it from whatever definition it is handed. Handing it
-    the live metadata would make this migration mean something different
-    every time a later revision changes the table; a copy that cannot drift
-    is the point.
-    """
+    """The `runs` table as this revision knows it, frozen here rather than imported from `funduq.schema`."""
     return sa.Table(
         "runs",
         sa.MetaData(),
@@ -82,8 +63,6 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
-    # An "offering" run is one funduq was mid-handover on; the pre-revision
-    # vocabulary has no word for that, and the nearest true one is where it
-    # came from.
+    # An "offering" run is one funduq was mid-handover on; the pre-revision vocabulary has no word for that, and the nearest true one is where it came from.
     op.execute(sa.text("UPDATE runs SET status = 'queued' WHERE status = 'offering'"))
     _replace_status_check(_BEFORE)

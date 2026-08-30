@@ -19,11 +19,7 @@ CONNECTED_PROVIDER_ATTRS = frozenset(
 
 
 def _registration_fields() -> frozenset[str]:
-    """Read off `Registration` rather than typed out beside it.
-
-    Two definitions of one shape is the thing that drifts, and this one has a
-    test in core's suite comparing it to the keys `register_agents` actually
-    reads — which only stays honest if the model is the single source."""
+    """Read off `Registration` rather than typed out beside it."""
     from funduq_provider_sdk.provider import Registration
 
     return frozenset(Registration.model_fields)

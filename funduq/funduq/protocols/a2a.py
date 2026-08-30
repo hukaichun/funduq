@@ -46,9 +46,7 @@ _BINDINGS = frozenset(member.name for member in TransportProtocol)
 
 @dataclass(frozen=True)
 class ServedInterface:
-    """A URL where an agent's A2A endpoint is reachable, together with the A2A transport
-    binding it speaks (e.g. `"JSONRPC"`). Raises `ValueError` if `binding` is not a name A2A's
-    `TransportProtocol` defines."""
+    """A URL where an agent's A2A endpoint is reachable, together with the A2A transport binding it speaks (e.g."""
 
     url: str
     binding: str
@@ -61,13 +59,6 @@ class ServedInterface:
 
 
 # Caller mistakes funduq has its own words for, and the A2A word for each.
-# Translating them here is what the rest of this module does for everything
-# else: funduq's vocabulary in, A2A's out. A caller that names a context
-# funduq does not have, one belonging to another agent, an offering that is
-# not registered, or a message that will not build a run input has made the
-# same kind of mistake — a bad parameter — and A2A has one word for that.
-# The code the caller finally sees comes from the package's own table
-# (`JSON_RPC_ERROR_CODE_MAP`), never from a literal here.
 _BAD_PARAMETER = (
     ThreadNotFound,
     ThreadOwnershipMismatch,
@@ -78,24 +69,7 @@ _BAD_PARAMETER = (
 
 @contextlib.contextmanager
 def _in_a2as_words():
-    """Re-raises funduq's caller-caused errors as A2A's own, so a transport can answer without
-    a translation table of funduq's.
-
-    Two deliberately stay funduq's, because A2A has no word for either and
-    inventing one would be worse than passing them on:
-
-    - `AgentNotFound` is not a bad *parameter*. The agent is the endpoint,
-      resolved from the route before this adapter is called at all, so an
-      unknown one means the address does not exist — a routing-layer
-      answer (404), not a JSON-RPC error inside a 200.
-    - `ThreadQueueFull` is backpressure: funduq telling a caller to come
-      back, with the thread's buffer full and the request **not** accepted.
-      A2A has no code for "slow down" because pacing is a transport
-      concern; the gateway's answer is 429.
-
-    Both are documented in `docs/writing-a-transport.md` rather than
-    mapped reflexively onto a word that means something else.
-    """
+    """Re-raises funduq's caller-caused errors as A2A's own, so a transport can answer without a translation table of funduq's."""
     try:
         yield
     except _BAD_PARAMETER as e:
@@ -110,9 +84,7 @@ class A2AAdapter:
     async def agent_card(
         self, agent: AgentRef, interfaces: "list[ServedInterface] | None" = None
     ) -> pb.AgentCard:
-        """Builds the A2A agent card for `agent`, listing `interfaces` as its supported
-        interfaces (omitted from the card entirely if none are given). Raises `AgentNotFound`
-        if `agent` isn't registered."""
+        """Builds the A2A agent card for `agent`, listing `interfaces` as its supported interfaces (omitted from the card entirely if none are given)."""
         record = await self._funduq.get_agent(agent)
         if record is None:
             raise AgentNotFound(f"agent '{agent}' is not registered")
@@ -144,17 +116,7 @@ class A2AAdapter:
         metadata: dict[str, Any] | None = None,
         presenter_key: str | None = None,
     ) -> pb.Task:
-        """Sends `message` to `agent` as a new (or continuing, via `context_id`/`task_id`) A2A
-        task, waits for it to settle, and returns the resulting `Task`. Behind A2A's
-        send-a-message operation, whatever the transport calls it.
-
-        The task is built from the run's **stored** events, always. A live
-        run's stream is drained only to wait for it — the events were
-        persisted before they reached that stream, so by the time it ends
-        the log is complete, and reading one source rather than two is what
-        keeps a task fetched afterwards from disagreeing with the one
-        returned here.
-        """
+        """Sends `message` to `agent` as a new (or continuing, via `context_id`/`task_id`) A2A task, waits for it to settle, and returns the resulting `Task`."""
         with _in_a2as_words():
             run_id, thread_id, is_live = await self._start_run(
                 agent, _params(message, actor_chain, metadata), presenter_key=presenter_key
@@ -180,17 +142,7 @@ class A2AAdapter:
         metadata: dict[str, Any] | None = None,
         presenter_key: str | None = None,
     ) -> AsyncIterator[Event]:
-        """Like `send_task` but yields A2A stream events as the run progresses instead of
-        waiting for it to settle. If the run turns out not to be live (e.g. it was already
-        finished), yields a single status update reflecting its stored status.
-
-        The events are A2A's own, and the stream opens with the **`Task`
-        itself**: A2A carries a task as a snapshot followed by increments
-        layered onto it, so a receiver that gets a status update first has
-        nothing to layer onto — the package's own aggregator refuses that
-        stream rather than tolerating it. Wrapping any of it for a wire is
-        the transport's job, not this one's.
-        """
+        """Like `send_task` but yields A2A stream events as the run progresses instead of waiting for it to settle."""
         with _in_a2as_words():
             run_id, thread_id, is_live = await self._start_run(
                 agent, _params(message, actor_chain, metadata), presenter_key=presenter_key
@@ -221,9 +173,7 @@ class A2AAdapter:
         return results()
 
     async def resubscribe_task(self, agent: AgentRef, task_id: str) -> AsyncIterator[Event]:
-        """Reattaches to an existing task's event stream. If the task is no longer live, yields
-        its final stored-status update instead of hanging. Raises A2A's own `TaskNotFoundError`
-        if `task_id` doesn't belong to `agent`."""
+        """Reattaches to an existing task's event stream."""
         run = await self._run_of(agent, task_id)
         if run is None:
             raise TaskNotFoundError(f"no task '{task_id}' for agent '{agent}'")
@@ -242,8 +192,7 @@ class A2AAdapter:
             if events is None:
                 yield status_update_for_run_status(task_id, thread_id, run.status)
                 return
-            # The opening snapshot already carries whatever this run had
-            # produced, so those artifacts exist for the receiver already.
+            # The opening snapshot already carries whatever this run had produced, so those artifacts exist for the receiver already.
             opened: set[str] = {a.artifact_id for a in opening.artifacts}
             async for item in events:
                 yield agui_event_to_a2a_update(item, task_id, thread_id, opened=opened)
@@ -254,12 +203,7 @@ class A2AAdapter:
         return results()
 
     async def get_task(self, agent: AgentRef, task_id: str) -> pb.Task | None:
-        """Returns the current `Task` for `task_id`, or None if it doesn't belong to `agent`.
-
-        None rather than an exception, because that is what A2A's own
-        request-handler interface means by not-found; the transport turns it
-        into the error its binding defines.
-        """
+        """Returns the current `Task` for `task_id`, or None if it doesn't belong to `agent`."""
         run = await self._run_of(agent, task_id)
         if run is None:
             return None
@@ -274,42 +218,7 @@ class A2AAdapter:
     async def cancel_task(
         self, agent: AgentRef, task_id: str, *, metadata: dict[str, Any] | None = None
     ) -> pb.Task | None:
-        """Asks the provider to stop and returns the task as it stands, marked with the
-        pending request. None if `task_id` doesn't belong to `agent`; raises
-        `TaskNotCancelableError` if it has already ended.
-
-        funduq can ask a provider to stop and cannot make it, so the returned
-        state is never `canceled` on the strength of the request — that would
-        assert an outcome funduq has not observed, and the provider's own
-        output may yet contradict it. What the caller gets instead is a state
-        it can read (`working`) plus
-        `a2a_translate.CANCEL_REQUESTED_METADATA_KEY`, which says the request
-        is in flight rather than ignored. The marker is attached from the
-        request itself, not from the run's status: the run's own lane writes
-        `cancelling` a moment later, and a caller answered inside that window
-        would otherwise see a plain `working` and learn nothing.
-
-        A run that has already ended raises rather than answering, which is
-        what a2a-python does in the same place. Returning the finished task as
-        though the cancel had been accepted is the same unreadable answer in a
-        different disguise.
-
-        So does a run that is **paused**, which is the same refusal reached by
-        the opposite road: `input-required` is not terminal, so it used to
-        fall past the check above and out through a `cancel_run` that answered
-        False, and the caller got its task back unchanged with no marker on
-        it. Not terminal is not the same as cancellable — funduq relays a
-        cancel to whoever is working on the run, and nobody is. `TaskNotCancelableError`
-        is A2A's own word for it: a2a-python raises exactly this when the task
-        did not end up `CANCELED`, so nothing is invented here either.
-
-        On a thread that bound an authority at birth, `metadata["cancel"]`
-        must carry a signature from one of the run's authorities
-        (`doors.authorize_cancel`). A2A has the slot for it —
-        `CancelTaskRequest` carries `metadata` even though it carries no
-        message — so nothing is invented here and a standard client can
-        send one.
-        """
+        """Asks the provider to stop and returns the task as it stands, marked with the pending request."""
         run = await self._run_of(agent, task_id)
         if run is None:
             return None
@@ -346,18 +255,7 @@ class A2AAdapter:
     async def _start_run(
         self, agent: AgentRef, params: dict, *, presenter_key: str | None = None
     ) -> tuple[str, str, bool]:
-        """Resolves `params` (a `contextId`/`taskId`/message envelope) to a thread and run,
-        creating or reopening whichever is needed, and returns `(run_id, thread_id, is_live)`.
-        A message addressed (via `taskId`) to the thread's paused `input-required` task resumes
-        it; any other message becomes a new queued run, offered to the provider in arrival
-        order — a message sent while a run is active is delivered alongside it, never merged
-        or dropped; how the provider sequences its turns is the provider's own business. `is_live` is False
-        only if the agent isn't currently served (in which case the run is
-        recorded as failed). A `metadata.kyok` opt-in binds the run to the named LLM offering
-        (raising `LlmProviderNotFound` for an unknown one), the same road AG-UI callers use.
-        A `referenceTaskIds` entry anchors thread lineage to the referenced task's thread, and
-        that is **all** it does: it is A2A's word for "this came from that", not a grant. A run
-        spends against the opt-in its own caller submitted, and nothing propagates."""
+        """Resolves `params` (a `contextId`/`taskId`/message envelope) to a thread and run, creating or reopening whichever is needed, and returns `(run_id, thread_id, is_live)`."""
         funduq = self._funduq
         async with funduq.session() as session:
             record = await repo.get_agent(session, agent)
@@ -378,24 +276,10 @@ class A2AAdapter:
             messages = a2a_message_to_agui_messages(params.get("message", {}))
             run_input = {"thread_id": thread_id, "messages": messages}
 
-            # Two lanes. A message whose taskId names this thread's paused
-            # (input-required) task resumes that run with whatever it says —
-            # funduq never checks that it answers the question; the provider
-            # judges answer-vs-redirect from the thread's shape (the reopen
-            # is status-guarded so two concurrent resumes resolve to one;
-            # the loser lands in the queue lane like any other utterance).
-            # Every other message becomes a new queued run on the thread.
-            # taskId carries no further meaning here — v1.0 defines none for
-            # a task that isn't asking, and funduq doesn't invent one.
-            # Asking to join a turn already in flight is a different verb and
-            # an explicit one: the interjection extension
-            # (ADDRESSED_RUN_METADATA_KEY, copied into forwardedProps below).
-            # Intent is declared by the caller, never inferred from the
-            # target's state.
+            # Two lanes.
             task_id = params.get("taskId")
             addressed = await repo.get_run(session, task_id) if task_id else None
-            # None all the way through for an unbound run: there is no
-            # authority set to check against, so there is none to record.
+            # None all the way through for an unbound run: there is no authority set to check against, so there is none to record.
             answered_by = None
             if (
                 addressed is not None
@@ -403,8 +287,7 @@ class A2AAdapter:
                 and addressed.status == "input-required"
                 and addressed.head_key is not None
             ):
-                # A chained ask names its authorities; the resolution must be
-                # signed by one of them. Raises InvalidResolution otherwise.
+                # A chained ask names its authorities; the resolution must be signed by one of them.
                 answered_by = verify_resolution(
                     metadata.get("resolution") or {},
                     task_id,
@@ -427,12 +310,10 @@ class A2AAdapter:
             if reopened:
                 run_id = task_id
                 starting_seq = await repo.get_last_event_seq(session, run_id)
-                # A resume is the same run continuing: relay the chain and
-                # head it was opened under, not the answering party's.
+                # A resume is the same run continuing: relay the chain and head it was opened under, not the answering party's.
                 chain, head_key = addressed.actor_chain, addressed.head_key
             else:
-                # Signed before the run is created, so the record keeps
-                # exactly what the agent receives.
+                # Signed before the run is created, so the record keeps exactly what the agent receives.
                 chain = relayed_chain(funduq, actor_chain, agent)
                 await repo.ensure_queue_room(
                     session, thread_id, funduq.settings.thread_queue_limit
@@ -451,8 +332,7 @@ class A2AAdapter:
                 head_key=head_key,
                 actor_chain=chain,
                 kyok=kyok,
-                # The extension convention puts the key in the Message's own
-                # metadata map; the request-level map is accepted too.
+                # The extension convention puts the key in the Message's own metadata map; the request-level map is accepted too.
                 addressed_run_id=(
                     (params.get("message", {}).get("metadata") or {}).get(
                         ADDRESSED_RUN_METADATA_KEY
@@ -480,9 +360,7 @@ def _skills(raw_skills: list[dict[str, Any]]) -> list[pb.AgentSkill]:
 
 
 async def _context_of_task(session, task_id: str | None) -> str | None:
-    """The thread a named task belongs to, raising A2A's own `TaskNotFoundError` for an unknown
-    one — an id the caller sent that names nothing is A2A's error to report, and reporting it
-    in A2A's vocabulary is what lets the transport map it without a table of funduq's own."""
+    """The thread a named task belongs to, raising A2A's own `TaskNotFoundError` for an unknown one — an id the caller sent that names nothing is A2A's error to report, and reporting it in A2A's vocabulary is what lets the transport map it without a table of funduq's own."""
     if not task_id:
         return None
     run = await repo.get_run(session, task_id)
@@ -504,13 +382,7 @@ def _params(
     actor_chain: list[str] | None,
     metadata: dict[str, Any] | None,
 ) -> dict[str, Any]:
-    """Lifts the fields `_start_run` addresses by name out of the A2A message they live on.
-
-    `contextId`, `taskId` and `referenceTaskIds` are **the message's own
-    fields** — A2A v1.0's `SendMessageRequest` carries only `message` and
-    `metadata`, so there is nowhere else for them to be, and reading them
-    off anything else would be funduq inventing a second address.
-    """
+    """Lifts the fields `_start_run` addresses by name out of the A2A message they live on."""
     combined = dict(metadata or {})
     if actor_chain:
         combined["actorChain"] = actor_chain

@@ -25,23 +25,7 @@ class Link(Enum):
 
 
 class FunduqLinkMachine:
-    """The half of funduq's side that both link kinds share: the handshake, the
-    roster verbs, and replying to a request.
-
-    Agents and completions arrive over different links, to different rosters,
-    with different work on them — but the *opening* is identical, deliberately
-    so: in-process is not trusted, and neither roster gets a shortcut the other
-    does not. Stating it once is the same judgement core makes with `_Roster`,
-    and for the same reason: two copies means a handshake fix has to land
-    twice, which is the defect this package exists to remove one level up.
-
-    A subclass supplies `_work`, which sees every frame the base does not
-    answer, and `_abandoned`, which names what a lost connection will never
-    answer. **Registration is a subclass's**, because it is the one roster verb
-    whose shape differs: agents are published as records, LLM offerings as
-    names plus one metadata document. Deleting and querying are the same shape
-    for both and stay here.
-    """
+    """The half of funduq's side that both link kinds share: the handshake, the roster verbs, and replying to a request."""
 
     def __init__(self) -> None:
         self.state = Link.AWAITING_CONNECT
@@ -101,9 +85,7 @@ class FunduqLinkMachine:
         return []
 
     def connection_lost(self) -> Turn:
-        """The connection ended. Says the fact and draws no conclusion: what an
-        in-flight piece of work becomes is core's verdict, not this
-        machine's."""
+        """The connection ended."""
         if self.state is Link.CLOSED:
             return EMPTY
         self.state = Link.CLOSED
@@ -121,12 +103,7 @@ class FunduqLinkMachine:
     # -- driver -> machine ---------------------------------------------
 
     def accept_connect(self, answer: str | None) -> Turn:
-        """Let the link in, relaying funduq's answering signature.
-
-        The proof is not verified here: the ticket store is core's, and a
-        ticket is spent only once the key it names matches, so a stranger who
-        merely saw one cannot burn it. The driver takes `ConnectRequested` to
-        `attach_provider` and brings back what it answered."""
+        """Let the link in, relaying funduq's answering signature."""
         if self.state is not Link.VERIFYING:
             raise RuntimeError("nothing is waiting to be let in")
         if self._connecting is not None:
@@ -163,14 +140,7 @@ class FunduqLinkMachine:
 
 
 class ProviderLinkMachine:
-    """The provider's half of the same shared opening.
-
-    The machine signs the connect rather than taking a proof, because the one
-    thing a transport author must not get wrong there is *what* is signed: the
-    pinned funduq key goes into the bytes, so a proof one funduq coaxes out
-    cannot be relayed to attach at another. And "check the answer before
-    producing anything" is structural — `CONNECTING` emits no other frame.
-    """
+    """The provider's half of the same shared opening."""
 
     def __init__(
         self, identity: ProviderIdentity, *, funduq_public_key: str | None = None

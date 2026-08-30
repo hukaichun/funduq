@@ -29,22 +29,7 @@ if TYPE_CHECKING:
 
 @dataclass
 class EventStream:
-    """A live run's AG-UI events, addressable by thread and run id before they are consumed.
-
-    The events, not a framing of them. This used to carry an `encode()` that
-    serialised each one to JSON while the serving layer added the `data:` and
-    the blank line — half of SSE on each side of the boundary, with no
-    principle deciding which half went where. Framing is now entirely the
-    transport's.
-
-    One rule constrains how a transport may frame these, and it is the
-    unknown-event rule: an event whose `type` funduq does not recognise is
-    relayed as **the original mapping**, so a serialiser that only accepts
-    AG-UI's typed models (`ag_ui.encoder.EventEncoder` is one — it calls
-    `model_dump_json` on what it is given) cannot be applied blindly. A
-    provider on a newer AG-UI, or one marking its own absorption point with
-    an event of its own naming, must survive the trip.
-    """
+    """A live run's AG-UI events, addressable by thread and run id before they are consumed."""
 
     thread_id: str
     run_id: str
@@ -53,9 +38,7 @@ class EventStream:
 
 @dataclass
 class ThreadSnapshot:
-    """Returned instead of a new run's `EventStream` when the target thread already has an
-    active run that the incoming request isn't resuming; carries the thread's current state,
-    including the in-flight run's id."""
+    """Returned instead of a new run's `EventStream` when the target thread already has an active run that the incoming request isn't resuming; carries the thread's current state, including the in-flight run's id."""
 
     data: dict[str, Any]
 
@@ -72,22 +55,7 @@ class AGUIAdapter:
         *,
         presenter_key: str | None = None,
     ) -> EventStream | ThreadSnapshot:
-        """Starts (or resumes) an AG-UI run for `agent`. An unseen `body.thread_id` gets a new
-        thread under a **funduq-minted id** — the caller's own id is deliberately not adopted, and
-        the `threadId` on every returned event is the authoritative one to continue with (funduq
-        owns its record's primary keys; a caller-chosen name has no caller identity to scope it
-        to yet — see the design record on conversation naming rights). The caller-supplied
-        `run_id` is likewise ignored in favour of funduq's own. A run on a thread
-        that already has one in flight is accepted and offered to the provider in arrival
-        order; whether the provider runs it immediately, holds it, or folds it into the turn
-        in flight is the provider's own decision, and the returned stream stays silent until
-        the provider starts producing. An AG-UI client normally holds one session per thread,
-        so a second concurrent run is unusual but not refused. A resume with no surviving paused run to target (another caller answered first)
-        gets a `ThreadSnapshot` instead of a stream. If the agent is registered but not currently
-        served, the run is recorded as failed and the returned stream carries a `RUN_ERROR` event
-        rather than hanging. Raises `AgentNotFound` if `agent` isn't registered,
-        `LlmProviderNotFound` if a KYOK opt-in names an unknown LLM provider, and
-        `InvalidRunInput` if the assembled AG-UI input is invalid."""
+        """Starts (or resumes) an AG-UI run for `agent`."""
         funduq = self._funduq
         async with funduq.session() as session:
             if await repo.get_agent(session, agent) is None:
@@ -108,23 +76,7 @@ class AGUIAdapter:
                 head_key=head_key,
             )
 
-            # AG-UI declares its entrance in the body, two ways, because it has
-            # two carriers for the one thing. A `resume` payload declares a
-            # result outright. A tool message declares one by naming the call
-            # it answers — the same grammar as A2A's `taskId`, only finer: it
-            # addresses the ask rather than the run. Neither is inferred from
-            # the target's state; both are the caller saying what it sent.
-            #
-            # The difference is what happens when the addressing misses. A
-            # `resume` that finds no ask is a result that lost its race, and
-            # gets the thread as it stands. A tool message that answers
-            # nothing pending is honestly just a message, so it enters as an
-            # utterance — the rule the A2A lane already follows.
-            #
-            # Answering *some* of the asks is not answering: the provider must
-            # hand its model a result for every call in the turn or it cannot
-            # take a step, so a partial reply lands as an utterance and leaves
-            # the ask standing rather than reopening a run that would fail.
+            # AG-UI declares its entrance in the body, two ways, because it has two carriers for the one thing.
             messages = [m.model_dump(mode="json", by_alias=True) for m in body.messages]
             answers_a_tool_call = any(m.get("role") == "tool" for m in messages)
             paused = (
@@ -142,9 +94,7 @@ class AGUIAdapter:
             if isinstance(input_dump.get("metadata"), dict):
                 input_dump["metadata"] = strip_kyok_context(input_dump["metadata"])
 
-            # Signed before the run is created, so the record keeps exactly
-            # what the agent receives. Replaced below when this turned out to
-            # land on an ask: a resume is the same run continuing.
+            # Signed before the run is created, so the record keeps exactly what the agent receives.
             chain = relayed_chain(funduq, actor_chain, agent)
 
             opened = await open_run(
@@ -164,9 +114,7 @@ class AGUIAdapter:
                 protocol="ag-ui",
             )
             if opened is None:
-                # A result with no ask to land on: there was none, or another
-                # caller answered first. It must not enter dressed as an
-                # utterance, so the caller gets the thread as it now stands.
+                # A result with no ask to land on: there was none, or another caller answered first.
                 return ThreadSnapshot(await repo.get_thread_snapshot(session, thread_id))
             run_id, starting_seq = opened.run_id, opened.starting_seq
             if opened.landed_on_ask:
@@ -185,9 +133,7 @@ class AGUIAdapter:
                 tools=[t.model_dump(mode="json", by_alias=True) for t in body.tools],
                 context=[c.model_dump(mode="json", by_alias=True) for c in body.context],
                 resume=resume,
-                # The caller's own parentRunId, relayed verbatim — AG-UI's
-                # field for placing another run's id on this input; the
-                # agent judges what the repetition means from its own loop.
+                # The caller's own parentRunId, relayed verbatim — AG-UI's field for placing another run's id on this input; the agent judges what the repetition means from its own loop.
                 parent_run_id=body.parent_run_id,
                 forwarded_props=body.forwarded_props,
                 protocol="ag-ui",

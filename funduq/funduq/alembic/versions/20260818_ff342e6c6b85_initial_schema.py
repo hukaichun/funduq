@@ -1,10 +1,4 @@
-"""initial schema
-
-Revision ID: ff342e6c6b85
-Revises: 
-Create Date: 2026-08-18 04:44:51.394323
-
-"""
+"""initial schema Revision ID: ff342e6c6b85 Revises: Create Date: 2026-08-18 04:44:51.394323."""
 from typing import Sequence, Union
 
 from alembic import op

@@ -8,15 +8,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 
 class DeliveredCompletion(BaseModel):
-    """One completion request as the LLM provider's handler receives it — and the declared wire form of one.
-
-    A transport carries exactly `model_dump(by_alias=True)` of this
-    (camelCase keys) and rebuilds it with `model_validate`; the canonical
-    frame is published in `docs/contract-vectors.json`. `body` is an
-    OpenAI-shaped completion-create object relayed as-is — funduq is a relay,
-    not a validator, so it stays a dict here and openai's types are the
-    authority on its inside.
-    """
+    """One completion request as the LLM provider's handler receives it — and the declared wire form of one."""
 
     model_config = ConfigDict(frozen=True, populate_by_name=True)
 
@@ -46,15 +38,7 @@ CompletionHandler = Callable[[DeliveredCompletion], AsyncIterator[ChatCompletion
 
 
 class CompletionRefused(Exception):
-    """Raise from a `CompletionHandler` to answer with a structured refusal instead of an opaque failure.
-
-    `refusal` travels intact through funduq's relay to the calling agent — the
-    library defines only this envelope, never the vocabulary inside it; what
-    the payload means is between this provider and its callers. The attribute
-    name is the contract funduq reads duck-typed (any exception carrying a
-    `refusal` dict), so neither package imports the other. Any other
-    exception still collapses to an unstructured failure.
-    """
+    """Raise from a `CompletionHandler` to answer with a structured refusal instead of an opaque failure."""
 
     def __init__(self, refusal: dict[str, Any]) -> None:
         super().__init__(str(refusal))

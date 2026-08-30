@@ -1,13 +1,4 @@
-"""The link's state machine, shipped as code instead of described in prose.
-
-Both halves, sans-io: they consume frames, emit frames and events, perform no
-I/O and read no clock. What used to be a page of orderings each transport
-re-derived — the handshake sequence, the three-valued answer, what a dropped
-link ends — is a transition table here, and a test can drive it as an ordered
-script rather than a sleep.
-
-See `docs/link-protocol-machine.md`.
-"""
+"""The link's state machine, shipped as code instead of described in prose."""
 
 from funduq_provider_sdk.protocol.codec import decode, encode
 from funduq_provider_sdk.protocol.events import (

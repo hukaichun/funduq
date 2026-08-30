@@ -24,30 +24,10 @@ _SETTLED = (OfferState.CLAIMED, OfferState.DECLINED, OfferState.REFUSED)
 
 
 class FunduqSide(FunduqLinkMachine):
-    """funduq's half of an agent link, as a machine: frames in, frames and
-    events out.
-
-    It performs no I/O and reads no clock — time enters as `now` and leaves as
-    `next_deadline()`. That is what sans-io buys here, and it is what makes
-    every ordering testable as an ordered script instead of a sleep.
-
-    A driver mounts this between its connection and a `Funduq` object: it
-    presents `CONNECTED_PROVIDER_ATTRS` upward and turns each event into the
-    one `Funduq` call the event names. It imports nothing from core.
-
-    **There is no registration state.** This machine never learns which agents
-    the link serves, so an offer arriving before a `Register` has been
-    answered violates nothing — there is nothing for it to violate. The window
-    is real and wide: core's roster goes live and nudges the broker before
-    `register_agents` does its write and commit, which on Postgres is a
-    network round trip.
-    """
+    """funduq's half of an agent link, as a machine: frames in, frames and events out."""
 
     def __init__(self, *, deliver_timeout: float) -> None:
-        """`deliver_timeout` is core's own `deliver_timeout_seconds`, handed in
-        rather than defaulted here: one number, one definition, and a machine
-        that disagreed with the broker it serves would hand a run back while
-        the broker was still waiting for it."""
+        """`deliver_timeout` is core's own `deliver_timeout_seconds`, handed in rather than defaulted here: one number, one definition, and a machine that disagreed with the broker it serves would hand a run back while the broker was still waiting for it."""
         super().__init__()
         self._deliver_timeout = deliver_timeout
         self._offers: dict[str, OfferState] = {}
@@ -57,12 +37,7 @@ class FunduqSide(FunduqLinkMachine):
         if isinstance(frame, fr.Register):
             return Turn([], [ev.Registering(id=frame.id, agents=frame.agents)])
         if isinstance(frame, fr.Report):
-            # Deliberately not checked against `_offers`. Events are addressed
-            # by run, and whether this key may speak for that run is core's
-            # question, answered against `claimed_by` — which includes letting
-            # a provider claim late by producing for a run funduq had given up
-            # waiting for. A machine that gated this on its own table would
-            # look obviously right and would make that path unreachable.
+            # Deliberately not checked against `_offers`.
             return Turn([], [ev.Reported(run_id=frame.run_id, event=frame.event)])
         if isinstance(frame, fr.Finish):
             return Turn([], [ev.Finished(run_id=frame.run_id)])
@@ -95,12 +70,7 @@ class FunduqSide(FunduqLinkMachine):
         return abandoned
 
     def timeout(self, now: float) -> Turn:
-        """Fires every armed deadline `now` has passed.
-
-        A timed-out offer is not forgotten: its id stays, so an answer arriving
-        afterwards is surfaced as `late` rather than read as an answer to an
-        offer that was never made. Forgetting it is the instinct, and it turns
-        a provider's late honesty into a protocol error."""
+        """Fires every armed deadline `now` has passed."""
         events: list[ev.Event] = []
         for offer_id in sorted(i for i, at in self._deadlines.items() if at <= now):
             del self._deadlines[offer_id]
@@ -112,13 +82,7 @@ class FunduqSide(FunduqLinkMachine):
         return min(self._deadlines.values(), default=None)
 
     def offer(self, run: DeliveredRun, *, now: float) -> tuple[str, Turn]:
-        """Hand `run` down and arm its deadline. Returns the offer's id, which
-        is what a later `Answered` names.
-
-        Each offer gets its own id rather than reusing the run's: a run
-        declined once is offered again later, and an answer to the first offer
-        arriving after the second was made would otherwise be read as an
-        answer to the second."""
+        """Hand `run` down and arm its deadline."""
         if self.state is not Link.OPEN:
             raise RuntimeError("the link is not open")
         offer_id = self._claim_id()
@@ -127,8 +91,7 @@ class FunduqSide(FunduqLinkMachine):
         return offer_id, Turn([fr.Offer(id=offer_id, run=run)], [])
 
     def cancel(self, run_id: str) -> Turn:
-        """Ask the provider to stop. A request to the agent, not a verdict on
-        the run — nothing here settles anything."""
+        """Ask the provider to stop."""
         if self.state is not Link.OPEN:
             return EMPTY
         return Turn([fr.Cancel(run_id=run_id)], [])

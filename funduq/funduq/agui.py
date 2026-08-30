@@ -16,9 +16,7 @@ _MESSAGE_ID_EVENT_TYPES = {
 
 
 def rewrite_message_ids(event: dict[str, Any], id_map: dict[str, str]) -> dict[str, Any]:
-    """Replaces a text-message event's `messageId` with a funduq-issued id, reusing the same
-    funduq id for every event sharing the original id (tracked in `id_map`). Events outside the
-    text-message-lifecycle types, or without a `messageId`, are returned unchanged."""
+    """Replaces a text-message event's `messageId` with a funduq-issued id, reusing the same funduq id for every event sharing the original id (tracked in `id_map`)."""
     if event.get("type") not in _MESSAGE_ID_EVENT_TYPES:
         return event
     original = event.get("messageId")
@@ -39,14 +37,7 @@ def build_run_agent_input(
     resume: list[dict[str, Any]] | None = None,
     parent_run_id: str | None = None,
 ) -> dict[str, Any]:
-    """Builds and validates a wire-format AG-UI `RunAgentInput` dict from the given fields,
-    raising `ValueError` if the assembled input fails AG-UI's own validation.
-
-    `parent_run_id` is AG-UI's own field for placing another run's id on this
-    input. The id appearing a second time is the entire semantics: the caller
-    says this run follows that one. Whether it lands as a continuation or an
-    interjection is decided by the one fact funduq cannot hold — whether the
-    parent is still in flight — which the agent reads off its own loop."""
+    """Builds and validates a wire-format AG-UI `RunAgentInput` dict from the given fields, raising `ValueError` if the assembled input fails AG-UI's own validation."""
     try:
         model = RunAgentInput.model_validate(
             {

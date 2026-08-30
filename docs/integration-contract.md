@@ -46,7 +46,7 @@ client has the slot). A session delegation certificate under
 one. A thread opened without a chain keeps the open
 behavior on this page forever — a later chained writer cannot lock it.
 The mechanics are in
-[Responsibility chains](mechanisms/responsibility-chains.md).
+Responsibility chains.
 
 One small carve-out keeps the record honest: the metadata keys funduq
 itself writes into a run's record — `interrupts`, `pendingToolCalls`,
@@ -63,7 +63,7 @@ funduq neither reads, rewrites, summarizes, nor drops them. It is what
 makes the slot usable for mechanisms funduq does not provide — the
 worked example is a **voucher**, since funduq cannot know that a key
 belongs to a particular employee and a deployment's own SSO can (see
-[responsibility chains](mechanisms/responsibility-chains.md)). Anything
+responsibility chains). Anything
 built on this passthrough is building on the contract.
 
 What funduq adds to `forwardedProps` it adds *beside* the caller's own
@@ -168,7 +168,7 @@ client author needs them.
   funduq does not pace a provider's conversation, so whether the new
   turn runs at once, waits, or is folded into the turn in flight is the
   agent's own decision. (The
-  [gate-retirement record](design-records.md#the-thread-gate-is-retired-funduq-does-not-pace-a-providers-conversation)
+  gate-retirement record
   explains why funduq once made that decision itself, and stopped.)
 - **Asking to join a turn in flight is a declared extension, never an
   inference.** Under the interjection extension
@@ -196,7 +196,7 @@ client author needs them.
   ids. The asymmetry is each protocol's own grammar; the shared rule and
   its reasoning — funduq is a relay between two owners, and a caller's
   naming rights have no caller identity to scope them to yet — are in
-  [the design record](design-records.md#conversation-naming-rights-wait-for-a-caller-to-own-them).
+  the design record.
 - **An offline agent looks like a failed task, not an error.** The run
   is recorded `failed` with `agent_offline`, and the task comes back
   `FAILED` with no message part.
@@ -225,8 +225,8 @@ client author needs them.
 
 What the plumbing actually is — the six signed payload families, the
 link-open challenge, actor chains and what they do and do not prove — is
-[Identity is an Ed25519 keypair](mechanisms/identity.md) and
-[Actor chain](mechanisms/actor-chain.md). How to carry all of it over a
+Identity is an Ed25519 keypair and
+Actor chain. How to carry all of it over a
 wire of your own is [Writing a transport](writing-a-transport.md). This
 page is the contract; those are the mechanisms it obliges funduq to
 publish.

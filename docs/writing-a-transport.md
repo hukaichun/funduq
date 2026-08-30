@@ -26,7 +26,7 @@ exchange that decides whether either side is talking to who it thinks —
 and, since nothing a provider does to its own roster is signed any more,
 it is the only place a key is ever proved. The payload bytes and why each
 field is in them are in
-[Contract and identity](core-components/contract-identity.md); what
+Contract and identity; what
 follows is the call sequence a transport has to relay.
 
 **1. funduq issues a ticket to the key, over a channel that is not the link.**
@@ -46,7 +46,7 @@ worthless, because only the named key can sign the answer, and a
 stranger cannot burn it either (the name is matched *before* the ticket
 is destroyed). It exists at all because a signature whose only liveness
 is a self-chosen timestamp is replayable by anyone on the path — see
-[the design record](design-records.md#the-verifier-chooses-the-freshness).
+the design record.
 
 **Do not fetch it over the link being opened.** Core keeps the verb off
 the link's operation set so it cannot be, and a ticket obtained over the
@@ -175,8 +175,7 @@ Nothing wider than the conversation waits: other threads, other agents
 and other providers hand over meanwhile.
 
 funduq cannot check this across a wire it does not own, so it is
-recorded as [an assumption it rests
-on](design-records.md#an-offers-answer-is-a-receipt-and-arrives-promptly)
+recorded as an assumption it rests on
 rather than a rule it enforces — including what a violation costs, which
 is bounded to the one conversation.
 
@@ -276,7 +275,7 @@ nothing to relay it as.
 
 So do not filter unknown event types on the way through, and do not
 wrap them: see
-[the design record](design-records.md#wrapping-an-unknown-event-in-rawevent-is-quiet-corruption)
+the design record
 for why `RawEvent` is the wrong shape for this.
 
 ## Prove it against the vectors

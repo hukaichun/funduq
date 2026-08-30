@@ -17,31 +17,13 @@ class Provider(Protocol):
 
 @dataclass(frozen=True)
 class Refusal:
-    """A permanent decline of an offered run: this provider will never accept it, so funduq should stop re-offering and fail the run.
-
-    `reason` is this provider's own words; funduq records it verbatim on the
-    run's failure record. Return one from `FunduqLink.offer` instead of `False`
-    (which means "full right now, offer again later"). funduq reads the refusal
-    duck-typed by its `reason` attribute — the attribute name is the
-    contract."""
+    """A permanent decline of an offered run: this provider will never accept it, so funduq should stop re-offering and fail the run."""
 
     reason: str
 
 
 class Registration(BaseModel):
-    """One agent as it is published on a link — and the declared wire form of one.
-
-    A model rather than a loose dict because the shape was already published
-    without a type: `REGISTRATION_FIELDS` named the keys and nothing checked
-    them, so a misspelt one travelled intact and core dropped it silently
-    (`agent.get("description", "")` cannot tell a missing field from a typo).
-    `extra="forbid"` is the point of the exercise.
-
-    Two dumps, deliberately: `model_dump(by_alias=True)` is the wire form,
-    camelCase like every other frame; plain `model_dump()` is what
-    `Funduq.register_agents` reads, which is snake_case. A transport that
-    carried raw dicts had to know both spellings.
-    """
+    """One agent as it is published on a link — and the declared wire form of one."""
 
     model_config = ConfigDict(frozen=True, populate_by_name=True, extra="forbid")
 
@@ -52,21 +34,7 @@ class Registration(BaseModel):
 
 
 class DeliveredRun(BaseModel):
-    """The run data handed to a `FunduqLink`, translated from funduq's internal claimed-run representation — and the declared wire form of an offered run.
-
-    A transport carries exactly `model_dump(by_alias=True)` of this
-    (camelCase keys, `runInput` as AG-UI's own camelCase form) and rebuilds
-    it with `model_validate`; the canonical frame is published in
-    `docs/contract-vectors.json`, so no transport hand-writes the mapping.
-    `metadata` is part of the wire contract, defaulting to empty.
-    `run_input.forwarded_props` is the caller's free-form slot, plus what
-    funduq adds: a `kyok` grant when the run is KYOK-bound (validate with
-    this package's `KyokForwardedProps`, the independent twin of funduq's
-    model, pinned by the delivered-run frame in
-    `docs/contract-vectors.json`) and the caller's own `actorChain`,
-    relayed verbatim — verify it yourself with `verify_chain`; funduq
-    authors no digest of it.
-    """
+    """The run data handed to a `FunduqLink`, translated from funduq's internal claimed-run representation — and the declared wire form of an offered run."""
 
     model_config = ConfigDict(frozen=True, populate_by_name=True)
 
@@ -78,11 +46,7 @@ class DeliveredRun(BaseModel):
 
     @classmethod
     def from_claimed(cls, run: Any) -> "DeliveredRun":
-        """Translates funduq's claimed-run object (read by attribute, never imported) into the delivered form.
-
-        Raises pydantic's `ValidationError` if the input doesn't validate as
-        a `RunAgentInput` — a permanent condition, not a transient one.
-        """
+        """Translates funduq's claimed-run object (read by attribute, never imported) into the delivered form."""
         return cls(
             run_id=run.run_id,
             agent_name=run.agent.name,
@@ -123,18 +87,7 @@ class HandleProvider:
 def serialize_per_thread(
     run_stream: Callable[[RunAgentInput], AsyncIterator[Any]],
 ) -> Callable[[RunAgentInput], AsyncIterator[Any]]:
-    """Wraps an agent callable so runs of the same thread execute one at a
-    time, in arrival order; runs on different threads still interleave freely.
-
-    funduq delivers a thread's utterances as they arrive and deliberately
-    imposes no turn-taking of its own — sequencing a conversation is the
-    agent author's decision. This wrapper is that decision's off-the-shelf
-    form: wrap the callable you hand to `AgentHandle` and each thread becomes
-    one turn at a time. Don't wrap an agent that absorbs interjections
-    (runs declared via `forwardedProps.addressedRunId`) — an interjection
-    must reach the agent *during* the turn it asks to join, which is exactly
-    what this wrapper prevents. Runs with no `thread_id` are not serialized against anything.
-    """
+    """Wraps an agent callable so runs of the same thread execute one at a time, in arrival order; runs on different threads still interleave freely."""
     locks: dict[str, asyncio.Lock] = {}
 
     async def serialized(run_input: RunAgentInput) -> AsyncIterator[Any]:

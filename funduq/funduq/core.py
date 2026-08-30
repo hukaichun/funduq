@@ -107,25 +107,14 @@ class RunHandle:
 
 
 class _Roster(abc.ABC):
-    """One live roster of served names, stated once for both vocabularies.
-
-    The agent roster and the LLM-offering roster share these semantics:
-    registration is signed and fresh, and re-registering a subset withdraws
-    the omitted names from live serving; attaching requires prior
-    registration, touches, and announces; detaching is a silent no-op when
-    nothing is served. The steps live here because two hand-kept copies
-    drifted twice — a member-by-member fix first, then a probe catching the
-    withdraw step missing on the LLM side — and a copy of a base can't
-    drop a step.
-    """
+    """One live roster of served names, stated once for both vocabularies."""
 
     party: str
     served: str
 
     def __init__(self, funduq: "Funduq") -> None:
         self._funduq = funduq
-        # public key -> the links it has open. Registering and deleting are
-        # operations on one of these; nothing else is.
+        # public key -> the links it has open.
         self._open: dict[str, list[Any]] = {}
 
     @abc.abstractmethod
@@ -153,14 +142,7 @@ class _Roster(abc.ABC):
         return self._open.get(public_key, [])
 
     def require_open(self, connection: Any) -> None:
-        """Raises unless `connection` completed a handshake and has not detached.
-
-        **The link is the credential.** Registering and deleting carry no
-        signature of their own because the key was proved once, when the link
-        opened, and re-proving it per operation is what the four retired
-        payload families were doing. What this asks of a transport in return
-        is the ordinary thing: an open link stays the party that opened it.
-        """
+        """Raises unless `connection` completed a handshake and has not detached."""
         if connection not in self._open.get(connection.public_key, []):
             raise InvalidRegistration(
                 f"{self.party} '{connection.public_key}' is not on an open link — "
@@ -175,29 +157,7 @@ class _Roster(abc.ABC):
         provider_nonce: str | None = None,
         proof: str | None = None,
     ) -> str | None:
-        """Authenticate and open a link. **No names**: registering is what puts one live.
-
-        `proof` is a signature over `provider_connect_payload(this
-        funduq's public key, ticket, provider_nonce)`, where `ticket` came
-        from `Funduq.issue_ticket` **and names this key**. funduq chose it and
-        destroys it here, so a recording is worthless; the payload names this
-        funduq as the recipient, so a proof coaxed out by one funduq cannot be
-        relayed to attach at another. A connection that can sign (it exposes
-        `sign_connect`, as the in-process links do) is ticketed and verified
-        automatically; in-process is not trusted either. A connection that
-        offers no proof is rejected, and there is deliberately no way to
-        switch this off — one handshake everywhere is what lets a provider in
-        any language implement it once against the published vectors.
-
-        funduq answers in kind: the return value is its own signature over
-        `funduq_connect_payload(ticket, provider_nonce)` — the proof a
-        provider checks against the funduq key it pinned — or None if this
-        funduq has no identity configured and so cannot prove itself. A
-        transport relays the answer to the far side; a connection exposing
-        `confirm_connect` (as the in-process links do) is handed it before the
-        link is recorded open, so a provider that pins can refuse the wrong
-        funduq by raising there.
-        """
+        """Authenticate and open a link."""
         signer = getattr(connection, "sign_connect", None)
         if proof is None and callable(signer):
             ticket = self._funduq.issue_ticket(connection.public_key)
@@ -235,19 +195,7 @@ class _Roster(abc.ABC):
         names: list[str],
         store: Callable[[AsyncSession], Any],
     ) -> Any:
-        """Publish `names` on an open link and serve them from it.
-
-        One act, because it was always one act: what a name *is* and who is
-        answering for it right now are decided together, by the party that
-        holds the key, on the link that proved it. Nothing here is signed —
-        the link is.
-
-        **Not registered is offline.** The names this connection serves are
-        exactly the ones it last registered, so a smaller batch takes the
-        omitted ones off the roster. Names the same key serves on a
-        *different* link are untouched: a provider may split its agents
-        across processes, and each link answers for what it registered.
-        """
+        """Publish `names` on an open link and serve them from it."""
         self.require_open(connection)
         if not names:
             raise ValueError(
@@ -272,13 +220,7 @@ class _Roster(abc.ABC):
         return registered
 
     def take_offline(self, connection: Any, name: str) -> None:
-        """Withdraw one name this connection serves, ahead of deleting its record.
-
-        Deleting happens on the link that serves the name, so "something is
-        serving it" cannot be the guard it used to be — the caller is that
-        something. What still guards a deletion is what the record means:
-        a name with a conversation behind it stays.
-        """
+        """Withdraw one name this connection serves, ahead of deleting its record."""
         ref = self.ref(connection.public_key, name)
         if self.live(ref) is connection:
             self.withdraw([ref])
@@ -287,20 +229,7 @@ class _Roster(abc.ABC):
     def live(self, ref: Any) -> Any: ...
 
     def detach(self, public_key: str, connection: Any) -> None:
-        """Take offline the names of `public_key` that `connection` currently serves;
-        a no-op (no change event) if it serves none.
-
-        funduq holds one connection per role: a re-attach under the same key
-        replaces the old connection, and replicas are the provider's own
-        concern behind its single connection. Naming the connection is what
-        makes cleanup after a *replaced* link safe — only names whose current
-        connection is that object (by identity) are withdrawn, so a
-        replacement that already re-attached stays serving. The compare and
-        the withdraw run without an await between them, so nothing can slip
-        a replacement in between. Taking a key offline regardless of which
-        connection serves it is a different, deliberately louder verb:
-        `detach_all`.
-        """
+        """Take offline the names of `public_key` that `connection` currently serves; a no-op (no change event) if it serves none."""
         links = self._open.get(public_key, [])
         if connection in links:
             links.remove(connection)
@@ -313,10 +242,7 @@ class _Roster(abc.ABC):
         self._funduq._notify_change(self.changed())
 
     def detach_all(self, public_key: str) -> None:
-        """Take every name served by `public_key` offline, whichever connection
-        serves it; a no-op (no change event) if nothing is. The eviction form —
-        cleanup after one closed link belongs to `detach`, which cannot take
-        down a replacement."""
+        """Take every name served by `public_key` offline, whichever connection serves it; a no-op (no change event) if nothing is."""
         self._open.pop(public_key, None)
         attached = self.served_by(public_key)
         if not attached:
@@ -389,12 +315,7 @@ class Funduq:
     """The network-free facade: agent/LLM-provider rosters, threads, runs, and dispatch."""
 
     def __init__(self, settings: CoreSettings, broker: RunBroker | None = None) -> None:
-        """`settings` is required, and used to default to `CoreSettings()` —
-        which read the process environment, so `Funduq()` quietly configured
-        itself from ambient state its caller never mentioned. A deployment
-        that wants that behaviour asks for it by name:
-        `Funduq(CoreSettings.from_env())`.
-        """
+        """`settings` is required, and used to default to `CoreSettings()` — which read the process environment, so `Funduq()` quietly configured itself from ambient state its caller never mentioned."""
         self.settings = settings
         self.identity = FunduqIdentity.from_hex(self.settings.identity_private_key)
         self.engine = _create_engine(self.settings)
@@ -407,8 +328,7 @@ class Funduq:
         self.broker.add_forget_listener(self.kyok_relay.discard)
         self._agent_roster = _AgentRoster(self)
         self._llm_roster = _LlmRoster(self)
-        # ticket -> (the key it admits, when it was issued). Node-local, like
-        # everything else about a connection.
+        # ticket -> (the key it admits, when it was issued).
         self._tickets: dict[str, tuple[str, float]] = {}
         self._tasks: set[asyncio.Task] = set()
         self._started = False
@@ -425,28 +345,7 @@ class Funduq:
         return self.identity.public_key
 
     def issue_ticket(self, public_key: str) -> str:
-        """Mint a single-use ticket admitting `public_key` to open a link, and
-        return it.
-
-        **Issuing is the admission decision.** A key with no ticket cannot
-        connect at all, so whoever calls this — over whatever channel the
-        deployment gives it — is the party that decides who may serve here.
-
-        The ticket names the key it admits, and that is what makes it safe to
-        hand across a channel funduq does not control: a leaked ticket is
-        worthless, because only the named key can produce the signature that
-        answers it, and a stranger cannot burn it (the name is matched before
-        it is destroyed — see `_claim_ticket`).
-
-        **This is deliberately not an operation on a connection**, and must
-        not become one. A ticket fetched over the link would mean the link
-        existed before anything authorised it. Core keeps the verb here and
-        out of the link's operation set; whether a deployment really uses a
-        separate channel is the transport's to answer, and its guide says so.
-
-        Valid for the signature freshness window, and destroyed by the
-        handshake that answers it.
-        """
+        """Mint a single-use ticket admitting `public_key` to open a link, and return it."""
         now = time.time()
         self._tickets = {
             ticket: issued
@@ -458,15 +357,7 @@ class Funduq:
         return ticket
 
     def _claim_ticket(self, ticket: str, public_key: str) -> bool:
-        """Spends `ticket` if it exists, is fresh, and was issued to `public_key`.
-
-        **Matched before it is destroyed, and destroyed only for the key it
-        names.** The order is the point: a version that popped first let
-        anyone who had merely *seen* a live ticket burn it with a garbage
-        proof, and the provider it was minted for could not connect. That
-        needs no key at all, so it was a denial available to anyone on the
-        path the ticket travelled.
-        """
+        """Spends `ticket` if it exists, is fresh, and was issued to `public_key`."""
         issued = self._tickets.get(ticket)
         if issued is None or issued[0] != public_key:
             return False
@@ -482,11 +373,7 @@ class Funduq:
 
 
     async def start(self) -> list[str]:
-        """Run once: fail any run left queued/running from a prior process and start dispatch.
-
-        A second call is a no-op that returns an empty list, so it cannot reap runs
-        queued after the first call. Returns the ids of runs marked failed as orphaned.
-        """
+        """Run once: fail any run left queued/running from a prior process and start dispatch."""
         if self._started:
             return []
         self._started = True
@@ -552,16 +439,7 @@ class Funduq:
         agents: list[dict[str, Any]],
         provider_name: str | None = None,
     ) -> Registration:
-        """Publish `agents` on `connection`'s open link and serve them from it.
-
-        Nothing here is signed: the key was proved when the link opened, and
-        this is that link speaking. Raises `InvalidRegistration` if the
-        connection has no open link.
-
-        The names this link serves are exactly the ones it last registered,
-        so registering a smaller roster takes the omitted ones offline —
-        their records stay, readable as `online: false`.
-        """
+        """Publish `agents` on `connection`'s open link and serve them from it."""
         public_key = connection.public_key
         registered = await self._agent_roster.register(
             connection,
@@ -577,19 +455,7 @@ class Funduq:
         )
 
     async def delete_agent(self, connection: Any, name: str) -> None:
-        """Remove an agent's record, on the link that serves it.
-
-        Nothing is signed: this is the open link speaking, and the link
-        proved the key. The name is taken offline first — "a provider is
-        serving it" cannot be a guard when the caller *is* that provider.
-
-        What still guards a deletion is what the record means: **an agent
-        with a conversation behind it stays.** Stop offering it instead and
-        it goes offline and off the roster with its record intact. Raises
-        `AgentNotFound` if unregistered, `AgentInUse` if it has any thread or
-        run history, and `InvalidRegistration` if the connection has no open
-        link.
-        """
+        """Remove an agent's record, on the link that serves it."""
         self._agent_roster.require_open(connection)
         agent = AgentRef(provider_key=connection.public_key, name=name)
         async with self.session() as session:
@@ -610,13 +476,7 @@ class Funduq:
         self._notify_change(RosterChanged())
 
     async def delete_llm_offering(self, connection: Any, name: str) -> None:
-        """Remove an LLM offering's record, on the link that serves it — the mirror of `delete_agent`.
-
-        The offering is taken offline first, so "a provider is serving it"
-        cannot be the guard. A live run bound to it still refuses: that is
-        work in flight, not a connection. Offerings carry no conversation
-        history, so there is no `has_history` refusal.
-        """
+        """Remove an LLM offering's record, on the link that serves it — the mirror of `delete_agent`."""
         self._llm_roster.require_open(connection)
         ref = LlmRef(provider_key=connection.public_key, name=name)
         async with self.session() as session:
@@ -634,10 +494,7 @@ class Funduq:
         self._notify_change(LlmRosterChanged())
 
     def report_event(self, run_id: str, event: Any, *, claimed_by: str) -> bool:
-        """Relay `event` into the run's stream if `claimed_by` holds the run (or can late-claim it).
-
-        Returns False, without relaying, for an unknown run or one held by a different claimant.
-        """
+        """Relay `event` into the run's stream if `claimed_by` holds the run (or can late-claim it)."""
         run = self.broker.get(run_id)
         if run is None:
             return False
@@ -682,16 +539,7 @@ class Funduq:
         provider_nonce: str | None = None,
         proof: str | None = None,
     ) -> str | None:
-        """Open an authenticated link for `provider`. **No names** — registering is
-        what puts one live, and it happens on this link (`register_agents`).
-
-        A transport passes the `ticket` it relayed (from `issue_ticket`, minted
-        for this provider's key), the provider's `provider_nonce`, and the
-        returned `proof`, then relays the returned answer — funduq's own
-        signature, for the provider to check against its pinned funduq key. A
-        connection exposing `sign_connect` does all of that itself. See
-        `_Roster.open`.
-        """
+        """Open an authenticated link for `provider`."""
         return await self._agent_roster.open(
             provider, ticket=ticket, provider_nonce=provider_nonce, proof=proof
         )
@@ -702,12 +550,7 @@ class Funduq:
         names: list[str],
         metadata: dict[str, Any] | None = None,
     ) -> dict[str, LlmRef]:
-        """Publish `names` as LLM offerings on `connection`'s open link and serve
-        them from it — the mirror of `register_agents`.
-
-        An offering this link served and omitted from this batch goes offline;
-        its record stays.
-        """
+        """Publish `names` as LLM offerings on `connection`'s open link and serve them from it — the mirror of `register_agents`."""
         public_key = connection.public_key
         registered = await self._llm_roster.register(
             connection,
@@ -728,45 +571,21 @@ class Funduq:
         provider_nonce: str | None = None,
         proof: str | None = None,
     ) -> str | None:
-        """Open an authenticated link for `link`. Connect authentication — funduq's
-        answering signature included — works exactly as in `attach_provider`, and
-        offerings are published on the open link with `register_llm_providers`.
-        """
+        """Open an authenticated link for `link`."""
         return await self._llm_roster.open(
             link, ticket=ticket, provider_nonce=provider_nonce, proof=proof
         )
 
     def detach_llm_provider(self, public_key: str, connection: Any) -> None:
-        """Take offline the model offerings that `connection` serves for `public_key`;
-        a no-op (no change event) if it serves none.
-
-        Naming the connection is required: it is what keeps cleanup after a
-        replaced link (a closed socket) from taking down the replacement that
-        already re-attached. To evict a key outright, whichever connection
-        serves it, call `detach_all_for`. See `_Roster.detach`.
-        """
+        """Take offline the model offerings that `connection` serves for `public_key`; a no-op (no change event) if it serves none."""
         self._llm_roster.detach(public_key, connection)
 
     def detach_provider(self, provider_public_key: str, connection: Any) -> None:
-        """Take offline the agents that `connection` serves for `provider_public_key`;
-        a no-op if it serves none.
-
-        Naming the connection is required: it is what keeps cleanup after a
-        replaced link (a closed socket) from taking down the replacement that
-        already re-attached. To evict a key outright, whichever connection
-        serves it, call `detach_all_for`. See `_Roster.detach`.
-        """
+        """Take offline the agents that `connection` serves for `provider_public_key`; a no-op if it serves none."""
         self._agent_roster.detach(provider_public_key, connection)
 
     def detach_all_for(self, public_key: str) -> None:
-        """Take `public_key` offline entirely — every agent and every model offering,
-        whichever connections serve them; a no-op where it serves nothing.
-
-        This is the eviction form, per identity, and it is deliberately a
-        different name: cleanup after one closed link belongs to
-        `detach_provider` / `detach_llm_provider`, which cannot take down a
-        replacement. The dangerous operation only answers to its full name.
-        """
+        """Take `public_key` offline entirely — every agent and every model offering, whichever connections serve them; a no-op where it serves nothing."""
         self._agent_roster.detach_all(public_key)
         self._llm_roster.detach_all(public_key)
 
@@ -789,19 +608,14 @@ class Funduq:
     async def mark_run_status(
         self, session: AsyncSession, run_id: str, status: str, metadata: dict[str, Any] | None = None
     ) -> bool:
-        """Applies the status transition (see `repo.LEGAL_STATUS_TRANSITIONS`) and
-        notifies change subscribers only when it actually applied. Returns whether
-        it did — a refused transition means another, legal one won the row."""
+        """Applies the status transition (see `repo.LEGAL_STATUS_TRANSITIONS`) and notifies change subscribers only when it actually applied."""
         applied = await repo.mark_run_status(session, run_id, status, metadata=metadata)
         if applied:
             self._notify_change(RunStatusChanged(run_id=run_id, status=status))
         return applied
 
     async def return_run_to_queue(self, session: AsyncSession, run_id: str) -> bool:
-        """Puts a run whose offer was not accepted back to "queued"
-        (`repo.return_run_to_queue`) and notifies change subscribers only when
-        it actually applied — the mirror of `mark_run_status`, for the one
-        transition that function deliberately does not write."""
+        """Puts a run whose offer was not accepted back to "queued" (`repo.return_run_to_queue`) and notifies change subscribers only when it actually applied — the mirror of `mark_run_status`, for the one transition that function deliberately does not write."""
         applied = await repo.return_run_to_queue(session, run_id)
         if applied:
             self._notify_change(RunStatusChanged(run_id=run_id, status="queued"))
@@ -911,11 +725,7 @@ class Funduq:
         protocol: str,
         seq: int = 0,
     ) -> RunSnapshot | None:
-        """Hands the run to the broker; None if nobody is serving its agent.
-
-        The answer is the broker's, taken with the insert it guards — see
-        `RunBroker.enqueue_run` for why the door must not have asked first.
-        """
+        """Hands the run to the broker; None if nobody is serving its agent."""
         return self.broker.enqueue_run(
             run_id,
             agent,
@@ -934,21 +744,7 @@ class Funduq:
         metadata: dict[str, Any] | None = None,
         presenter_key: str | None = None,
     ) -> RunHandle:
-        """Create (or reuse) a thread, open a queued run on it, and enqueue it for dispatch.
-
-        Returns a live `RunHandle` subscribed to the run's event stream — or, if the agent is
-        registered but nobody is currently serving it, one carrying the same terminal
-        `RUN_ERROR` a caller at either door would get, because the run is recorded `failed` and
-        a silent stream would hide that.
-
-        `run_input` is AG-UI-shaped, and this goes through the very
-        machinery both doors go through (`doors.open_run` then
-        `doors.dispatch`): the caller's metadata is verified and stripped of
-        funduq's reserved keys, a KYOK opt-in is honoured, the messages
-        enter the thread's history, and funduq's forwarded-props are built.
-        Embedding funduq is not a reason to get a weaker entrance than a
-        socket would — the same rule in-process providers live under.
-        """
+        """Create (or reuse) a thread, open a queued run on it, and enqueue it for dispatch."""
         async with self.session() as session:
             caller_metadata, head_key, actor_chain = await verify_caller(session, metadata or {}, presenter_key=presenter_key)
             caller_metadata, kyok = await resolve_kyok(session, caller_metadata)
@@ -962,8 +758,7 @@ class Funduq:
                 self, session,
                 agent=agent,
                 thread_id=resolved_thread_id,
-                # An embedder speaks; it does not answer a pending ask. A
-                # result has its own verb, `resume_run`.
+                # An embedder speaks; it does not answer a pending ask.
                 entrance="utterance",
                 ask=None,
                 run_input=run_input,
@@ -1012,21 +807,7 @@ class Funduq:
         metadata: dict | None = None,
         presenter_key: str | None = None,
     ) -> RunHandle:
-        """Deliver a deferred call's result back into the run it suspended.
-
-        The run **keeps its id**, because it is the same run: a deferred call is a pause inside
-        the agent's loop, not the end of it. The provider sees that pause as an ending — its
-        stream really did return — and funduq holds the run's identity across the gap the
-        provider cannot hold, invoking the agent again with the result attached and continuing
-        the event log from where it stopped.
-
-        Raises `LookupError` if `run_id` doesn't exist, and `NoPendingAsk` if it exists but is
-        not waiting for a result — a run that already reached its natural exit has no
-        suspension to return to, and running it again would put a second loop under one run's
-        id. That is a new run; open one with `start_run`.
-
-        This is the result entrance, and `start_run` is the utterance one. There is no third.
-        """
+        """Deliver a deferred call's result back into the run it suspended."""
         async with self.session() as session:
             stored = await repo.get_run(session, run_id)
             if stored is None:
@@ -1053,9 +834,7 @@ class Funduq:
                 protocol=stored.protocol or "ag-ui",
             )
             if opened is None:
-                # Another result reached the same ask first. The reopen is
-                # status-guarded, so exactly one wins and this one has
-                # nothing left to land on.
+                # Another result reached the same ask first.
                 raise NoPendingAsk(f"run '{run_id}' is no longer waiting for a result")
 
             live = await dispatch(
@@ -1064,9 +843,7 @@ class Funduq:
                     agent=agent,
                     messages=run_input.get("messages", []),
                     metadata=caller_metadata,
-                    # The run's own, not the answering party's: this is the
-                    # same run continuing, and what the agent verifies must
-                    # not change because somebody else answered its pause.
+                    # The run's own, not the answering party's: this is the same run continuing, and what the agent verifies must not change because somebody else answered its pause.
                     head_key=stored.head_key,
                     actor_chain=stored.actor_chain,
                     kyok=kyok,
@@ -1095,36 +872,7 @@ class Funduq:
         )
 
     async def cancel_run(self, run_id: str, *, metadata: dict[str, Any] | None = None) -> bool:
-        """Asks the run's provider to stop, after checking whoever asked may.
-
-        On a thread that bound an authority at birth, `metadata["cancel"]`
-        must carry a signature from one of the run's authorities — see
-        `doors.authorize_cancel`, and it raises `InvalidCancel` otherwise. An
-        unbound run needs nothing, which is the behaviour every run had
-        before. (The AG-UI door has no cancel verb of its own; A2A's is
-        `A2AAdapter.cancel_task`, which comes through here.)
-
-        Returns False for a run funduq is no longer tracking — it has
-        already ended, and there is nobody left to ask. Raises
-        `RunNotCancellable` for a **paused** run, which is neither: no
-        provider is working on it, so there is nothing to relay the request
-        to, and False would say it had ended when it is still waiting for an
-        answer. That gap used to fall through to False, and through A2A to a
-        task returned unchanged with no marker — a cancel that read exactly
-        like never having asked.
-
-        The order matters and is the same one every other door check uses:
-        authority first, then whether the act is possible at all. Answering
-        "not cancellable" to a caller who holds no authority over the run
-        would tell them the run's state for free.
-
-        Who asked is written down before the request goes anywhere, and it
-        is written even for a run that turns out not to be cancellable: the
-        asking happened either way, and a record that kept only the asks
-        that worked would be a record of outcomes wearing the shape of a
-        record of acts. What is never written here is the run's *ending* —
-        funduq relays a stop, it does not perform one.
-        """
+        """Asks the run's provider to stop, after checking whoever asked may."""
         async with self.session() as session:
             stored = await repo.get_run(session, run_id)
         if stored is None:
