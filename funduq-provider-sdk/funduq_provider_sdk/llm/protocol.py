@@ -98,18 +98,6 @@ class CompletionFailed(fr.Frame):
     refusal: dict[str, Any] | None = None
 
 
-class Abandon(fr.Frame):
-    """The caller stopped consuming, so the provider may stop producing.
-
-    In-process this is `GeneratorExit` arriving in the handler; over a wire
-    there was nothing at all, and a provider went on generating into a
-    consumer that had gone. A driver sends this when its stream is closed, so
-    no core verb is needed for it — `ConnectedLLMProvider` has none to add."""
-
-    kind: Literal["abandon"] = "abandon"
-    id: str
-
-
 LlmWireFrame = Annotated[
     Union[
         fr.Connect,
@@ -124,7 +112,6 @@ LlmWireFrame = Annotated[
         Chunk,
         CompletionEnd,
         CompletionFailed,
-        Abandon,
     ],
     Field(discriminator="kind"),
 ]
@@ -170,11 +157,6 @@ class CompletionBroke(ev.Event):
     refusal: dict[str, Any] | None = None
 
 
-class CompletionAbandoned(ev.Event):
-
-    id: str
-
-
 class Streaming(Enum):
 
     OPEN = "open"
@@ -201,14 +183,6 @@ class FunduqLlmSide(FunduqLinkMachine):
         request_id = self._claim_id()
         self._streams[request_id] = Streaming.OPEN
         return request_id, Turn([Complete(id=request_id, completion=completion)], [])
-
-    def abandon(self, request_id: str) -> Turn:
-        """Say the caller stopped consuming. Not a verdict — the provider may
-        already have finished, and this settles nothing."""
-        if self.state is not Link.OPEN:
-            return Turn([], [])
-        self._streams.pop(request_id, None)
-        return Turn([Abandon(id=request_id)], [])
 
     def _work(self, frame: fr.Frame, *, now: float) -> Turn:
         if isinstance(frame, RegisterLlm):
@@ -260,9 +234,6 @@ class ProviderLlmSide(ProviderLinkMachine):
         if isinstance(frame, Complete):
             self._streams.add(frame.id)
             return Turn([], [CompletionRequested(id=frame.id, completion=frame.completion)])
-        if isinstance(frame, Abandon):
-            self._streams.discard(frame.id)
-            return Turn([], [CompletionAbandoned(id=frame.id)])
         if isinstance(frame, fr.Malformed):
             # A completion request that will not decode cannot be served, and
             # saying so as a failure rather than a silence is what stops the

@@ -28,6 +28,36 @@ entries below say what to change and not only what moved.
 
 ---
 
+## Revision 10 — 2026-08-27
+
+**`abandon` is withdrawn**, one revision after arriving. It is the only change.
+
+Revision 9 added a frame for funduq telling an LLM provider that its caller
+had stopped consuming. Nothing asked for it. Core has no such verb —
+`ConnectedLLMProvider` is `public_key` and `complete`, with no cancel — so it
+served a case no caller could reach, and the only code that spoke it was the
+test written alongside it.
+
+*If you implemented against revision 9*: stop sending `abandon`, and expect
+never to receive one. Nothing else moved, and a completion still ends in
+exactly one of `completion.end`, `completion.failed` or a lost link.
+
+The gap it was aimed at is real and stays open, recorded in
+[#220](https://github.com/hukaichun/funduq/issues/220) rather than answered
+here: a provider whose caller has gone keeps producing into nobody. That
+belongs with reconnecting, replaying, and relaying a cancel that arrived
+during an outage — **one question about a party that is no longer there, not
+four**, which is exactly why answering the last of them alone produced a
+frame that had to be taken back.
+
+> **The lesson, since this is what the file is for.** A protocol verb with no
+> caller is not harmless surface. It ships, it goes in the fingerprint, it
+> costs a revision to add and another to remove, and for the window in
+> between an implementer in another language has to decide whether to speak
+> it.
+
+---
+
 ## Revision 9 — 2026-08-27
 
 **The completion half gets the same treatment**, and the shared opening is

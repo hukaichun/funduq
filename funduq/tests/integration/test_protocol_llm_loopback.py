@@ -88,7 +88,6 @@ class LlmLoopback:
         self.to_funduq: asyncio.Queue = asyncio.Queue()
         self.streams: dict[str, asyncio.Queue] = {}
         self.replies: dict[str, asyncio.Future] = {}
-        self.abandoned: list[str] = []
         self.opened: asyncio.Future = asyncio.get_event_loop().create_future()
         self._tasks: list[asyncio.Task] = []
 
@@ -97,9 +96,10 @@ class LlmLoopback:
     async def complete(self, request: CompletionRequest):
         """`ConnectedLLMProvider.complete`, over frames.
 
-        The generator sends `abandon` when it is closed, which is the wire's
-        answer to `GeneratorExit`: in-process the handler simply hears the
-        close, and over a wire nothing used to reach the provider at all.
+        A caller that stops consuming reaches nobody: in-process the handler
+        hears `GeneratorExit`, and over a wire nothing reaches the provider at
+        all, so it goes on producing into a consumer that has gone. Recorded
+        rather than closed — see funduq#220.
         """
         delivered = DeliveredCompletion.from_request(request)
         request_id, turn = self.funduq_side.complete(delivered)
@@ -115,9 +115,7 @@ class LlmLoopback:
                     raise item
                 yield ChatCompletionChunk.model_validate(item)
         finally:
-            if request_id in self.streams:
-                self.streams.pop(request_id, None)
-                self._send(self.funduq_side.abandon(request_id), self.to_provider)
+            self.streams.pop(request_id, None)
 
     # -- the handshake -------------------------------------------------
 
@@ -204,14 +202,10 @@ class LlmLoopback:
             future = self.replies.pop(event.id, None)
             if future is not None and not future.done():
                 future.set_exception(RuntimeError(event.reason))
-        elif type(event).__name__ == "CompletionAbandoned":
-            self.abandoned.append(event.id)
 
     async def _serve(self, event: CompletionRequested) -> None:
         try:
             async for chunk in self.handler(event.completion):
-                if event.id in self.abandoned:
-                    return
                 self._send(self.provider_side.chunk(event.id, chunk), self.to_funduq)
         except Exception as exc:
             refusal = getattr(exc, "refusal", None)
@@ -288,32 +282,6 @@ async def test_a_structured_refusal_reaches_the_relay_as_a_refusal(funduq, llm_l
     failure = drained[-1]
     assert failure.refused is True
     assert failure.payload == {"code": "over_budget", "spent": 12}
-
-
-async def test_a_caller_that_stops_consuming_tells_the_provider(funduq, llm_link) -> None:
-    """In-process the handler simply hears the close. Over a wire nothing used
-    to reach the provider at all, so it went on generating into a consumer
-    that had gone."""
-    forever = asyncio.Event()
-
-    async def handler(delivered: DeliveredCompletion):
-        for index in range(1000):
-            yield _chunk(f"{index} ")
-            await asyncio.sleep(0)
-
-    link = await llm_link(handler)
-    await link.register(["gpt4"])
-    ref = LlmRef(provider_key=link.public_key, name="gpt4")
-
-    serving = funduq.kyok_relay.serving(ref)
-    stream = serving.complete(_request(ref))
-    await stream.__anext__()
-    await stream.aclose()
-    for _ in range(10):
-        await asyncio.sleep(0)
-
-    assert link.abandoned, "the provider was never told the caller had gone"
-    forever.set()
 
 
 async def test_the_offerings_register_on_the_link_with_their_metadata(funduq, llm_link) -> None:

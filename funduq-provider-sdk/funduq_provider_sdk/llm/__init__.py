@@ -9,11 +9,9 @@ from funduq_provider_sdk.llm.contract import (
 from funduq_provider_sdk.llm.inprocess import InProcessLLMProvider
 from funduq_provider_sdk.llm.link import FunduqLLMLink
 from funduq_provider_sdk.llm.protocol import (
-    Abandon,
     Chunk,
     Chunked,
     Complete,
-    CompletionAbandoned,
     CompletionBroke,
     CompletionEnd,
     CompletionEnded,
@@ -33,11 +31,9 @@ from funduq_provider_sdk.llm.provider import (
 )
 
 __all__ = [
-    "Abandon",
     "Chunk",
     "Chunked",
     "Complete",
-    "CompletionAbandoned",
     "CompletionBroke",
     "CompletionEnd",
     "CompletionEnded",
