@@ -9,6 +9,7 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
 from funduq.errors import AgentNotFound
 from funduq_provider_sdk import ProviderIdentity
+from funduq_contract import Registration
 
 
 class TwoAgentProvider:
@@ -27,14 +28,14 @@ class TwoAgentProvider:
 
 async def _register(funduq, *names: str):
     identity = ProviderIdentity.generate()
-    registration = await publish_offline(funduq, identity, [{"name": n} for n in names])
+    registration = await publish_offline(funduq, identity, [Registration(name=n) for n in names])
     return registration, identity
 
 
 async def test_one_provider_serves_several_agents(funduq, attach):
     registration, identity = await _register(funduq, "translator", "summarizer")
-    translator = registration.agents["translator"]
-    summarizer = registration.agents["summarizer"]
+    translator = registration["translator"]
+    summarizer = registration["summarizer"]
 
     provider = TwoAgentProvider()
     await attach(identity, provider, [translator.name, summarizer.name])
@@ -52,7 +53,7 @@ async def test_one_provider_serves_several_agents(funduq, attach):
 
 async def test_the_run_input_itself_still_carries_no_agent_id(funduq, attach):
     registration, identity = await _register(funduq, "solo")
-    agent_id = registration.agents["solo"]
+    agent_id = registration["solo"]
     seen: dict = {}
 
     class Recorder:
@@ -82,5 +83,5 @@ async def test_a_provider_serves_what_it_published_and_nothing_else(funduq, atta
 
     await attach(identity, TwoAgentProvider(), ["mine"])
 
-    assert funduq.is_serving(mine.agents["mine"])
-    assert not funduq.is_serving(theirs.agents["theirs"])
+    assert funduq.is_serving(mine["mine"])
+    assert not funduq.is_serving(theirs["theirs"])

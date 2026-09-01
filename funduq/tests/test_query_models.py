@@ -11,12 +11,13 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 from funduq.core import Funduq
 from funduq_provider_sdk import ProviderIdentity
 from funduq.models import AgentRef, AgentRecord, AgentSummary, RunRecord
+from funduq_contract import Registration
 
 
 async def _register(funduq: Funduq, name: str = "translator", provider_name: str | None = "Demo"):
     identity = ProviderIdentity.generate()
-    registration = await publish_offline(funduq, identity, [{"name": name, "description": "d"}], provider_name=provider_name)
-    return registration.agents[name]
+    registration = await publish_offline(funduq, identity, [Registration(name=name, description="d")], provider_name=provider_name)
+    return registration[name]
 
 
 class _Provider:

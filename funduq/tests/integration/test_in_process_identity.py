@@ -11,6 +11,7 @@ from funduq_provider_sdk import InProcessLink, ProviderIdentity, ProviderRuntime
 from funduq.models import AgentRef
 
 from tests.conftest import publish_offline
+from funduq_contract import Registration
 
 
 class LocalProvider:
@@ -21,8 +22,8 @@ class LocalProvider:
 
 async def _register(funduq, name: str = "local"):
     identity = ProviderIdentity.generate()
-    registration = await publish_offline(funduq, identity, [{"name": name}])
-    return registration, identity, registration.agents[name]
+    registration = await publish_offline(funduq, identity, [Registration(name=name)])
+    return registration, identity, registration[name]
 
 
 async def test_in_process_still_answers_a_ticket_like_anyone_else(funduq):
@@ -35,7 +36,7 @@ async def test_in_process_still_answers_a_ticket_like_anyone_else(funduq):
     try:
         link = InProcessLink(funduq, runtime)
         await funduq.attach_provider(link)
-        await funduq.register_agents(link, [{"name": "local"}])
+        await funduq.register_agents(link, [Registration(name="local")])
 
         assert funduq.is_serving(AgentRef(provider_key=identity.public_key, name="local"))
     finally:
@@ -52,10 +53,10 @@ async def test_publishing_less_than_last_time_takes_the_rest_offline(funduq):
     try:
         link = InProcessLink(funduq, runtime)
         await funduq.attach_provider(link)
-        await funduq.register_agents(link, [{"name": "kept"}, {"name": "dropped"}])
+        await funduq.register_agents(link, [Registration(name="kept"), Registration(name="dropped")])
         assert {a.name for a in await funduq.list_agents() if a.online} == {"kept", "dropped"}
 
-        await funduq.register_agents(link, [{"name": "kept"}])
+        await funduq.register_agents(link, [Registration(name="kept")])
 
         roster = {a.name: a.online for a in await funduq.list_agents()}
         assert roster == {"kept": True, "dropped": False}

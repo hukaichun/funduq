@@ -9,7 +9,8 @@ from collections.abc import AsyncIterator
 from dataclasses import dataclass
 from typing import Any, Protocol
 
-from openai.types.chat import ChatCompletionChunk, CompletionCreateParams
+from funduq_contract import DeliveredCompletion
+from openai.types.chat import ChatCompletionChunk
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from funduq.live_roster import LiveRoster
@@ -25,11 +26,7 @@ class KyokToken:
 
 
 def issue_kyok_token(run_id: str, agent: AgentRef, signing_secret: str) -> str:
-    """Build a `body.signature` token binding `run_id` and `agent`, expiring after `KYOK_TOKEN_TTL_SECONDS`.
-
-    `body` is a base64url JSON object with exactly `runId`, `providerKey`, `agentName`,
-    and `exp`; `signature` is an HMAC-SHA256 of `body` keyed by `signing_secret`.
-    """
+    """Build a `body.signature` token binding `run_id` and `agent`, expiring after `KYOK_TOKEN_TTL_SECONDS`."""
     body = base64.urlsafe_b64encode(
         json.dumps(
             {
@@ -45,12 +42,7 @@ def issue_kyok_token(run_id: str, agent: AgentRef, signing_secret: str) -> str:
 
 
 def verify_kyok_token(token: str, signing_secret: str) -> KyokToken | None:
-    """Return the decoded (run_id, agent) if `token` is well-formed, correctly signed, and unexpired.
-
-    Returns None for a token that doesn't split into `body.signature`, fails signature
-    verification, has expired (`exp` in the past), isn't valid JSON/base64, or is missing
-    any of `runId`/`providerKey`/`agentName` as strings.
-    """
+    """Return the decoded (run_id, agent) if `token` is well-formed, correctly signed, and unexpired."""
     try:
         body, signature = token.split(".", 1)
     except ValueError:
@@ -107,12 +99,7 @@ def strip_kyok_context(metadata: dict) -> dict:
 
 
 class KyokForwardedProps(BaseModel):
-    """funduq's `forwardedProps.kyok` entry: the grant a KYOK-bound run's agent presents when calling for completions.
-
-    `funduq_provider_sdk.props.KyokForwardedProps` is the independent twin the
-    agent provider validates with; the delivered-run frame in
-    `docs/contract-vectors.json` pins the two.
-    """
+    """funduq's `forwardedProps.kyok` entry: the grant a KYOK-bound run's agent presents when calling for completions."""
 
     model_config = ConfigDict(frozen=True)
 
@@ -147,32 +134,16 @@ class KyokBinding:
     actor_chain: list[str] | None = None
 
 
-@dataclass(frozen=True)
-class CompletionRequest:
-
-    run_id: str
-    agent: AgentRef
-    body: CompletionCreateParams
-    llm_name: str = ""
-    context: Any = None
-    actor_chain: list[str] | None = None
-
-
 class ConnectedLLMProvider(Protocol):
 
     public_key: str
 
-    def complete(self, request: CompletionRequest) -> AsyncIterator[ChatCompletionChunk]: ...
+    def complete(self, request: DeliveredCompletion) -> AsyncIterator[ChatCompletionChunk]: ...
 
 
 @dataclass(frozen=True)
 class LlmProviderQuality:
-    """Per-LLM-provider counters of what funduq observed while relaying completions — the mirror of the broker's `ProviderQuality`.
-
-    `completions` streamed to the end; `refused` ended in a structured
-    refusal; `failed` died with anything else. funduq counts what it saw and
-    judges nothing.
-    """
+    """Per-LLM-provider counters of what funduq observed while relaying completions — the mirror of the broker's `ProviderQuality`."""
 
     completions: int = 0
     refused: int = 0

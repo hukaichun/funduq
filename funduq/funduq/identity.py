@@ -16,11 +16,7 @@ if TYPE_CHECKING:
 
 
 
-# The format is funduq-contract's, and these names are re-exported rather
-# than rewritten. Core used to carry its own copy of every payload and of the
-# chain format — a second opinion that was really an echo. What stays here is
-# what core actually decides: which keys an act is allowed to come from, and
-# how fresh a timestamp has to be. That is policy, not format.
+# The format is funduq-contract's, and these names are re-exported rather than rewritten.
 from funduq_contract import (
     FINGERPRINT_HEX_LENGTH,
     ChainResult,
@@ -56,15 +52,7 @@ class InvalidDelegation(ValueError):
 
 
 def verify_delegation(certificate: dict) -> str:
-    """Verifies a session delegation certificate and returns the authority's public key.
-
-    `certificate` is `{"authorityPublicKey", "delegatePublicKey",
-    "expiresAt", "signature"}`: the authority signed
-    `delegation_payload(delegatePublicKey, expiresAt)`. Raises
-    `InvalidDelegation` if the signature fails or the certificate has
-    expired. The certificate alone moves nothing — only the named delegate's
-    own signatures gain the authority — so it is safe to store and to relay.
-    """
+    """Verifies a session delegation certificate and returns the authority's public key."""
     try:
         authority = certificate["authorityPublicKey"]
         delegate = certificate["delegatePublicKey"]
@@ -98,20 +86,7 @@ def _verify_signed_act(
     invalid: type[ValueError],
     act: str,
 ) -> str:
-    """Verifies one singular signed act against an authority set and returns the
-    effective authority.
-
-    `proof` is `{"publicKey", "timestamp", "signature"}`. With a delegation
-    certificate naming the signer, the certificate's authority is the
-    effective key — rights attach to the durable key and a session key is a
-    glove; otherwise the signer stands for itself. The effective key must be
-    in `allowed_keys`, and the timestamp inside the freshness window.
-
-    One function for resolving an ask and for cancelling a run, because they
-    are the same act with different words: prove you hold a key this run's
-    segment answers to, once, now. What keeps them apart is the payload's
-    own tag, so neither signature is ever the other.
-    """
+    """Verifies one singular signed act against an authority set and returns the effective authority."""
     try:
         signer = proof["publicKey"]
         timestamp = int(proof["timestamp"])
@@ -141,12 +116,7 @@ def verify_resolution(
     allowed_keys: set[str],
     delegation: dict | None = None,
 ) -> str:
-    """Verifies a resolution proof for a paused run and returns the effective authority.
-
-    The signer signed `resolve_payload(run_id, timestamp)`, and
-    `allowed_keys` is the ask's authority set: the run's chain head and the
-    agent's own provider key. Raises `InvalidResolution` on any failure.
-    """
+    """Verifies a resolution proof for a paused run and returns the effective authority."""
     return _verify_signed_act(
         resolution, run_id, resolve_payload,
         allowed_keys, delegation, InvalidResolution, "resolve",
@@ -159,20 +129,7 @@ def verify_cancel(
     allowed_keys: set[str],
     delegation: dict | None = None,
 ) -> str:
-    """Verifies a cancel proof for a run and returns the effective authority.
-
-    The signer signed `cancel_payload(run_id, timestamp)`, and
-    `allowed_keys` is the run's authority set — the same one an ask on it
-    would have: its chain head and the agent's own provider key. Raises
-    `InvalidCancel` on any failure.
-
-    Stopping someone else's run is a rights question, not an addressing
-    one. A run id is an identifier, and [rule
-    zero](../../docs/design-records.md#rule-zero-identifiers-are-never-credentials)
-    says an identifier is never a credential — so possession of the id buys
-    nothing here, and what counts is a signature from a key the run's
-    segment answers to.
-    """
+    """Verifies a cancel proof for a run and returns the effective authority."""
     return _verify_signed_act(
         cancel, run_id, cancel_payload,
         allowed_keys, delegation, InvalidCancel, "cancel",
@@ -180,29 +137,14 @@ def verify_cancel(
 
 
 class FunduqIdentity:
-    """A funduq instance's own signing identity, distinct from any provider's.
-
-    Two instances built from different keys are different identities that
-    don't verify each other's signatures; the same key hex produces the
-    same public identity across restarts, letting a provider pin funduq by
-    its public key.
-    """
+    """A funduq instance's own signing identity, distinct from any provider's."""
 
     def __init__(self, private_key: Ed25519PrivateKey) -> None:
         self._private_key = private_key
         self.public_key = private_key.public_key().public_bytes_raw().hex()
 
     def dispatch_hop(self, prev_chain: list[str], agent: "AgentRef") -> list[str]:
-        """Extends `prev_chain` with this funduq's hop for a dispatch to `agent`.
-
-        The `AgentRef` is translated here rather than handed on, because
-        funduq-contract does not know core's types and should not have to —
-        what the format needs is the pair `(provider_key, name)` an agent is
-        addressed by, and it has its own type for that pair. Translating one
-        structure into another is the whole of this method; the two halves are
-        never loose strings on either side of the call. See
-        `funduq_contract.dispatch_hop` for what naming the destination buys.
-        """
+        """Extends `prev_chain` with this funduq's hop for a dispatch to `agent`."""
         return _dispatch_hop(
             self._private_key,
             prev_chain,
@@ -211,11 +153,7 @@ class FunduqIdentity:
 
     @classmethod
     def from_hex(cls, private_key_hex: str) -> "FunduqIdentity":
-        """Builds an identity from a 32-byte seed given as 64 hex chars.
-
-        Raises `ValueError` if the string isn't valid hex or doesn't
-        decode to exactly 32 bytes.
-        """
+        """Builds an identity from a 32-byte seed given as 64 hex chars."""
         try:
             raw = bytes.fromhex(private_key_hex)
         except ValueError as e:

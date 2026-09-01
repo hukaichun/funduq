@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import pytest
 from funduq_provider_sdk import AgentHandle
+from funduq_contract import Registration
 
 SKILLS = [
     {"id": "translate", "name": "Translate", "tags": ["language", "text"]},
@@ -45,7 +46,7 @@ async def test_the_card_keeps_name_and_description_alongside_the_extra(funduq, n
 
     registration = await _register(funduq, identity, handle)
 
-    card = (await funduq.get_agent(registration.agents["translator"])).agent_card
+    card = (await funduq.get_agent(registration["translator"])).agent_card
     assert card["name"] == "translator"
     assert card["description"] == "translates things"
     assert card["version"] == "2.0"
@@ -61,7 +62,7 @@ async def test_metadata_is_stored_and_stays_off_the_public_card(funduq, new_iden
     )
 
     registration = await _register(funduq, identity, handle)
-    record = await funduq.get_agent(registration.agents["translator"])
+    record = await funduq.get_agent(registration["translator"])
 
     assert record.metadata == {"cost_centre": "research", "owner": "ada"}
     assert "cost_centre" not in record.agent_card
@@ -71,10 +72,10 @@ async def test_a_handle_that_declares_nothing_extra_still_registers(funduq, new_
     identity = new_identity()
     handle = AgentHandle(name="plain", run_stream=_run_stream, description="d")
 
-    assert handle.as_registration() == {"name": "plain", "description": "d"}
+    assert handle.as_registration() == Registration(name="plain", description="d")
 
     registration = await _register(funduq, identity, handle)
-    record = await funduq.get_agent(registration.agents["plain"])
+    record = await funduq.get_agent(registration["plain"])
 
     assert record.agent_card == {"name": "plain", "description": "d"}
     assert record.metadata == {}
@@ -95,6 +96,6 @@ async def test_re_registering_replaces_what_the_handle_now_says(funduq, new_iden
         AgentHandle(name="a", run_stream=_run_stream, **{field_name: {"skills": SKILLS[:1]}}),
     )
 
-    record = await funduq.get_agent(registration.agents["a"])
+    record = await funduq.get_agent(registration["a"])
     stored = record.agent_card if field_name == "agent_card_extra" else record.metadata
     assert stored["skills"] == SKILLS[:1]

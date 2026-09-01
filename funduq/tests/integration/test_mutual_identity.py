@@ -9,6 +9,7 @@ from funduq_provider_sdk import ProviderIdentity
 from funduq.config import CoreSettings
 from funduq.core import Funduq
 from funduq.identity import FunduqIdentity, verify_signature
+from funduq_contract import Registration
 
 
 def _funduq_with_identity(settings: CoreSettings) -> Funduq:
@@ -152,7 +153,7 @@ def test_a_provider_pinning_one_funduq_rejects_another(settings: CoreSettings):
 
 
 async def _register(funduq: Funduq, identity: ProviderIdentity, name: str) -> None:
-    await publish_offline(funduq, identity, [{"name": name}])
+    await publish_offline(funduq, identity, [Registration(name=name)])
 
 
 def _link(funduq: Funduq, identity: ProviderIdentity, **kwargs):

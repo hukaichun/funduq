@@ -29,6 +29,20 @@ from funduq.models import AgentRef
 from tests.conftest import EchoAgent
 
 
+def _valid_input(run_id: str, thread_id: str) -> dict:
+    """The smallest dict that validates as a `RunAgentInput`: the broker now
+    builds the published `DeliveredRun` itself, so a test input must be one."""
+    return {
+        "threadId": thread_id,
+        "runId": run_id,
+        "state": None,
+        "messages": [],
+        "tools": [],
+        "context": [],
+        "forwardedProps": None,
+    }
+
+
 async def test_a_provider_leaving_mid_dispatch_reaches_the_caller_as_agent_offline(
     funduq, new_identity, attach, monkeypatch
 ):
@@ -79,4 +93,4 @@ async def test_the_broker_answers_rather_than_raising_when_nobody_is_serving(
     identity = new_identity()
     agent = AgentRef(provider_key=identity.public_key, name="assistant")
 
-    assert funduq.enqueue_run("run_1", agent, "thread_1", {"messages": []}, "ag-ui") is None
+    assert funduq.enqueue_run("run_1", agent, "thread_1", _valid_input("run_1", "thread_1"), "ag-ui") is None

@@ -4,20 +4,7 @@ from typing import Any
 
 
 class LiveRoster:
-    """The live table a dispatch host keeps: which connection serves each ref, and per-identity counters of what funduq observed.
-
-    RunBroker brokers runs — queues, offers, negotiated acceptance — and
-    KyokRelay relays completions — pass-through, no queue, fast-fail. They
-    are different machines and deliberately keep different names; the
-    roster aspect of each is the same machine, and it lives here once so
-    the two can't drift apart — they did while it was two hand-kept
-    copies (the LLM side lost its withdraw step). Semantics: one
-    connection per role (a re-attach under the same ref replaces it),
-    withdrawal by ref, counters recorded and never judged.
-
-    Counter names are fixed per host at construction: the *subjects* each
-    host can observe differ; the bookkeeping doesn't.
-    """
+    """The live table a dispatch host keeps: which connection serves each ref, and per-identity counters of what funduq observed."""
 
     def __init__(self, counter_names: tuple[str, ...]) -> None:
         self._links: dict[Any, Any] = {}

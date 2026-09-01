@@ -7,6 +7,20 @@ import pytest
 from funduq.broker import Claim, Fail, FinishStream, RelayEvent, RequestCancel, RunBroker
 from funduq.models import AgentRef
 
+def _valid_input(run_id: str, thread_id: str) -> dict:
+    """The smallest dict that validates as a `RunAgentInput`: the broker now
+    builds the published `DeliveredRun` itself, so a test input must be one."""
+    return {
+        "threadId": thread_id,
+        "runId": run_id,
+        "state": None,
+        "messages": [],
+        "tools": [],
+        "context": [],
+        "forwardedProps": None,
+    }
+
+
 AGENT = AgentRef(provider_key="pk_1", name="agent_1")
 
 
@@ -21,10 +35,9 @@ class Taker:
     async def deliver(self, run) -> bool:
         return True
 
-    def cancel(self, run_id: str) -> None:
+    async def cancel(self, run_id: str) -> bool:
         self.asked_to_stop.append(run_id)
-
-
+        return True
 @pytest.fixture
 async def broker():
     b = RunBroker()
@@ -43,7 +56,7 @@ async def _until(predicate, timeout: float = 1.0) -> None:
 
 async def _delivered(broker: RunBroker, handlers: dict, run_id: str = "run_1"):
     broker.register_provider({AGENT: Taker()})
-    run = broker.enqueue_run(run_id, AGENT, "thread_1", {}, "ag-ui", handlers)
+    run = broker.enqueue_run(run_id, AGENT, "thread_1", _valid_input(run_id, "thread_1"), "ag-ui", handlers)
     await _until(lambda: run.claimed_by is not None)
     return run
 
@@ -133,7 +146,7 @@ async def test_cancelling_a_queued_run_records_it_once_and_ends_it(broker):
     # A provider with no room: the run is queued, still funduq's, and never
     # offered — which is the state this is about.
     broker.register_provider({AGENT: Taker(max_concurrent_runs=0)})
-    run = broker.enqueue_run("run_1", AGENT, "thread_1", {}, "ag-ui", {RequestCancel: on_cancel})
+    run = broker.enqueue_run("run_1", AGENT, "thread_1", _valid_input("run_1", "thread_1"), "ag-ui", {RequestCancel: on_cancel})
     assert run.claimed_by is None
 
     broker.request_cancel("run_1")
@@ -144,7 +157,7 @@ async def test_cancelling_a_queued_run_records_it_once_and_ends_it(broker):
 
 async def test_request_cancel_marks_the_run_before_anything_else_happens(broker):
     broker.register_provider({AGENT: Taker(max_concurrent_runs=0)})
-    run = broker.enqueue_run("run_1", AGENT, "thread_1", {}, "ag-ui", {})
+    run = broker.enqueue_run("run_1", AGENT, "thread_1", _valid_input("run_1", "thread_1"), "ag-ui", {})
 
     assert not run.cancel_requested
     broker.request_cancel("run_1")

@@ -28,9 +28,9 @@ from funduq_provider_sdk import (
     Refusal,
 )
 
-from funduq.kyok import CompletionRequest
 from funduq.models import LlmRef
 from funduq.protocols.agui import AGUIAdapter
+from funduq_contract import Registration
 
 
 class WireLink:
@@ -51,16 +51,16 @@ class WireLink:
         relayed = funduq_nonce.encode().decode()
         return self._runtime.identity.sign_connect(relayed_key, relayed, provider_nonce)
 
-    async def deliver(self, run) -> bool | Refusal:
-        frame = DeliveredRun.from_claimed(run).model_dump_json(by_alias=True).encode()
+    async def deliver(self, run: DeliveredRun) -> bool | Refusal:
+        frame = run.model_dump_json(by_alias=True).encode()
         delivered = DeliveredRun.model_validate_json(frame)
         accepted = await self._runtime.deliver(delivered)
         answer = json.dumps({"accepted": bool(accepted)}).encode()
         return json.loads(answer)["accepted"]
 
-    def cancel(self, run_id: str) -> None:
+    async def cancel(self, run_id: str) -> bool:
         self._runtime.cancel(json.loads(json.dumps(run_id)))
-
+        return True
     async def report_event(self, run_id: str, event) -> None:
         frame = json.dumps({"runId": run_id, "event": event}).encode()
         decoded = json.loads(frame)
@@ -86,7 +86,7 @@ async def test_a_run_travels_as_byte_frames_end_to_end(funduq):
         yield {"type": "RUN_FINISHED", **ids}
 
     identity = ProviderIdentity.generate()
-    registration = await publish_offline(funduq, identity, [{"name": "wired"}])
+    registration = await publish_offline(funduq, identity, [Registration(name="wired")])
     runtime = ProviderRuntime(identity, HandleProvider([AgentHandle("wired", agent)]))
     runtime.start()
     link = WireLink(funduq, runtime)
@@ -94,7 +94,7 @@ async def test_a_run_travels_as_byte_frames_end_to_end(funduq):
         await publish_agents(funduq, link, ["wired"])
 
         stream = await AGUIAdapter(funduq).run(
-            registration.agents["wired"],
+            registration["wired"],
             RunAgentInput(
                 thread_id="t-wire",
                 run_id="ignored",
@@ -129,8 +129,8 @@ class WireLLMLink:
     ) -> str:
         return self._identity.sign_connect(funduq_public_key, funduq_nonce, provider_nonce)
 
-    def complete(self, request: CompletionRequest):
-        frame = DeliveredCompletion.from_request(request).model_dump_json(by_alias=True).encode()
+    def complete(self, request: DeliveredCompletion):
+        frame = request.model_dump_json(by_alias=True).encode()
         delivered = DeliveredCompletion.model_validate_json(frame)
 
         async def _chunks():
@@ -162,9 +162,11 @@ async def test_a_completion_travels_as_byte_frames(funduq):
 
     ref = LlmRef(provider_key=identity.public_key, name="wire-model")
     serving = funduq.kyok_relay.serving(ref)
-    request = CompletionRequest(
+    agent_ref = registration_ref(identity)
+    request = DeliveredCompletion(
         run_id="run-wire",
-        agent=registration_ref(identity),
+        provider_key=agent_ref.provider_key,
+        agent_name=agent_ref.name,
         body={"model": "wire-model", "messages": [{"role": "user", "content": "hi"}]},
         llm_name="wire-model",
     )

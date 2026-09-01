@@ -9,11 +9,11 @@ Wrapping either in a network is a downstream job.
 ## funduq-provider-sdk
 
 The agent provider's side of the agreement: the Ed25519 identity and
-everything it signs, the `FunduqLink` port a transport implements, the link
-protocol's two sans-io state machines it can mount instead, the provider's own
-worker loop, the delivered envelopes and forwarded-props models, and the chain
+everything it signs, the `FunduqLink` port a transport implements, the
+provider's own worker loop, the forwarded-props models, and the chain
 verifier — each an independent twin of funduq's
-implementation, pinned by the published vectors.
+implementation, pinned by the published vectors. The crossing shapes
+themselves live in funduq-contract, defined once for both sides.
 → [Details](sdks/provider-sdk.md)
 
 ## funduq-provider-sdk[llm] — the completion half

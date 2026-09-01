@@ -32,11 +32,7 @@ class InProcessLink(FunduqLink):
         return self._runtime.public_key
 
     def confirm_connect(self, funduq_nonce: str, provider_nonce: str, answer: str | None) -> None:
-        """Verify funduq's answering signature against the pinned funduq key, raising `WrongFunduq` on a miss.
-
-        The pin defaults to the identity the funduq object itself claims; pass
-        `funduq_public_key` to demand a specific one. A funduq with no identity
-        answers nothing, which only a pinning link treats as a failure."""
+        """Verify funduq's answering signature against the pinned funduq key, raising `WrongFunduq` on a miss."""
         if self._funduq_public_key is None:
             return
         if answer is None or not verify_signature(
@@ -53,9 +49,7 @@ class InProcessLink(FunduqLink):
     def sign_connect(
         self, funduq_public_key: str, funduq_nonce: str, provider_nonce: str
     ) -> str:
-        """Sign the link-open proof against the ticket funduq issued to this key, bound to
-        the pinned funduq key — refusing, before any signature leaves, a funduq claiming a
-        different key than the pin."""
+        """Sign the link-open proof against the ticket funduq issued to this key, bound to the pinned funduq key — refusing, before any signature leaves, a funduq claiming a different key than the pin."""
         if self._funduq_public_key is not None and funduq_public_key != self._funduq_public_key:
             raise WrongFunduq(
                 f"this link is pinned to '{self._funduq_public_key}', "
@@ -65,11 +59,12 @@ class InProcessLink(FunduqLink):
             funduq_public_key, funduq_nonce, provider_nonce
         )
 
-    async def offer(self, run: "DeliveredRun") -> bool:
+    async def deliver(self, run: "DeliveredRun") -> bool:
         return await self._runtime.deliver(run)
 
-    def cancel(self, run_id: str) -> None:
+    async def cancel(self, run_id: str) -> bool:
         self._runtime.cancel(run_id)
+        return True
 
 
     async def report_event(self, run_id: str, event: Any) -> None:

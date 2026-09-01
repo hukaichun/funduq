@@ -73,7 +73,7 @@ hooks … to send a retry prompt back to the model asking it to try again」。
 | 放棄 | 迴圈先結束了呢 | 同上 |
 
 `Interrupt.expires_at`（AG-UI）是出向空隙的過期欄位。入向空隙的對應物兩個
-協定都沒有；funduq 用 [`addressedRunId`](mechanisms/requests.md) 頂著，並在
+協定都沒有；funduq 用 `addressedRunId` 頂著，並在
 註解裡寫明會讓位給 A2A 日後的載體。
 
 ## AG-UI 的操作點
@@ -288,8 +288,7 @@ funduq 拿著。上面那四題不是 funduq 多做的功能，是站在這個�
 
 最後一列是這個座位的邊界。`check(...)` 在 provider 的盒子裡，所以一個 run
 裡有幾次 ① 對 funduq 不可觀察——run ≠ turn，funduq 因此不去定址「這一輪」。
-它不 pace 對話（[the thread gate is
-retired](design-records.md#the-thread-gate-is-retired-funduq-does-not-pace-a-providers-conversation)），
+它不 pace 對話（the thread gate is retired），
 不猜一個插話該不該進得去（目標的 agent 才是判斷者），對 ④ 沒有任何意見。
 
 ### 由此得出 core 的邊界
@@ -304,7 +303,7 @@ retired](design-records.md#the-thread-gate-is-retired-funduq-does-not-pace-a-pro
 「雙出口」因此不是兩個等價的 API，是同一份事實的兩個投影，各自在自己的方向
 有損：AG-UI 有 tools 與私有 state、沒有中止；A2A 有中止、沒有 tools 與私有
 state。A2A 講不出來的那些有一個具名的去處
-（[`agui_event`／`agui_events`](design-records.md#what-a2a-cannot-say-lands-in-one-named-place-exhaustively)），
+（`agui_event`／`agui_events`），
 而不是被「補齊」成一個兩邊都不是的東西。
 
 ### 為什麼空隙不能交給 SDK

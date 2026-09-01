@@ -22,13 +22,15 @@ def _run_agent_input(**overrides) -> dict:
     return base
 
 
-class _ClaimedRun:
-
-    def __init__(self, run_id: str, agent_name: str, run_input: dict, thread_id: str) -> None:
-        self.run_id = run_id
-        self.run_input = run_input
-        self.thread_id = thread_id
-        self.agent = type("AgentRef", (), {"name": agent_name})()
+def _delivered(run_id: str, agent_name: str, thread_id: str) -> DeliveredRun:
+    return DeliveredRun(
+        run_id=run_id,
+        agent_name=agent_name,
+        run_input=RunAgentInput.model_validate(
+            _run_agent_input(runId=run_id, threadId=thread_id)
+        ),
+        thread_id=thread_id,
+    )
 
 
 class QueuedLink(FunduqLink):
@@ -51,13 +53,13 @@ class QueuedLink(FunduqLink):
     def max_concurrent_runs(self) -> int | None:
         return self._limit
 
-    async def offer(self, run: DeliveredRun) -> bool:
+    async def deliver(self, run: DeliveredRun) -> bool:
         self.outbound.put_nowait(run)
         return self._accept
 
-    def cancel(self, run_id: str) -> None:
+    async def cancel(self, run_id: str) -> bool:
         self.cancelled.append(run_id)
-
+        return True
     async def report_event(self, run_id: str, event) -> None:
         self.reported.append((run_id, event))
 
@@ -69,44 +71,27 @@ class QueuedLink(FunduqLink):
         return []
 
 
-async def test_the_base_translates_funduqs_run_for_a_transport_that_never_sees_it():
+async def test_the_port_hands_the_published_shape_through_untouched():
     provider = QueuedLink("abc123")
 
-    accepted = await provider.deliver(
-        _ClaimedRun("r-1", "translator", _run_agent_input(), "t-1")
-    )
+    accepted = await provider.deliver(_delivered("r-1", "translator", "t-1"))
 
     assert accepted is True
     carried = provider.outbound.get_nowait()
     assert isinstance(carried, DeliveredRun)
     assert (carried.run_id, carried.agent_name, carried.thread_id) == ("r-1", "translator", "t-1")
     assert isinstance(carried.run_input, RunAgentInput)
-    assert (carried.run_input.thread_id, carried.run_input.run_id) == ("t-1", "r-1")
 
 
 async def test_declining_is_carried_through_unchanged():
     provider = QueuedLink("abc123", accept=False)
 
-    assert await provider.deliver(_ClaimedRun("r-2", "a", _run_agent_input(), "t")) is False
+    assert await provider.deliver(_delivered("r-2", "a", "t")) is False
 
 
-async def test_an_invalid_input_is_a_refusal_not_a_transient_decline():
-    from funduq_provider_sdk import Refusal
-
+async def test_cancel_reaches_the_transport_and_is_acknowledged():
     provider = QueuedLink("abc123")
-
-    answer = await provider.deliver(
-        _ClaimedRun("r-bad", "a", {"not": "a RunAgentInput"}, "t")
-    )
-
-    assert isinstance(answer, Refusal)
-    assert "RunAgentInput" in answer.reason
-    assert provider.outbound.empty()
-
-
-async def test_cancel_reaches_the_transport():
-    provider = QueuedLink("abc123")
-    provider.cancel("r-3")
+    assert await provider.cancel("r-3") is True
     assert provider.cancelled == ["r-3"]
 
 
@@ -117,12 +102,11 @@ def test_a_transport_that_declares_nothing_is_not_constructible():
         def public_key(self) -> str:
             return "k"
 
-        async def offer(self, run: DeliveredRun) -> bool:
+        async def deliver(self, run: DeliveredRun) -> bool:
             return True
 
-        def cancel(self, run_id: str) -> None:
-            pass
-
+        async def cancel(self, run_id: str) -> bool:
+            return True
         async def report_event(self, run_id: str, event) -> None:
             pass
 
@@ -153,12 +137,12 @@ class LoopbackLink(FunduqLink):
     def max_concurrent_runs(self) -> int | None:
         return self._runtime.max_concurrent_runs
 
-    async def offer(self, run: DeliveredRun) -> bool:
+    async def deliver(self, run: DeliveredRun) -> bool:
         return await self._runtime.deliver(run)
 
-    def cancel(self, run_id: str) -> None:
+    async def cancel(self, run_id: str) -> bool:
         self._runtime.cancel(run_id)
-
+        return True
     async def report_event(self, run_id: str, event) -> None:
         self.reported.append((run_id, event))
 
@@ -185,7 +169,7 @@ async def test_one_link_carries_a_run_down_and_its_results_back():
     runtime.start()
 
     try:
-        assert await link.deliver(_ClaimedRun("r-1", "a", _run_agent_input(), "t-1")) is True
+        assert await link.deliver(_delivered("r-1", "a", "t-1")) is True
 
         async with asyncio.timeout(5):
             while not link.finished:
@@ -284,9 +268,7 @@ async def test_the_ack_answers_from_the_transports_own_state_never_the_agents():
     )
     runtime.start()
     try:
-        coro = runtime.deliver(DeliveredRun.from_claimed(
-            _ClaimedRun("r-1", "a", _run_agent_input(), "t-1")
-        ))
+        coro = runtime.deliver(_delivered("r-1", "a", "t-1"))
         try:
             coro.send(None)
         except StopIteration as answered:

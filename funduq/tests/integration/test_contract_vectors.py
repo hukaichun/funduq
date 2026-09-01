@@ -78,36 +78,19 @@ def test_every_domain_tag_has_a_published_vector_family():
 
 
 def test_the_published_wire_frames_are_what_the_ports_translate_to():
-    from funduq.kyok import CompletionRequest
-    from funduq.models import AgentRef, ClaimedRun
     from funduq_provider_sdk.llm import DeliveredCompletion
     from funduq_provider_sdk import DeliveredRun
 
     (run_wire,) = [w["frame"] for w in VECTORS["wire"] if w["kind"] == "delivered-run"]
-    claimed = ClaimedRun(
-        run_id=run_wire["runId"],
-        agent=AgentRef(provider_key="ab" * 32, name=run_wire["agentName"]),
-        thread_id=run_wire["threadId"],
-        run_input=run_wire["runInput"],
-    )
-    assert DeliveredRun.from_claimed(claimed).model_dump(mode="json", by_alias=True) == run_wire
+    rebuilt = DeliveredRun.model_validate(run_wire)
+    assert rebuilt.model_dump(mode="json", by_alias=True) == run_wire
 
     (completion_wire,) = [
         w["frame"] for w in VECTORS["wire"] if w["kind"] == "delivered-completion"
     ]
-    request = CompletionRequest(
-        run_id=completion_wire["runId"],
-        agent=AgentRef(
-            provider_key=completion_wire["providerKey"], name=completion_wire["agentName"]
-        ),
-        body=completion_wire["body"],
-        llm_name=completion_wire["llmName"],
-        context=completion_wire["context"],
-        actor_chain=completion_wire["actorChain"],
-    )
+    rebuilt_completion = DeliveredCompletion.model_validate(completion_wire)
     assert (
-        DeliveredCompletion.from_request(request).model_dump(mode="json", by_alias=True)
-        == completion_wire
+        rebuilt_completion.model_dump(mode="json", by_alias=True) == completion_wire
     )
 
 

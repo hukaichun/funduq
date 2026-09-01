@@ -7,47 +7,32 @@ every identity it is shown, and intervenes in nobody's behavior. The
 core is a network-free Python library; putting it on a wire is a
 downstream job.
 
-This site is organized as six chapters, in reading order:
+**[What each half is for](responsibilities.md)** — funduq's job, the
+contract package's, the provider SDK's, and what none of them do. Read this
+first; everything else is detail under one of these.
 
-**[The integration contract](integration-contract.md)** — the
-declaration to anyone plugging in. Callers speak AG-UI or A2A with a
-standard client, unmodified, and every funduq invention on that side is
-opt-in. Providers speak standard shapes — AG-UI runs, OpenAI completions
-— and funduq opens the doors for them, with the mandatory plumbing
-published as data.
+**[The integration contract](integration-contract.md)** — the declaration to
+anyone plugging in. Callers speak AG-UI or A2A with a standard client,
+unmodified, and every funduq invention on that side is opt-in.
 
-**[Mechanisms](mechanisms.md)** — the six things funduq actually invented:
-identity as an Ed25519 keypair, actor chains, runs and cancels as
-requests, provider quality counters, keep-your-own-key, and
-responsibility chains. Everything else is a standard carried unchanged
-or an implementation detail of one of these six.
+**[The agent loop](agent-loop.md)** — what a provider's agent actually
+receives and sends, turn by turn.
 
-**[Core components](core-components.md)** — how the library implements
-it: what is persisted, how the dispatch trunk moves runs and completions,
-how verification works, and where each mechanism lives in the tree.
+**[What a deployment has to know](operational-limits.md)** — the limits that
+are real today, measured rather than estimated.
 
-**[The SDKs](sdks.md)** — the two pure contract packages providers build
-with (`funduq-provider-sdk`, and its `llm` extra for completions): no transport, no
-funduq dependency, every byte pinned — including the wire itself, exercised
-end to end without a socket.
+**[The SDKs](sdks.md)** — the packages providers build with, and what each
+publishes.
 
-**[Writing a transport](writing-a-transport.md)** — core hands back
-objects and pure functions; this is how you put them on a wire. The
-opening handshake in order, with the exact calls, and the parts funduq
-deliberately leaves to you.
+**[The provider link](provider-link.md)** — how a provider and funduq talk:
+the handshake, the requests, the acks. This is the settled design.
 
-**[Design records](design-records.md)** — why funduq is shaped this way,
-including the shapes it had first and stopped having. Each entry was
-argued from something that happened: a probe that returned the wrong
-answer, a bug that reached a caller, a measurement taken before a
-rewrite.
+**[Contract changelog](contract-changelog.md)** — what changed for anyone who
+wrote code against funduq, and **[releasing](releasing.md)** — how a version
+reaches PyPI.
 
 The byte-level authority behind all of it is
 [`contract-vectors.json`](contract-vectors.json), consumed by funduq's own
-test suites and replayable by an implementation in any language. The
-working notes these pages were distilled from are no longer in the
-tree; each design record links into them at
-[the commit before they were removed](https://github.com/hukaichun/funduq/tree/d78d0638c0ec2126167240c62471651b5468d35b/design).
-Serving — HTTP, WebSockets, deployment — lives
-downstream in
+test suites and replayable by an implementation in any language. Serving —
+HTTP, WebSockets, deployment — lives downstream in
 [funduq-server](https://github.com/hukaichun/funduq-server).

@@ -58,6 +58,7 @@ from funduq.identity import (
     verify_chain,
 )
 from funduq.models import AgentRef
+from funduq_contract import Registration
 from funduq_provider_sdk import InProcessLink, ProviderIdentity, ProviderRuntime
 
 
@@ -141,7 +142,7 @@ async def main() -> int:
     runtime.start()
     link = InProcessLink(funduq, runtime)
     await funduq.attach_provider(link)
-    await funduq.register_agents(link, [{"name": "assistant"}])
+    await funduq.register_agents(link, [Registration(name="assistant")])
     agent = AgentRef(provider_key=identity.public_key, name="assistant")
 
     try:

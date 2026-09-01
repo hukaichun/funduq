@@ -2,10 +2,14 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from collections import deque
+from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
+from funduq_contract import DeliveredRun, Refusal
+
 from funduq_provider_sdk.identity import ProviderIdentity
-from funduq_provider_sdk.provider import DeliveredRun, Provider
+from funduq_provider_sdk.provider import Provider
 
 if TYPE_CHECKING:
     from funduq_provider_sdk.link import FunduqLink
@@ -13,9 +17,27 @@ if TYPE_CHECKING:
 logger = logging.getLogger("funduq_provider_sdk.runtime")
 
 
+def _addressed_run_id(run: DeliveredRun) -> str | None:
+    """The run this one declared it wants to join, read off the caller's forwarded props."""
+    props = run.run_input.forwarded_props
+    if isinstance(props, dict):
+        value = props.get("addressedRunId")
+        return value if isinstance(value, str) else None
+    return None
+
+
+@dataclass
+class _Lane:
+    """One thread's turn-taking: a queue of accepted runs and the one active now."""
+
+    queue: deque[DeliveredRun] = field(default_factory=deque)
+    active_run_id: str | None = None
+    # Waiting for an execution slot, not for its own queue.
+    parked: bool = False
+
+
 class ProviderRuntime:
-    """Runs a `Provider`'s agents locally: queues delivered runs, executes each as a task, and streams
-    resulting events back through `link` (dropping them if no link is attached)."""
+    """Runs a `Provider`'s agents locally, one active run per thread by construction: accepted runs queue on their thread's lane, execute one at a time, and stream events back through `link`. An interjection — a run addressed to the lane's active run — goes to the provider's `interject_stream` hook instead, or is refused if the provider has none."""
 
     def __init__(
         self,
@@ -28,18 +50,15 @@ class ProviderRuntime:
         self.identity = identity
         self.provider = provider
         self.link: "FunduqLink | None" = None
-        # Claiming no limit (max_concurrent_runs=None, the default) is a
-        # declaration funduq takes at its word: a decline from an unlimited
-        # provider is abnormal behaviour, counted against it, and stops
-        # offers until it acts. So an unlimited runtime must never decline
-        # by accident — its intake queue is unbounded, and pacing (if the
-        # author wants any) is declared via max_concurrent_runs instead.
-        self._jobs: asyncio.Queue = asyncio.Queue(
-            maxsize=max_queued_runs if max_concurrent_runs is not None else 0
-        )
-        self._output: asyncio.Queue = asyncio.Queue()
+        # Claiming no limit (max_concurrent_runs=None, the default) is a declaration funduq takes at its word: a decline from an unlimited provider is abnormal behaviour, counted against it.
         self.max_concurrent_runs = max_concurrent_runs
+        self.max_queued_runs = max_queued_runs
+        self._output: asyncio.Queue = asyncio.Queue()
+        self._lanes: dict[str, _Lane] = {}
         self._in_flight: dict[str, asyncio.Task] = {}
+        self._queued: dict[str, _Lane] = {}
+        self._parked: deque[str] = deque()
+        self._dropped: set[str] = set()
         self._tasks: set[asyncio.Task] = set()
         self._running = False
 
@@ -47,44 +66,61 @@ class ProviderRuntime:
     def public_key(self) -> str:
         return self.identity.public_key
 
-
-    async def deliver(self, run: DeliveredRun) -> bool:
-        """Queues `run` for execution; returns False (without queuing) if not started, at `max_concurrent_runs`, or the queue is full.
-
-        Every accepted run goes to the agent callable as it arrives — the
-        runtime imposes no ordering of its own. A run whose
-        `forwardedProps.addressedRunId` names another run is a declared
-        *interjection*: the caller asks to join that run's turn in flight
-        (distinct from `parentRunId`, which is plain continuation). Whether
-        and how to honour it — absorb it into the named turn, treat it as
-        the next turn, ignore it — is the agent author's decision, made in
-        the agent's own code against its own live loop.
-        `serialize_per_thread` is an off-the-shelf wrapper for authors who
-        want one-turn-at-a-time per thread.
-        """
+    async def deliver(self, run: DeliveredRun) -> bool | Refusal:
+        """The intake decision, answered from state already held — never gated on running anything."""
         if not self._running:
             return False
-        if self.max_concurrent_runs is not None and len(self._in_flight) >= self.max_concurrent_runs:
+        key = run.thread_id or run.run_id
+        lane = self._lanes.get(key)
+        addressed = _addressed_run_id(run)
+        if addressed is not None and lane is not None and lane.active_run_id == addressed:
+            hook = getattr(self.provider, "interject_stream", None)
+            if hook is None:
+                return Refusal(
+                    reason=f"agent '{run.agent_name}' takes no interjections"
+                )
+            if not self._has_room():
+                return False
+            self._start_run(
+                run, stream=hook(run.agent_name, run.run_input, addressed), lane_key=None
+            )
+            return True
+        if not self._has_room():
             return False
-        try:
-            self._jobs.put_nowait(run)
-        except asyncio.QueueFull:
-            return False
+        if lane is None:
+            lane = _Lane()
+            self._lanes[key] = lane
+            lane.queue.append(run)
+            self._queued[run.run_id] = lane
+            self._lane_next(key)
+        else:
+            lane.queue.append(run)
+            self._queued[run.run_id] = lane
         return True
 
+    def _has_room(self) -> bool:
+        if self.max_concurrent_runs is None:
+            return True
+        if len(self._in_flight) < self.max_concurrent_runs:
+            return True
+        return len(self._queued) < self.max_queued_runs
+
     def cancel(self, run_id: str) -> None:
-        """Cancels the asyncio task executing `run_id`, if it is currently in flight; a no-op otherwise."""
+        """Stop the run if it is executing; a run still queued on its lane is dropped and finished at once."""
         task = self._in_flight.get(run_id)
         if task is not None:
             task.cancel()
-
+            return
+        lane = self._queued.pop(run_id, None)
+        if lane is not None:
+            self._dropped.add(run_id)
+            self._output.put_nowait((run_id, _END))
 
     def start(self) -> None:
-        """Starts the background job-consuming and output-reporting loops; a no-op if already running."""
+        """Starts the output-reporting loop; a no-op if already running."""
         if self._running:
             return
         self._running = True
-        self._spawn(self._run_jobs(), name="provider-jobs")
         self._spawn(self._report_output(), name="provider-output")
 
     async def aclose(self, *, cancel_in_flight: bool = False) -> None:
@@ -94,7 +130,7 @@ class ProviderRuntime:
             for task in list(self._in_flight.values()):
                 task.cancel()
         for task in list(self._tasks):
-            if task.get_name() in ("provider-jobs", "provider-output"):
+            if task.get_name() == "provider-output":
                 task.cancel()
         if self._tasks:
             await asyncio.gather(*list(self._tasks), return_exceptions=True)
@@ -105,22 +141,65 @@ class ProviderRuntime:
         task.add_done_callback(self._tasks.discard)
         return task
 
+    def _slot_free(self) -> bool:
+        return (
+            self.max_concurrent_runs is None
+            or len(self._in_flight) < self.max_concurrent_runs
+        )
 
-    async def _run_jobs(self) -> None:
-        while True:
-            run = await self._jobs.get()
-            task = self._spawn(self._execute(run), name=f"run:{run.run_id}")
-            self._in_flight[run.run_id] = task
-            task.add_done_callback(
-                lambda _t, run_id=run.run_id: self._in_flight.pop(run_id, None)
-            )
+    def _lane_next(self, key: str) -> None:
+        """Advance one lane: start its next queued run when an execution slot is free, park it when none is, or retire it when nothing waits. Every transition here is synchronous, so the declared concurrency holds by construction rather than by timing."""
+        lane = self._lanes.get(key)
+        if lane is None:
+            return
+        while lane.queue:
+            if lane.queue[0].run_id in self._dropped:
+                run = lane.queue.popleft()
+                self._queued.pop(run.run_id, None)
+                self._dropped.discard(run.run_id)
+                continue
+            if not self._slot_free():
+                if not lane.parked:
+                    lane.parked = True
+                    self._parked.append(key)
+                return
+            run = lane.queue.popleft()
+            self._queued.pop(run.run_id, None)
+            lane.active_run_id = run.run_id
+            self._start_run(run, stream=None, lane_key=key)
+            return
+        self._lanes.pop(key, None)
 
-    async def _execute(self, run: DeliveredRun) -> None:
-        """Streams the provider's events for `run` into the output queue, always enqueuing a terminal marker
-        (triggering `finish_run`) even on cancellation or an unhandled exception."""
-        name = run.agent_name
+    def _kick_parked(self) -> None:
+        while self._parked and self._slot_free():
+            key = self._parked.popleft()
+            lane = self._lanes.get(key)
+            if lane is None:
+                continue
+            lane.parked = False
+            self._lane_next(key)
+
+    def _start_run(self, run: DeliveredRun, *, stream, lane_key: str | None) -> None:
+        task = self._spawn(self._execute(run, stream), name=f"run:{run.run_id}")
+        self._in_flight[run.run_id] = task
+
+        def _done(_task, run_id=run.run_id, key=lane_key) -> None:
+            self._in_flight.pop(run_id, None)
+            if key is not None:
+                lane = self._lanes.get(key)
+                if lane is not None and lane.active_run_id == run_id:
+                    lane.active_run_id = None
+                    self._lane_next(key)
+            self._kick_parked()
+
+        task.add_done_callback(_done)
+
+    async def _execute(self, run: DeliveredRun, stream) -> None:
+        """Streams the run's events into the output queue, always enqueuing a terminal marker (triggering `finish_run`) even on cancellation or an unhandled exception."""
+        if stream is None:
+            stream = self.provider.run_stream(run.agent_name, run.run_input)
         try:
-            async for event in self.provider.run_stream(name, run.run_input):
+            async for event in stream:
                 self._output.put_nowait((run.run_id, event))
         except asyncio.CancelledError:
             logger.info("run %s: agent stopped", run.run_id)

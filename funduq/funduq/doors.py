@@ -40,78 +40,14 @@ __all__ = [
 
 
 def relayed_chain(funduq: "Funduq", chain: Any, agent: AgentRef) -> Any:
-    """The chain as it will leave funduq: the caller's, plus one hop funduq
-    signs for the dispatch it is making, naming where the run went.
-
-    Called at the door, **before the run is created**, because the same
-    object has to be two things — what the record keeps and what the agent
-    receives. Building it later, inside dispatch, made those two differ:
-    the run stored what arrived and the agent got something else, so
-    funduq's own books could not tell a run it had dispatched from a chain
-    that reached it having passed no witness at all.
-
-    Only ever an extension: a run carrying no chain gets none, since
-    starting one would make funduq the segment's head, which it is not.
-
-    A **resume does not call this**. It is the same run continuing, nobody
-    is being handed anything, and the chain to relay is the one the run
-    already stores — signing a second dispatch hop would record one
-    delegation as several, and relaying the answering party's chain instead
-    (which is what happened before) told the agent it was working for
-    whoever answered rather than for the run's head.
-    """
+    """The chain as it will leave funduq: the caller's, plus one hop funduq signs for the dispatch it is making, naming where the run went."""
     return funduq.identity.dispatch_hop(chain, agent) if chain else chain
 
 
 async def verify_caller(
     session: "AsyncSession", metadata: dict, *, presenter_key: str | None = None
 ) -> tuple[dict, str | None, Any]:
-    """Verifies `metadata["actorChain"]` if present and returns
-    `(metadata stripped of funduq's reserved keys, the chain's head key, the raw chain)` —
-    `(metadata, None, None)` when no chain is attached. Raises `InvalidChain` if the
-    chain is tampered: a bad chain is refused at the door, never carried.
-
-    `presenter_key` is the key an authenticating seat in front of this door
-    proved belongs to whoever is calling, and it is the answer to **a chain
-    proves origin, not possession**. A chain is not a secret — funduq relays
-    it to the serving provider verbatim — so holding one is no evidence of
-    being its head, and a provider can otherwise present its caller's chain
-    back here for work the caller never asked for
-    (`scripts/probes/probe_a_provider_can_speak_as_the_caller.py`). When a
-    key is supplied it must equal the chain's **presenter** (the last hop's
-    signer, never the head — comparing the head is exactly the mistake that
-    lets the replay through), and a mismatch is refused rather than
-    downgraded: presenting a chain is a claim, and a claim that cannot be
-    backed is not the same act as making no claim at all.
-
-    funduq compares; it never authenticates. A door receives bytes, not a
-    connection, so establishing who is calling needs the live channel the
-    seat has and core does not. Supplying the key is therefore the
-    embedder's, and **omitting it changes nothing**: the chain is verified,
-    relayed and its head copied exactly as before. This is an extension for
-    a deployment that has an authenticating seat, not a new requirement —
-    withdrawing authority from every caller who has no seat in front of them
-    would be compelling participation, which funduq does not do. It also
-    means a deployment that supplies no key is exactly as exposed as it was,
-    and that is a deployment invariant rather than a setting: core's caller
-    doors are not independently safe.
-
-    funduq's whole part in caller identity is four verbs — verify, copy the
-    head, relay, refuse — and this is the verify. No summary is produced:
-    the chain reaches the agent verbatim (`forwardedProps.actorChain`) and
-    the agent verifies for itself; the head key is what funduq copies onto
-    the records that need an authority (a thread's binding, a paused ask).
-
-    A session delegation certificate under `metadata["delegation"]` resolves
-    the head: when the certificate's named delegate signed the chain's first
-    hop, the certificate's authority is the effective head — rights attach to
-    the durable key; the session key is a glove.
-
-    Every door funnels caller metadata through here, which also makes it the
-    one place to strip funduq's reserved keys from the caller's input. It
-    lives outside `protocols/` because nothing about it is any protocol's:
-    which door the metadata arrived by does not change a single line of it.
-    """
+    """Verifies `metadata["actorChain"]` if present and returns `(metadata stripped of funduq's reserved keys, the chain's head key, the raw chain)` — `(metadata, None, None)` when no chain is attached."""
     metadata = {k: v for k, v in metadata.items() if k not in RESERVED_METADATA_KEYS}
     actor_chain = metadata.get("actorChain")
     if not actor_chain:
@@ -135,17 +71,7 @@ async def verify_caller(
 async def resolve_kyok(
     session: "AsyncSession", metadata: dict
 ) -> tuple[dict, KyokOptIn | None]:
-    """Reads a KYOK opt-in out of `metadata` and returns
-    `(metadata with the caller's KYOK context removed, the opt-in or None)`.
-
-    Raises `LlmProviderNotFound` if the opt-in names an offering that is not
-    registered — refused at the door, so a run is never created bound to an
-    offering that does not exist.
-
-    The context is stripped from what gets stored because it is the caller's
-    to relay, not funduq's to keep: it travels to the LLM provider through
-    the binding and is never persisted (see `mechanisms/kyok.md`).
-    """
+    """Reads a KYOK opt-in out of `metadata` and returns `(metadata with the caller's KYOK context removed, the opt-in or None)`."""
     opt_in = parse_kyok_opt_in(metadata)
     if opt_in is not None and opt_in.llm_provider is not None:
         if await repo.get_llm_provider(session, opt_in.llm_provider) is None:
@@ -155,18 +81,7 @@ async def resolve_kyok(
 
 @dataclass(frozen=True)
 class InboundRun:
-    """One run as a door has translated it, before funduq has decided anything.
-
-    Everything here is either the caller's own words or a field of AG-UI's
-    `RunAgentInput` — the shape every provider sees, whichever door the run
-    arrived by. What funduq owes it is the rest: a thread, a run id, the
-    folded message history and the forwarded-props funduq itself authors. That
-    division is the whole point of this type; a door translates, and the seat
-    decides.
-
-    `protocol` records which door it came by. It is a stored fact, never
-    branched on — nothing in dispatch reads it back.
-    """
+    """One run as a door has translated it, before funduq has decided anything."""
 
     agent: AgentRef
     messages: list[dict[str, Any]]
@@ -197,45 +112,22 @@ async def dispatch(
     run_id: str,
     starting_seq: int,
 ) -> bool:
-    """Appends the inbound messages to the thread, builds the provider's AG-UI input, commits,
-    and hands the run to the broker. Returns False if the agent is registered but nobody is
-    serving it — the run is recorded `failed`/`agent_offline` and committed, because a run
-    nothing will dispatch must not read as `queued` forever.
+    """Appends the inbound messages to the thread, builds the provider's AG-UI input, commits, and hands the run to the broker."""
+    if inbound.addressed_run_id is not None:
+        target = funduq.broker.get(inbound.addressed_run_id)
+        if target is None or target.thread_id != thread_id:
+            raise InvalidRunInput(
+                f"interjection names '{inbound.addressed_run_id}', which is not a "
+                "live run on this thread"
+            )
 
-    Raises `InvalidRunInput` if the assembled input is not valid AG-UI.
-
-    **Whether anyone is serving is asked once, by the broker.** This used to
-    ask first and let `enqueue_run` ask again, with `await session.commit()`
-    between the two — a network round trip on Postgres, and a provider
-    closing its socket inside it left the caller holding an unhandled
-    `RuntimeError` where this docstring promises `agent_offline`, the run
-    `queued` forever, and the broker unaware of it: the "run nothing could
-    ever finish" that second check exists to refuse. Narrowing the window
-    would have kept two parties reading one fact at two moments. The reading
-    that counts is the one taken with the insert it guards, so this waits for
-    it and acts on the answer.
-
-    This is the far side of every door and it names no protocol. The KYOK
-    binding is established after the commit for the same reason it always
-    was: it is in-memory state about a run that must exist first — and before
-    the enqueue, because a run can be offered the moment it is queued, so a
-    binding established afterwards would be a race of its own. A run the
-    broker did not take is discarded from the relay by the same verb the
-    broker's own `forget` uses; nothing ever ran, so nothing is being
-    revoked.
-    """
     messages = await repo.append_thread_messages(
         session, thread_id, run_id, inbound.messages
     )
 
     kyok_ref = inbound.kyok_ref
 
-    # Relayed exactly as handed in. The dispatch hop is signed at the door by
-    # `relayed_chain` before the run is created, so the same object is what
-    # the run stores and what the agent receives — and a resume relays the
-    # run's own stored chain rather than re-signing a handover that is not
-    # happening. Deciding it here instead would need a flag saying which of
-    # those this call is, and the door already knows.
+    # Relayed exactly as handed in.
     relayed_chain = inbound.actor_chain
 
     try:
@@ -275,7 +167,13 @@ async def dispatch(
         )
     if (
         funduq.enqueue_run(
-            run_id, inbound.agent, thread_id, input_json, inbound.protocol, seq=starting_seq
+            run_id,
+            inbound.agent,
+            thread_id,
+            input_json,
+            inbound.protocol,
+            seq=starting_seq,
+            addressed_run_id=inbound.addressed_run_id,
         )
         is None
     ):
@@ -290,11 +188,7 @@ async def dispatch(
 
 @dataclass(frozen=True)
 class PendingAsk:
-    """The paused run a result would land on, and the key authorized to answer it.
-
-    Each door finds this its own way — that lookup is the door's grammar,
-    not funduq's — and hands it over in this one shape.
-    """
+    """The paused run a result would land on, and the key authorized to answer it."""
 
     run_id: str
     head_key: str | None
@@ -310,35 +204,7 @@ class Opened:
 
 
 def authorize_cancel(run: Any, metadata: dict[str, Any]) -> str | None:
-    """Refuses a cancel that carries no authority over a run whose thread is bound,
-    and returns the authority that asked (`None` for an unbound run).
-
-    Stopping someone else's run is a rights question, and it was left
-    outside when writing a bound thread became a membership act: a complete
-    stranger holding the run id could still ask the provider to stop.
-    A run id is an identifier, and identifiers are never credentials.
-
-    The authority set is the one an ask on the same run would have — the
-    run's segment head and the agent's own provider key — because the two
-    are the same question asked twice: who does this run's segment answer
-    to? The proof is a signature over
-    `identity.cancel_payload(run_id, timestamp)`, which is
-    possession of a private key rather than a chain hop anyone downstream
-    could replay.
-
-    **An unbound run stays open**, exactly as it is today. The whole
-    mechanism is opt-in by carrying a chain: a thread that named no
-    authority at birth has none to check against, and inventing one here
-    would make funduq the authority instead of the caller.
-
-    The returned key is the *effective* authority, not the key that signed:
-    a session key presented with a delegation certificate stands for the
-    durable key behind it. That distinction is the whole reason this is
-    returned rather than left to be read back out of the stored proof —
-    the proof records the glove, and the record needs the hand.
-
-    Raises `InvalidCancel`; a no-op for an unbound run.
-    """
+    """Refuses a cancel that carries no authority over a run whose thread is bound, and returns the authority that asked (`None` for an unbound run)."""
     if run.head_key is None:
         return None
     return verify_cancel(
@@ -363,29 +229,7 @@ async def open_run(
     protocol: str,
     actor_chain: Any = None,
 ) -> Opened | None:
-    """Resolves a request to the run it belongs on: the pending ask it answers, or a new run
-    queued on the thread. Returns None only for a declared **result** that found no ask to land
-    on — either there was none, or another caller answered first.
-
-    The two lanes are [the seam's two
-    entrances](../../docs/design-records.md); which one a caller used is
-    theirs to declare, never inferred from the target's state:
-
-    - a **result** must land on a pending ask. It reopens that run under its
-      own id, and the reopen is status-guarded so two concurrent answers
-      resolve to one; the loser gets None, same as if there had been no ask.
-      A result never queues — it drains an ask rather than piling new input,
-      which is why `thread_queue_limit` is not consulted on this path.
-    - an **utterance** becomes a new queued run. If it happens to be
-      addressed at a run that is *currently* a pending ask, it lands there
-      instead — that is A2A's grammar, where a result is a plain message
-      plus addressing, so one that lands on no ask honestly is an
-      utterance. When the reopen loses, it degrades to an utterance too.
-
-    A chained ask names its authorities, and a resolution must carry a
-    signature from one of them (raising `InvalidResolution` otherwise) —
-    checked before the reopen, so a failed signature cannot consume the win.
-    """
+    """Resolves a request to the run it belongs on: the pending ask it answers, or a new run queued on the thread."""
     if ask is not None:
         answered_by = None
         if ask.head_key is not None:
@@ -421,14 +265,7 @@ async def open_run(
 
 
 async def offline_events(thread_id: str, run_id: str) -> AsyncIterator[dict[str, Any]]:
-    """The stream a run gets when its agent is registered but nobody is serving it.
-
-    funduq has reached a verdict — the run is recorded `failed` with
-    `agent_offline` — and a caller left holding a silent stream cannot tell
-    that from an agent with nothing to say. Both events are built from
-    AG-UI's own models rather than hand-written dicts, dumped with
-    `exclude_none=True` so no `timestamp: null` enters a caller's stream.
-    """
+    """The stream a run gets when its agent is registered but nobody is serving it."""
     yield RunStartedEvent(thread_id=thread_id, run_id=run_id).model_dump(
         mode="json", by_alias=True, exclude_none=True
     )

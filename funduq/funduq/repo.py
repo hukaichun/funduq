@@ -12,6 +12,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from funduq.identity import provider_fingerprint
 from funduq.ids import new_id
+from funduq_contract import Registration
+
 from funduq.models import AgentRecord, AgentRef, AgentSummary, LlmRef, LlmSummary, RunRecord
 from funduq.props import OBSERVED_METADATA_KEY
 from funduq.schema import (
@@ -27,10 +29,7 @@ from funduq.schema import (
 logger = logging.getLogger("funduq.repo")
 
 
-# A run nobody has accepted yet: waiting in the queue, or handed to a
-# provider that has not answered. A declined offer puts an "offering" run
-# straight back to "queued", so both are the same thing to anyone asking how
-# much is still pending.
+# A run nobody has accepted yet: waiting in the queue, or handed to a provider that has not answered.
 PENDING_RUN_STATUSES = ["queued", "offering"]
 ACTIVE_RUN_STATUSES = [*PENDING_RUN_STATUSES, "running", "cancelling", "input-required"]
 
@@ -61,21 +60,11 @@ class ThreadOwnershipMismatch(Exception):
 
 
 class ThreadMembershipRequired(Exception):
-    """The thread is bound to a responsibility segment and the writer is not a member.
-
-    A thread whose first run carried an actor chain binds {segment head,
-    serving provider} at birth; only those keys may utter on it. Members
-    interject freely — membership is the only gate. An unbound thread
-    accepts anyone, unchanged."""
+    """The thread is bound to a responsibility segment and the writer is not a member."""
 
 
 class ThreadQueueFull(Exception):
-    """The thread's pending-utterance buffer is at its limit; the message was NOT accepted.
-
-    A resource guard, not a judgment: funduq counts pending runs, never reads
-    them. The refusal is loud on purpose — accepting and silently expiring
-    later would be worse than saying no now. Answering a paused run's
-    question (the reply lane) is never subject to this limit."""
+    """The thread's pending-utterance buffer is at its limit; the message was NOT accepted."""
 
 
 async def get_schema_revision(session: AsyncSession) -> str | None:
@@ -88,11 +77,7 @@ async def get_schema_revision(session: AsyncSession) -> str | None:
 
 
 async def ensure_provider(session: AsyncSession, public_key: str) -> None:
-    """Inserts a `providers` row for `public_key` if one doesn't exist yet; a no-op if it does.
-
-    Raises `ProviderFingerprintTaken` if `public_key` hashes to the same
-    fingerprint as a different public key already on record.
-    """
+    """Inserts a `providers` row for `public_key` if one doesn't exist yet; a no-op if it does."""
     now = _utcnow()
     stmt = _upsert(session, providers).values(
         public_key=public_key,
@@ -120,20 +105,10 @@ async def set_provider_name(session: AsyncSession, public_key: str, display_name
 async def register_agents(
     session: AsyncSession,
     public_key: str,
-    agents_batch: list[dict[str, Any]],
+    agents_batch: list[Registration],
     provider_name: str | None = None,
 ) -> dict[str, AgentRef]:
-    """Registers or refreshes agents for `public_key`, and returns an `AgentRef` per name.
-
-    Re-registering an already-known (public_key, name) pair updates its
-    card/metadata and `last_seen_at` in place rather than creating a new
-    row, so its `joined_at` stays fixed across repeated calls. An agent
-    previously registered under this key but omitted from `agents_batch`
-    is left untouched, not removed. The same agent name under two
-    different public keys is two independent agents. If `provider_name`
-    is given it updates the provider's display name; otherwise the
-    existing display name (if any) is left as-is.
-    """
+    """Registers or refreshes agents for `public_key`, and returns an `AgentRef` per name."""
     await ensure_provider(session, public_key)
     if provider_name is not None:
         await set_provider_name(session, public_key, provider_name)
@@ -141,17 +116,17 @@ async def register_agents(
     now = _utcnow()
     registered: dict[str, AgentRef] = {}
     for agent in agents_batch:
-        name = agent["name"]
+        name = agent.name
         card = {
             "name": name,
-            "description": agent.get("description", ""),
-            **agent.get("agent_card_extra", {}),
+            "description": agent.description,
+            **agent.agent_card_extra,
         }
         stmt = _upsert(session, agents).values(
             name=name,
             provider_key=public_key,
             agent_card=card,
-            metadata=agent.get("metadata", {}),
+            metadata=agent.metadata,
             joined_at=now,
             last_seen_at=now,
         )
@@ -274,11 +249,7 @@ async def get_agent(session: AsyncSession, agent: AgentRef) -> AgentRecord | Non
 
 
 async def resolve_agent(session: AsyncSession, provider: str, name: str) -> AgentRecord | None:
-    """Looks up an agent by name under a provider identified by either its public key or fingerprint.
-
-    Matching is exact and case-sensitive — an uppercased fingerprint does
-    not match. Returns None if nothing matches, rather than raising.
-    """
+    """Looks up an agent by name under a provider identified by either its public key or fingerprint."""
     row = (
         await session.execute(
             select(
@@ -343,11 +314,7 @@ async def list_agents(
     *,
     stale_hidden_window_seconds: int,
 ) -> list[AgentSummary]:
-    """Lists registered agents, excluding any not seen within `stale_hidden_window_seconds`.
-
-    An agent whose `last_seen_at` falls outside that window is dropped
-    from the listing entirely (not just marked offline).
-    """
+    """Lists registered agents, excluding any not seen within `stale_hidden_window_seconds`."""
     stale_cutoff = datetime.now(timezone.utc) - timedelta(seconds=stale_hidden_window_seconds)
     rows = (
         await session.execute(
@@ -473,24 +440,7 @@ async def ensure_thread(
     create_if_missing: bool = False,
     head_key: str | None = None,
 ) -> str:
-    """Resolves a thread id for `agent`, creating a new thread when `thread_id` is None.
-
-    If `thread_id` is given and exists, it must belong to `agent` — raises
-    `ThreadOwnershipMismatch` otherwise — and its `last_activity_at` is
-    bumped. If `thread_id` is given but doesn't exist, raises
-    `ThreadNotFound` unless `create_if_missing` is set, in which case a
-    new thread is created instead — under a funduq-minted id, never the
-    caller's: funduq owns its record's primary keys, and a caller-chosen
-    name has no caller identity to scope it to yet (see the design
-    record on conversation naming rights).
-
-    `head_key` is the writer's effective segment head (None = anonymous).
-    A thread created now binds it at birth, immutably; an existing thread
-    that was born bound admits only its members — the bound head or the
-    serving provider's own key — and raises `ThreadMembershipRequired`
-    for anyone else. A thread born unbound stays open to all, and a later
-    chained writer cannot retroactively lock it.
-    """
+    """Resolves a thread id for `agent`, creating a new thread when `thread_id` is None."""
     if thread_id is not None:
         existing = await get_thread(session, thread_id)
         if existing is None:
@@ -603,17 +553,7 @@ async def _merge_run_metadata(
     metadata: dict[str, Any],
     appending: dict[str, str | None] | None = None,
 ) -> dict[str, Any]:
-    """The run's stored metadata with `metadata` written over it, and anything
-    in `appending` added to a list under funduq's own reserved key.
-
-    Caller metadata is *assigned* because the latest one is the current one.
-    What funduq itself observes is *appended*, because a run can be answered
-    more than once and an earlier answerer is not superseded by a later one —
-    they are two acts, and a record that kept only the last would say the
-    first never happened. Entries whose value is None are skipped rather
-    than recorded as an unknown: an unbound run has no authority to name,
-    which is different from having one nobody looked at.
-    """
+    """The run's stored metadata with `metadata` written over it, and anything in `appending` added to a list under funduq's own reserved key."""
     existing = (
         await session.execute(
             select(runs.c.metadata).where(runs.c.run_id == run_id)
@@ -632,14 +572,7 @@ async def _merge_run_metadata(
 async def record_cancel_request(
     session: AsyncSession, run_id: str, *, requested_by: str | None
 ) -> None:
-    """Notes which authority asked this run to stop.
-
-    Kept apart from the run's status because it is not one: funduq relays a
-    cancel and never records an outcome it has not observed, so what is
-    written here is the asking, which funduq did observe, and the run's own
-    ending still comes from the provider. A no-op for an unbound run, which
-    names no authority to record.
-    """
+    """Notes which authority asked this run to stop."""
     if requested_by is None:
         return
     await session.execute(
@@ -662,27 +595,7 @@ async def reopen_run(
     expected_status: str | None = None,
     answered_by: str | None = None,
 ) -> bool:
-    """Puts `run_id` back to "queued" with fresh input, returning whether a row
-    changed. With `expected_status`, the update only applies while the run is
-    still in that status — the guard that makes two concurrent replies to one
-    paused run resolve to a single reopen instead of both winning.
-
-    **`head_key` and `actor_chain` are deliberately untouched.** A run's
-    responsibility is fixed when it is created and there is one form of it;
-    answering a paused ask is not taking the run over, so the answering
-    party's own chain does not replace the one the run was opened under.
-
-    That party is recorded, in two forms that are not the same form. The
-    proof it presented rides in `metadata` and is merged in as given — a
-    signature over `identity.resolve_payload(run_id, timestamp)` from the
-    run's own authority set, bound to this act by this key rather than
-    saying, as a chain does, who merely stood on the path. And
-    `answered_by` is the **effective** authority the doors computed while
-    checking that proof: with a delegation certificate the signer is a
-    session key standing for a durable one, so the proof names the glove
-    and this names the hand. Appended rather than assigned, because a run
-    can pause more than once and each answer is its own act.
-    """
+    """Puts `run_id` back to "queued" with fresh input, returning whether a row changed."""
     values: dict[str, Any] = {
         "status": "queued",
         "input_json": input_json,
@@ -700,20 +613,10 @@ async def reopen_run(
     return result.rowcount > 0
 
 
-# The run-status state machine: which statuses each `mark_run_status` write
-# may legally come from. The transition itself is the guard — a conditional
-# UPDATE whose WHERE carries the legal predecessors — so ordering holds under
-# any concurrency, in-process or across processes: of two racing writers, the
-# database picks one winner and the loser's update matches zero rows.
-# "queued" is deliberately absent: a run is born queued (`create_run`), put
-# back by `reopen_run` when it is answered, or handed back by
-# `return_run_to_queue` when an offer is not accepted — never by this
-# function.
+# The run-status state machine: which statuses each `mark_run_status` write may legally come from.
 LEGAL_STATUS_TRANSITIONS: dict[str, tuple[str, ...]] = {
     "offering": ("queued",),
-    # "queued" as well as "offering": a provider that answers after funduq
-    # gave up waiting has had its run put back in the queue
-    # (`RunBroker.accept_late_ack`).
+    # "queued" as well as "offering": a provider that answers after funduq gave up waiting has had its run put back in the queue (`RunBroker.accept_late_ack`).
     "running": ("queued", "offering"),
     "input-required": ("running", "cancelling"),
     "cancelling": ("running",),
@@ -724,15 +627,7 @@ LEGAL_STATUS_TRANSITIONS: dict[str, tuple[str, ...]] = {
 
 
 async def return_run_to_queue(session: AsyncSession, run_id: str) -> bool:
-    """Puts a run whose offer was not accepted back to "queued", and returns
-    whether it applied.
-
-    Separate from `mark_run_status` because that function deliberately never
-    writes "queued" — a run is born queued or reopened, it does not move
-    there. This is the third way, and the only one: the guard is the same
-    conditional UPDATE, so a hand-back cannot undo a claim that won the row
-    (an offer answered just as funduq gave up waiting on it).
-    """
+    """Puts a run whose offer was not accepted back to "queued", and returns whether it applied."""
     result = await session.execute(
         update(runs)
         .where(runs.c.run_id == str(run_id), runs.c.status == "offering")
@@ -745,18 +640,7 @@ async def return_run_to_queue(session: AsyncSession, run_id: str) -> bool:
 async def mark_run_status(
     session: AsyncSession, run_id: str, status: str, metadata: dict[str, Any] | None = None
 ) -> bool:
-    """Moves a run to `status` if its current status legally precedes it
-    (`LEGAL_STATUS_TRANSITIONS`), merging in `metadata` if given, and returns
-    whether the transition applied. A refused transition — the run already
-    moved somewhere the requested status can't follow, e.g. a late `failed`
-    after `completed` — changes nothing, is logged, and returns False: the
-    record keeps the transition that actually won. Raises `RunRowMissing` if
-    `run_id` doesn't match any row, and `ValueError` for a status this
-    function never writes.
-
-    Setting "running", "completed", "failed", or "cancelled" also stamps
-    the matching `started_at`/`completed_at` column.
-    """
+    """Moves a run to `status` if its current status legally precedes it (`LEGAL_STATUS_TRANSITIONS`), merging in `metadata` if given, and returns whether the transition applied."""
     legal_from = LEGAL_STATUS_TRANSITIONS.get(status)
     if legal_from is None:
         raise ValueError(
@@ -816,11 +700,7 @@ async def get_active_run_for_thread(session: AsyncSession, thread_id: str) -> di
 
 
 async def ensure_queue_room(session: AsyncSession, thread_id: str, limit: int | None) -> None:
-    """Refuses (ThreadQueueFull) a new pending run when the thread's buffer is
-    at `limit`; a no-op when `limit` is None. One door-side guard for every
-    place a new queued run joins a thread — the reply lane (reopening a paused
-    run) never goes through it, because answering a question adds nothing to
-    the buffer."""
+    """Refuses (ThreadQueueFull) a new pending run when the thread's buffer is at `limit`; a no-op when `limit` is None."""
     if limit is None:
         return
     depth = await count_queued_runs_for_thread(session, thread_id)
@@ -833,12 +713,7 @@ async def ensure_queue_room(session: AsyncSession, thread_id: str, limit: int | 
 
 
 async def count_queued_runs_for_thread(session: AsyncSession, thread_id: str) -> int:
-    """How many of the thread's runs no provider has accepted yet
-    (`PENDING_RUN_STATUSES`) — the depth of its pending-utterance buffer. A
-    run mid-handover counts: the offer may still be declined, which puts it
-    back in the queue. The count-then-create at the doors is deliberately
-    unlocked: the limit is a resource guard, not accounting, and a rare
-    concurrent overshoot by one is cheaper than a lock here."""
+    """How many of the thread's runs no provider has accepted yet (`PENDING_RUN_STATUSES`) — the depth of its pending-utterance buffer."""
     return (
         await session.execute(
             select(func.count())
@@ -849,10 +724,7 @@ async def count_queued_runs_for_thread(session: AsyncSession, thread_id: str) ->
 
 
 async def get_paused_run_for_thread(session: AsyncSession, thread_id: str) -> dict[str, Any] | None:
-    """The thread's `input-required` run, if it has one. Distinct from
-    `get_active_run_for_thread` on purpose: with queued siblings on the thread,
-    "latest active" may be a queued run, while a resume must target the run
-    that actually asked the question."""
+    """The thread's `input-required` run, if it has one."""
     row = (
         await session.execute(
             select(runs)
@@ -868,10 +740,7 @@ async def get_paused_run_for_thread(session: AsyncSession, thread_id: str) -> di
 
 
 async def get_thread_snapshot(session: AsyncSession, thread_id: str) -> dict[str, Any] | None:
-    """The thread's state as a caller may see it: its messages, and a summary
-    of the run in flight. Deliberately NOT the run's raw row — a run row
-    carries the caller's own metadata and input (actor chains included), and
-    a read surface must never hand one caller another's raw materials."""
+    """The thread's state as a caller may see it: its messages, and a summary of the run in flight."""
     thread = await get_thread(session, thread_id)
     if thread is None:
         return None

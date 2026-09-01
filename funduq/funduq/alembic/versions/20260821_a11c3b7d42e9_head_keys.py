@@ -1,14 +1,4 @@
-"""Add head_key to threads and runs: the responsibility segment's authority.
-
-A thread whose first run carries an actor chain binds the chain's head at
-birth (immutable; NULL = unbound, today's open behavior). A run records the
-head it arrived under, so a paused run's ask knows whose signature may
-resolve it. See docs/mechanisms/responsibility-chains.md.
-
-Revision ID: a11c3b7d42e9
-Revises: ff342e6c6b85
-Create Date: 2026-08-21
-"""
+"""Add head_key to threads and runs: the responsibility segment's authority."""
 
 from typing import Sequence, Union
 

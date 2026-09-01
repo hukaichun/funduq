@@ -39,12 +39,7 @@ class LlmProviderNotFound(FunduqError):
 
 
 class LlmOfferingInUse(FunduqError):
-    """Raised when deleting an LLM offering is refused because it's still in use — the mirror of `AgentInUse`.
-
-    `reason` is a machine-readable code distinct from the human-readable
-    message: "connected" (a provider is currently serving it) or
-    "active_run" (a live run is bound to it).
-    """
+    """Raised when deleting an LLM offering is refused because it's still in use — the mirror of `AgentInUse`."""
 
     def __init__(self, message: str, *, reason: str) -> None:
         super().__init__(message)
@@ -52,14 +47,7 @@ class LlmOfferingInUse(FunduqError):
 
 
 class AgentInUse(FunduqError):
-    """Raised when deleting an agent is refused because it's still in use.
-
-    `reason` is a machine-readable code distinct from the human-readable
-    message: "connected" (a provider is currently attached to it),
-    "active_run" (it has a run that hasn't reached a terminal status), or
-    "has_history" (it has prior conversation history) even after the
-    provider that served it has since detached.
-    """
+    """Raised when deleting an agent is refused because it's still in use."""
 
     def __init__(self, message: str, *, reason: str) -> None:
         super().__init__(message)
@@ -71,19 +59,7 @@ class InvalidRegistration(FunduqError):
 
 
 class KyokRejected(FunduqError):
-    """A KYOK completion call was refused; `status` is the status code a caller should be told.
-
-    Mapping it onto a transport is the serving layer's job. The reasons
-    differ in kind, so `status` varies with them: an unusable bearer
-    token or call signature is 401, a request body that isn't valid
-    JSON is 400, a run that isn't currently active or an unregistered
-    agent is 403, a run whose KYOK binding is gone or a detached LLM
-    provider is 503, and the provider's own completion call failing is
-    502.
-
-    `refusal` carries the LLM provider's structured refusal payload when
-    it raised one (else None); funduq relays it without interpreting it.
-    """
+    """A KYOK completion call was refused; `status` is the status code a caller should be told."""
 
     def __init__(self, message: str, *, status: int, refusal: dict | None = None) -> None:
         super().__init__(message)
@@ -96,34 +72,11 @@ class RunNotFound(FunduqError):
 
 
 class RunNotCancellable(FunduqError):
-    """Raised when a cancel is asked of a run that has nobody to ask.
-
-    Cancelling means one thing here: relay the request to the provider
-    working on the run. A paused run has no provider working on it — its
-    stream really did end, and what the run is waiting for is the caller's
-    own answer — so there is no request to relay and no outcome to observe.
-    Saying so is the only honest answer; `cancel_run`'s False means "already
-    ended, nobody left to ask", and a run that is still waiting is not that.
-
-    It is deliberately not a way to abandon a pause. Deciding not to answer
-    is the answering party giving up, which is a different act from asking a
-    worker to stop, and funduq has no verb for it yet. Smuggling it in here
-    would make a cancel settle a run funduq has observed nothing about.
-    """
+    """Raised when a cancel is asked of a run that has nobody to ask."""
 
 
 class NoPendingAsk(FunduqError):
-    """Raised when a deferred call's result is offered to a run that is not waiting for one.
-
-    A run is the agent's loop up to its natural exit; a deferred call is a
-    pause *inside* that run, and the result goes back into the loop it
-    suspended. A run that already exited has no suspension to return to, so
-    running it again would be a second loop wearing the first one's id —
-    that is a new run, and the caller should open one.
-
-    It is also what a loser sees when two results race for the same pending
-    ask: exactly one reopen wins, and the other finds nothing left waiting.
-    """
+    """Raised when a deferred call's result is offered to a run that is not waiting for one."""
 
 
 class InvalidRunInput(FunduqError):

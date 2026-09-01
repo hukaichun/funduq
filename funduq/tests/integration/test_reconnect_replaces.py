@@ -20,10 +20,8 @@ class _StubConnection:
     async def deliver(self, run):
         return False
 
-    def cancel(self, run_id: str) -> None:
-        pass
-
-
+    async def cancel(self, run_id: str) -> bool:
+        return True
 async def test_a_replaced_agent_connections_cleanup_leaves_the_replacement_serving(funduq, register):
     served = await register("worker")
     key = served.identity.public_key

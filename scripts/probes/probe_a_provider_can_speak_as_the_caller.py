@@ -45,6 +45,7 @@ from funduq.core import Funduq
 from funduq.identity import InvalidChain, new_chain
 from funduq.models import AgentRef
 from funduq_provider_sdk import InProcessLink, ProviderIdentity, ProviderRuntime
+from funduq_contract import Registration
 
 
 DB = Path(tempfile.gettempdir()) / "funduq_probe_speak_as_caller.db"
@@ -137,7 +138,7 @@ async def main() -> int:
     runtime.start()
     link = InProcessLink(funduq, runtime)
     await funduq.attach_provider(link)
-    await funduq.register_agents(link, [{"name": "assistant"}])
+    await funduq.register_agents(link, [Registration(name="assistant")])
     agent = AgentRef(provider_key=identity.public_key, name="assistant")
 
     try:

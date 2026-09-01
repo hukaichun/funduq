@@ -7,7 +7,9 @@ from collections.abc import AsyncIterator
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, cast
 
-from openai.types.chat import ChatCompletion, ChatCompletionChunk, CompletionCreateParams
+from funduq_contract import DeliveredCompletion
+from openai.types.chat import ChatCompletion, ChatCompletionChunk
+from pydantic import ValidationError
 from openai.types.chat.chat_completion import Choice
 from openai.types.chat.chat_completion_message import ChatCompletionMessage
 from openai.types.shared import ErrorObject
@@ -19,7 +21,7 @@ from funduq.identity import (
     kyok_call_payload,
     verify_signature,
 )
-from funduq.kyok import CompletionRequest, KyokToken, verify_kyok_token
+from funduq.kyok import KyokToken, verify_kyok_token
 
 if TYPE_CHECKING:
     from funduq.core import Funduq
@@ -29,21 +31,7 @@ logger = logging.getLogger(__name__)
 
 @dataclass(frozen=True)
 class CompletionFailure:
-    """A completion that stopped before it finished, carried **as data** because by then there
-    is no status left to change — the caller is already holding an open stream.
-
-    `payload` is what belongs under the caller's error key. When the LLM
-    provider raised a structured refusal it *is* that refusal, relayed
-    intact: funduq never interprets it, because its vocabulary belongs to
-    the provider and its callers. When there was no structured refusal,
-    funduq says so in its own words — built from OpenAI's own `ErrorObject`
-    rather than typed out as a dict, the same rule that has funduq's AG-UI
-    events built from `RunErrorEvent`.
-
-    `refused` says whose words these are: the provider's policy working, or
-    funduq reporting a failure it observed. It is the same distinction the
-    quality counters record, and neither is a judgment.
-    """
+    """A completion that stopped before it finished, carried **as data** because by then there is no status left to change — the caller is already holding an open stream."""
 
     payload: dict[str, Any]
     refused: bool
@@ -51,18 +39,7 @@ class CompletionFailure:
 
 @dataclass
 class CompletionRelay:
-    """A completion in flight from an attached LLM provider back to the KYOK caller: consumed
-    in one shot as an OpenAI `ChatCompletion` (`collapsed`), or drained as it arrives
-    (`stream`).
-
-    `stream` yields OpenAI's own `ChatCompletionChunk`s, and a
-    `CompletionFailure` as the last item if the completion breaks
-    mid-flight. It yields no framing at all — no JSON, no `[DONE]`
-    sentinel. That sentinel is a convention of the wire the caller is on,
-    and this relay does not know which wire that is; a transport that emits
-    one is also the only party that can be sure to emit it *after* a
-    failure frame, which is the gap the old in-core framing left open.
-    """
+    """A completion in flight from an attached LLM provider back to the KYOK caller: consumed in one shot as an OpenAI `ChatCompletion` (`collapsed`), or drained as it arrives (`stream`)."""
 
     stream_requested: bool
     chunks: AsyncIterator[ChatCompletionChunk]
@@ -115,12 +92,7 @@ class KyokAdapter:
         timestamp: str,
         signature: str,
     ) -> CompletionRelay:
-        """Authenticates a KYOK completion call and forwards it to the bound LLM provider.
-        `bearer` must be a valid, unexpired KYOK token for a run that is still active (not
-        cancelled) for the agent named in the token, and `timestamp`/`signature` must be a
-        fresh, correctly signed proof that the calling agent itself made this call — else raises
-        `KyokRejected` with 401 or 403. Raises `KyokRejected` (400) if `body` isn't valid JSON,
-        and (503) if the run's bound LLM provider is no longer attached."""
+        """Authenticates a KYOK completion call and forwards it to the bound LLM provider."""
         token = verify_kyok_token(bearer, self._funduq.settings.token_signing_secret)
         if token is None:
             raise KyokRejected("invalid or expired KYOK token", status=401)
@@ -132,7 +104,7 @@ class KyokAdapter:
         await self._verify_caller(token, bearer, body, timestamp, signature)
 
         try:
-            payload = cast(CompletionCreateParams, json.loads(body))
+            payload = json.loads(body)
         except json.JSONDecodeError as e:
             raise KyokRejected("KYOK completion body is not valid JSON", status=400) from e
 
@@ -145,20 +117,26 @@ class KyokAdapter:
                 f"LLM provider '{binding.llm_provider}' is not attached", status=503
             )
 
+        try:
+            delivered = DeliveredCompletion(
+                run_id=token.run_id,
+                provider_key=token.agent.provider_key,
+                agent_name=token.agent.name,
+                body=payload,
+                llm_name=binding.llm_provider.name,
+                context=binding.context,
+                actor_chain=binding.actor_chain,
+            )
+        except ValidationError as e:
+            raise KyokRejected(
+                f"KYOK completion body is not a chat-completion request: {e}", status=400
+            ) from e
+
         return CompletionRelay(
             stream_requested=bool(payload.get("stream")),
             chunks=self._counted(
                 binding.llm_provider.provider_key,
-                link.complete(
-                    CompletionRequest(
-                        run_id=token.run_id,
-                        agent=token.agent,
-                        body=payload,
-                        llm_name=binding.llm_provider.name,
-                        context=binding.context,
-                        actor_chain=binding.actor_chain,
-                    )
-                ),
+                link.complete(delivered),
             ),
         )
 
@@ -179,9 +157,7 @@ class KyokAdapter:
     async def _verify_caller(
         self, token: KyokToken, bearer: str, body: bytes, timestamp: str, signature: str
     ) -> None:
-        """Raises `KyokRejected` unless `signature` is a fresh, valid signature — by the agent
-        named in `token`, using its registered public key — over the bearer token, timestamp,
-        and a hash of the request body."""
+        """Raises `KyokRejected` unless `signature` is a fresh, valid signature — by the agent named in `token`, using its registered public key — over the bearer token, timestamp, and a hash of the request body."""
         if not timestamp or not signature:
             raise KyokRejected("missing KYOK call-time signature", status=401)
         try:
@@ -204,10 +180,7 @@ class KyokAdapter:
 
 
 def collapse_stream(chunks: list[ChatCompletionChunk]) -> ChatCompletion:
-    """Merges a sequence of `ChatCompletionChunk`s into a single `ChatCompletion`, concatenating
-    each choice index's content deltas and taking that index's last non-empty finish reason
-    (defaulting to `"stop"`). An empty chunk list collapses to one empty assistant message with
-    finish reason `"stop"`."""
+    """Merges a sequence of `ChatCompletionChunk`s into a single `ChatCompletion`, concatenating each choice index's content deltas and taking that index's last non-empty finish reason (defaulting to `"stop"`)."""
     if not chunks:
         return ChatCompletion(
             id="",

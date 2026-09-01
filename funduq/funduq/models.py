@@ -28,24 +28,8 @@ class LlmRef(BaseModel):
         return f"{self.provider_key[:16]}…/{self.name}"
 
 
-class ClaimedRun(BaseModel):
-
-    model_config = ConfigDict(frozen=True)
-
-    run_id: str
-    agent: AgentRef
-    thread_id: str
-    run_input: dict[str, Any]
-    # Part of the delivered-run wire frame; funduq currently writes no keys
-    # into it (a caller's addressing rides inside the run input itself, as the
-    # message's own A2A `taskId`). The slot stays in the contract for
-    # envelope-level data a future dispatch mechanism may need.
-    metadata: dict[str, Any] = Field(default_factory=dict)
-
-
 class LlmSummary(BaseModel):
-    """A roster-list view of a registered LLM offering: enough to display and
-    pick one (including online status), the mirror of `AgentSummary`."""
+    """A roster-list view of a registered LLM offering: enough to display and pick one (including online status), the mirror of `AgentSummary`."""
 
     provider_key: str
     name: str
@@ -57,9 +41,7 @@ class LlmSummary(BaseModel):
 
 
 class AgentSummary(BaseModel):
-    """A roster-list view of a registered agent: enough to display and pick an
-    agent (including online status), but without its full agent_card or
-    metadata."""
+    """A roster-list view of a registered agent: enough to display and pick an agent (including online status), but without its full agent_card or metadata."""
 
     provider_key: str
     name: str
@@ -72,8 +54,7 @@ class AgentSummary(BaseModel):
 
 
 class AgentRecord(BaseModel):
-    """The full stored record for a single registered agent, including its
-    agent_card and metadata; returned by looking up one agent by id."""
+    """The full stored record for a single registered agent, including its agent_card and metadata; returned by looking up one agent by id."""
 
     provider_key: str
     name: str
@@ -84,8 +65,7 @@ class AgentRecord(BaseModel):
 
 
 class RunRecord(BaseModel):
-    """A run's public-facing record: the same run as stored, minus internal
-    storage columns like its thread messages or run events."""
+    """A run's public-facing record: the same run as stored, minus internal storage columns like its thread messages or run events."""
 
     run_id: str
     thread_id: str

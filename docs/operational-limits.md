@@ -28,7 +28,7 @@ Passing it is optional and omitting it changes nothing, because this is an
 extension for a deployment that has such a seat rather than a new
 requirement. A deployment that omits it is exactly as exposed as it was:
 any party holding a chain can present it. See
-[actor chain](mechanisms/actor-chain.md) and
+actor chain and
 `scripts/probes/probe_a_provider_can_speak_as_the_caller.py`.
 
 Two things this does **not** close, deliberately:
@@ -57,7 +57,7 @@ free.
 
 Two agents that behave identically from a user's seat are therefore
 completely different to funduq, and the difference is a declaration the
-agent makes. See [provider quality counters](mechanisms/quality.md) for
+agent makes. See provider quality counters for
 what each counter means and why delivery, not motion, is the measure.
 
 **Resuming restarts that clock rather than continuing it.** A resumed run

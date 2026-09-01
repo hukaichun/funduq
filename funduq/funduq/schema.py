@@ -73,8 +73,7 @@ threads = Table(
     Column("provider_key", String, nullable=False),
     Column("agent_name", String, nullable=False),
     Column("parent_thread_id", String, ForeignKey("threads.thread_id"), nullable=True),
-    # The responsibility segment's head, copied from the first run's chain at
-    # the thread's birth; NULL = unbound (today's open behavior). Immutable.
+    # The responsibility segment's head, copied from the first run's chain at the thread's birth; NULL = unbound (today's open behavior).
     Column("head_key", String, nullable=True),
     Column("metadata", _JSON, nullable=False, default=dict),
     Column("created_at", _TS, nullable=False, default=_utcnow),
@@ -87,13 +86,7 @@ threads = Table(
 )
 
 
-# Every status a run row may carry. "offering" is the dispatch window: funduq
-# has handed the run to a provider and is waiting for an answer, which is
-# neither "queued" (nobody has it yet) nor "running" (nobody has accepted it
-# yet). This tuple is what funduq writes; the CHECK constraint here is built
-# from it, but the database's own copy was written by the migration that
-# widened it — a migration freezes its vocabulary on purpose, so the two are
-# kept in step by a test that writes every status to a real row.
+# Every status a run row may carry.
 RUN_STATUSES = (
     "queued",
     "offering",
@@ -117,24 +110,9 @@ runs = Table(
     Column("agent_name", String, nullable=False),
     Column("protocol", String, nullable=False),
     Column("status", String, nullable=False),
-    # The chain head this run was opened under (after delegation-certificate
-    # resolution); NULL = anonymous. A paused run's ask may be resolved only
-    # by this key or the agent's own provider key.
+    # The chain head this run was opened under (after delegation-certificate resolution); NULL = anonymous.
     Column("head_key", String, nullable=True),
-    # The chain this run was **opened** under, hops and all, exactly as
-    # presented; NULL = none was carried. The head answers "who answers for
-    # this" and is what authority is read from — this answers "through whose
-    # hands", which nothing else can, and keeping it is what makes a branch
-    # (a party rebuilding a chain without the hands between the head and
-    # itself, forging nothing) noticeable afterwards at all.
-    #
-    # Both are written once, at creation, and a resume replaces neither: **a
-    # run's responsibility is fixed at its birth**, and there is one form of
-    # it. The party that answers a paused ask is not taking the run over, and
-    # its own act is already recorded in a stronger form than a chain — the
-    # signature over `funduq-resolve:{run_id}:{timestamp}` it had to produce,
-    # merged into the run's metadata by `repo.reopen_run`. A chain says who
-    # was on the path; that signature is bound to this act by this key.
+    # The chain this run was **opened** under, hops and all, exactly as presented; NULL = none was carried.
     Column("actor_chain", _JSON, nullable=True),
     Column("input_json", _JSON, nullable=False),
     Column("started_at", _TS, nullable=True),

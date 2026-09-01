@@ -23,6 +23,7 @@ from a2a.types import a2a_pb2 as pb
 
 from funduq import repo
 from funduq.protocols.a2a import A2AAdapter
+from funduq_contract import Registration
 
 COMPLETED = pb.TaskState.TASK_STATE_COMPLETED
 INPUT_REQUIRED = pb.TaskState.TASK_STATE_INPUT_REQUIRED
@@ -67,7 +68,7 @@ async def _until(predicate, timeout: float = 5.0) -> None:
 
 
 class GateAgent:
-    """Holds every run open until `release` is set, recording what it was handed."""
+    """Holds every run open until `release` is set, recording what it was handed. Takes interjections — recorded in `runs` too — and answers them at once."""
 
     def __init__(self) -> None:
         self.release = asyncio.Event()
@@ -78,6 +79,12 @@ class GateAgent:
         ids = {"threadId": run_input.thread_id, "runId": run_input.run_id}
         yield {"type": "RUN_STARTED", **ids}
         await self.release.wait()
+        yield {"type": "RUN_FINISHED", **ids}
+
+    async def interject_stream(self, agent_name: str, run_input, active_run_id: str):
+        self.runs.append(run_input)
+        ids = {"threadId": run_input.thread_id, "runId": run_input.run_id}
+        yield {"type": "RUN_STARTED", **ids}
         yield {"type": "RUN_FINISHED", **ids}
 
 
@@ -123,13 +130,14 @@ async def test_a_message_sent_mid_run_is_queued_not_dropped(funduq, serve):
         )
     )
 
-    # No turn-taking: the second utterance reaches the provider while the
-    # first is still open. It is its own run — not merged — and what to do
-    # with the overlap is the provider's decision.
-    await _until(lambda: len(provider.runs) == 2)
+    # One thread, one active run: the second utterance waits in funduq while
+    # the first is open, and is not dropped — it goes out when the turn ends.
+    await asyncio.sleep(0.1)
+    assert len(provider.runs) == 1, "the turn is open; the next utterance waits"
 
     provider.release.set()
     first_result, second_result = await asyncio.gather(first, second)
+    assert len(provider.runs) == 2
 
     assert first_result.status.state == COMPLETED
     assert second_result.status.state == COMPLETED
@@ -196,7 +204,7 @@ async def test_an_unaddressed_message_does_not_resume_the_paused_task(funduq, se
 
 async def test_reopen_run_refuses_a_run_that_is_not_in_the_expected_status(session, new_identity):
     identity = new_identity()
-    registered = await repo.register_agents(session, identity.public_key, [{"name": "r"}])
+    registered = await repo.register_agents(session, identity.public_key, [Registration(name="r")])
     agent = registered["r"]
     thread_id = await repo.create_thread(session, agent)
     created = await repo.create_run(session, thread_id, agent, "ag-ui", {})
@@ -211,7 +219,7 @@ async def test_reopen_run_refuses_a_run_that_is_not_in_the_expected_status(sessi
     assert stored.status == "queued"
 
 
-async def test_two_agui_runs_on_one_thread_flow_side_by_side(funduq, serve):
+async def test_two_agui_runs_on_one_thread_take_turns(funduq, serve):
     from ag_ui.core import RunAgentInput, UserMessage
 
     from funduq.protocols.agui import AGUIAdapter
@@ -241,11 +249,13 @@ async def test_two_agui_runs_on_one_thread_flow_side_by_side(funduq, serve):
 
     second = await adapter.run(agent, _body(first.thread_id, "one more"))
     second_events = asyncio.create_task(_drain(second))
-    # No turn-taking: the second run reaches the provider while the first is
-    # still open; both streams are live.
-    await _until(lambda: len(provider.runs) == 2)
+    # One thread, one active run: the second stream is open toward its caller,
+    # but its run reaches the provider only when the first turn ends.
+    await asyncio.sleep(0.1)
+    assert len(provider.runs) == 1
 
     provider.release.set()
+    await _until(lambda: len(provider.runs) == 2)
     assert {e["type"] for e in await first_events} >= {"RUN_STARTED", "RUN_FINISHED"}
     assert {e["type"] for e in await second_events} >= {"RUN_STARTED", "RUN_FINISHED"}
     assert [r.thread_id for r in provider.runs] == [first.thread_id, first.thread_id]
@@ -271,7 +281,7 @@ async def tight(settings):
 
     async def _serve(provider, name):
         identity = ProviderIdentity.generate()
-        registration = await publish_offline(funduq, identity, [{"name": name}])
+        registration = await publish_offline(funduq, identity, [Registration(name=name)])
         # One run at a time: with the provider's capacity full, further
         # utterances stay in funduq's own buffer — which is what these tests
         # bound. (funduq itself imposes no turn-taking.)
@@ -279,7 +289,7 @@ async def tight(settings):
         runtimes.append(runtime)
         runtime.start()
         await publish_agents(funduq, InProcessLink(funduq, runtime), [name])
-        return registration.agents[name]
+        return registration[name]
 
     funduq.serve_one = _serve
     try:
@@ -468,14 +478,18 @@ async def test_a_task_id_naming_a_running_task_declares_nothing(funduq, serve):
             {**_message("and another thing"), "taskId": first_run_id},
         )
     )
-    await _until(lambda: len(provider.runs) == 2)
+    await asyncio.sleep(0.1)
+    assert len(provider.runs) == 1, (
+        "no declaration, no interjection — an ordinary next run waits its turn"
+    )
+
+    provider.release.set()
+    results = await asyncio.gather(first, second)
+    assert len(provider.runs) == 2
     assert not (provider.runs[1].forwarded_props or {}), (
         "no declaration, no interjection — the run arrives unmarked"
     )
     assert provider.runs[1].thread_id == provider.runs[0].thread_id
-
-    provider.release.set()
-    results = await asyncio.gather(first, second)
     assert {r.status.state for r in results} == {COMPLETED}
 
 
@@ -586,3 +600,45 @@ async def test_the_second_answer_over_ag_ui_is_refused_with_the_thread_state(fun
 async def _paused(funduq, thread_id: str) -> bool:
     async with funduq.session() as session:
         return await repo.get_paused_run_for_thread(session, thread_id) is not None
+
+
+async def test_an_interjection_naming_no_live_run_is_rejected_at_the_door(funduq, serve):
+    """An interjection must name a live run on its own thread. A finished run,
+    an unknown one, or a run on another thread is a declaration that was
+    invalid when made — rejected, in A2A's own words."""
+    from a2a.utils.errors import InvalidParamsError
+    from funduq.props import ADDRESSED_RUN_METADATA_KEY
+
+    provider = GateAgent()
+    served = await serve(provider, "door")
+    agent = served.agents["door"]
+
+    provider.release.set()
+    first = await _send(funduq, agent, _message("start"))
+    assert first.status.state == COMPLETED
+
+    def interjection(target: str, thread: str | None = None):
+        body = {
+            **_message("too late"),
+            "metadata": {ADDRESSED_RUN_METADATA_KEY: target},
+        }
+        if thread is not None:
+            body["contextId"] = thread
+        return _send(funduq, agent, body)
+
+    with pytest.raises(InvalidParamsError):
+        await interjection(first.id, first.context_id)  # finished
+
+    with pytest.raises(InvalidParamsError):
+        await interjection("run_nobody_ever_started")  # unknown
+
+    # a live run on ANOTHER thread is just as dead a target
+    provider.release.clear()
+    second = asyncio.create_task(_send(funduq, agent, _message("hold this open")))
+    await _until(lambda: len(provider.runs) == 2)
+    live_run_id = provider.runs[1].run_id
+    with pytest.raises(InvalidParamsError):
+        await interjection(live_run_id)  # new contextId → another thread
+
+    provider.release.set()
+    assert (await second).status.state == COMPLETED
