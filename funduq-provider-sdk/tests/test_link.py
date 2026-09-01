@@ -89,9 +89,9 @@ async def test_declining_is_carried_through_unchanged():
     assert await provider.deliver(_delivered("r-2", "a", "t")) is False
 
 
-async def test_cancel_reaches_the_transport():
+async def test_cancel_reaches_the_transport_and_is_acknowledged():
     provider = QueuedLink("abc123")
-    provider.cancel("r-3")
+    assert await provider.cancel("r-3") is True
     assert provider.cancelled == ["r-3"]
 
 

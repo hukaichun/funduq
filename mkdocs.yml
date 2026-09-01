@@ -50,5 +50,3 @@ nav:
       - funduq-provider-sdk: sdks/provider-sdk.md
       - Serving completions (the llm extra): sdks/llm-provider-sdk.md
   - The provider link: provider-link.md
-  - Writing a transport: writing-a-transport.md
-  - The link protocol machine: link-protocol-machine.md

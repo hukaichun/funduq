@@ -215,8 +215,7 @@ client author needs them.
   Which code or HTTP status a caller sees is the gateway's choice, and
   it has to be: **the protocol version a caller speaks rides an
   `A2A-Version` header**, so the gateway is the only party holding the
-  evidence for that decision (see
-  [writing a transport](writing-a-transport.md#serving-the-a2a-door)).
+  evidence for that decision.
 - **Non-lifecycle AG-UI events ride status updates** under a funduq
   metadata key. A standard client ignores them, which means tool-call
   events are not visible over A2A.
@@ -226,7 +225,6 @@ client author needs them.
 What the plumbing actually is — the six signed payload families, the
 link-open challenge, actor chains and what they do and do not prove — is
 Identity is an Ed25519 keypair and
-Actor chain. How to carry all of it over a
-wire of your own is [Writing a transport](writing-a-transport.md). This
-page is the contract; those are the mechanisms it obliges funduq to
-publish.
+Actor chain. How a provider and funduq talk over a wire of your own is
+[The provider link](provider-link.md). This page is the contract; those
+are the mechanisms it obliges funduq to publish.

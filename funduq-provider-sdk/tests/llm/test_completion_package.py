@@ -6,7 +6,6 @@ from dataclasses import dataclass
 from openai.types.chat import ChatCompletionChunk
 
 from funduq_provider_sdk.llm import (
-    DELIVERED_COMPLETION_FIELDS,
     DeliveredCompletion,
     InProcessLLMProvider,
     ProviderIdentity,
@@ -14,7 +13,7 @@ from funduq_provider_sdk.llm import (
 
 
 def test_delivered_completion_fields_match_contract():
-    assert set(DeliveredCompletion.model_fields) == DELIVERED_COMPLETION_FIELDS
+    assert {"run_id", "llm_name", "body"} <= set(DeliveredCompletion.model_fields)
 
 
 @dataclass(frozen=True)

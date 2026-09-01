@@ -825,3 +825,46 @@ async def test_a_run_is_not_accepted_for_an_agent_nobody_is_serving(broker):
     broker.register_provider({AGENT: Recording()})
     _enqueue(broker, "run_2")
     await _until(lambda: broker.get("run_2").is_claimed)
+
+
+async def test_an_interjection_is_offered_while_the_run_it_names_is_running(broker):
+    provider = Recording()
+    broker.register_provider({AGENT: provider})
+    _enqueue(broker, "run_1", thread_id="one_chat")
+    await _until(lambda: broker.get("run_1").is_claimed)
+
+    run_2 = broker.enqueue_run(
+        "run_2", AGENT, "one_chat", _valid_input("run_2", "one_chat"), "ag-ui", {},
+        addressed_run_id="run_1",
+    )
+    assert run_2 is not None
+    await _until(lambda: "run_2" in provider.offered, timeout=2.0)
+    assert broker.get("run_1").is_claimed, "the turn it joined is still open"
+
+
+async def test_an_interjection_whose_target_settled_degrades_to_the_next_turn(patient_broker):
+    """Being an interjection is a state, not a property: if the run it names
+    settles before delivery, the run is simply the thread's next turn."""
+
+    class SimpleRefusal:
+        reason = "retired"
+
+    held = asyncio.Event()
+    provider = Recording(answers=[SimpleRefusal()], hold=held)
+    patient_broker.register_provider({AGENT: provider})
+    _enqueue(patient_broker, "run_1", thread_id="one_chat")
+    await _until(lambda: provider.offered == ["run_1"])
+
+    # Declared while run_1 is merely offered — not yet the claimed head — so it waits.
+    patient_broker.enqueue_run(
+        "run_2", AGENT, "one_chat", _valid_input("run_2", "one_chat"), "ag-ui", {},
+        addressed_run_id="run_1",
+    )
+    await asyncio.sleep(0.05)
+    assert "run_2" not in provider.offered
+
+    # run_1 dies refused; run_2's target is gone before run_2 was ever offered.
+    held.set()
+    await _until(lambda: patient_broker.get("run_1") is None, timeout=2.0)
+    await _until(lambda: "run_2" in provider.offered, timeout=2.0)
+    await _until(lambda: patient_broker.get("run_2").is_claimed, timeout=2.0)

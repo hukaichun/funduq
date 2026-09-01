@@ -68,7 +68,7 @@ async def _until(predicate, timeout: float = 5.0) -> None:
 
 
 class GateAgent:
-    """Holds every run open until `release` is set, recording what it was handed."""
+    """Holds every run open until `release` is set, recording what it was handed. Takes interjections — recorded in `runs` too — and answers them at once."""
 
     def __init__(self) -> None:
         self.release = asyncio.Event()
@@ -79,6 +79,12 @@ class GateAgent:
         ids = {"threadId": run_input.thread_id, "runId": run_input.run_id}
         yield {"type": "RUN_STARTED", **ids}
         await self.release.wait()
+        yield {"type": "RUN_FINISHED", **ids}
+
+    async def interject_stream(self, agent_name: str, run_input, active_run_id: str):
+        self.runs.append(run_input)
+        ids = {"threadId": run_input.thread_id, "runId": run_input.run_id}
+        yield {"type": "RUN_STARTED", **ids}
         yield {"type": "RUN_FINISHED", **ids}
 
 
@@ -594,3 +600,45 @@ async def test_the_second_answer_over_ag_ui_is_refused_with_the_thread_state(fun
 async def _paused(funduq, thread_id: str) -> bool:
     async with funduq.session() as session:
         return await repo.get_paused_run_for_thread(session, thread_id) is not None
+
+
+async def test_an_interjection_naming_no_live_run_is_rejected_at_the_door(funduq, serve):
+    """An interjection must name a live run on its own thread. A finished run,
+    an unknown one, or a run on another thread is a declaration that was
+    invalid when made — rejected, in A2A's own words."""
+    from a2a.utils.errors import InvalidParamsError
+    from funduq.props import ADDRESSED_RUN_METADATA_KEY
+
+    provider = GateAgent()
+    served = await serve(provider, "door")
+    agent = served.agents["door"]
+
+    provider.release.set()
+    first = await _send(funduq, agent, _message("start"))
+    assert first.status.state == COMPLETED
+
+    def interjection(target: str, thread: str | None = None):
+        body = {
+            **_message("too late"),
+            "metadata": {ADDRESSED_RUN_METADATA_KEY: target},
+        }
+        if thread is not None:
+            body["contextId"] = thread
+        return _send(funduq, agent, body)
+
+    with pytest.raises(InvalidParamsError):
+        await interjection(first.id, first.context_id)  # finished
+
+    with pytest.raises(InvalidParamsError):
+        await interjection("run_nobody_ever_started")  # unknown
+
+    # a live run on ANOTHER thread is just as dead a target
+    provider.release.clear()
+    second = asyncio.create_task(_send(funduq, agent, _message("hold this open")))
+    await _until(lambda: len(provider.runs) == 2)
+    live_run_id = provider.runs[1].run_id
+    with pytest.raises(InvalidParamsError):
+        await interjection(live_run_id)  # new contextId → another thread
+
+    provider.release.set()
+    assert (await second).status.state == COMPLETED

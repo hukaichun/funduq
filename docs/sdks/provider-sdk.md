@@ -25,23 +25,16 @@ included.
 
 ## The port and the worker
 
-`FunduqLink` is the abstract port a transport implements: `offer` a
-delivered run (answering accepted / declined / `Refusal`), `cancel`,
-`report_event`, `finish_run`, `thread_messages`. The base class states
-the one translation every transport needs — funduq's claimed-run object
-becomes a `DeliveredRun`, and an input that doesn't validate is a
-permanent `Refusal`, not a transient decline. `InProcessLink` is the
+`FunduqLink` is the abstract port a transport implements: `deliver` a
+run (answering accepted / declined / `Refusal`), `cancel` (acknowledged),
+`report_event`, `finish_run`, `thread_messages`. `InProcessLink` is the
 in-process transport (in-process is a transport, not a special case);
-`ProviderRuntime` is the worker loop that queues delivered runs, executes
-each agent's `run_stream`, and reports events back through whatever link
-it is on.
-
-`funduq_provider_sdk.protocol` carries the link's *state machine* — both
-halves, sans-io — so a transport mounts `ProviderSide` rather than
-subclassing this port and hand-writing the bridge from frames to answers.
-`FunduqLink` is unchanged and remains the right surface for provider authors,
-who should never meet a frame. See [the link protocol
-machine](../link-protocol-machine.md).
+`ProviderRuntime` is the worker loop — one handler per thread, one active
+run per thread by construction — that executes each agent's `run_stream`,
+takes interjections through the opt-in `interject_stream` hook, and
+reports events back through whatever link it is on. The shapes every
+crossing uses are funduq-contract's; see [the provider
+link](../provider-link.md).
 
 ## The envelopes
 
