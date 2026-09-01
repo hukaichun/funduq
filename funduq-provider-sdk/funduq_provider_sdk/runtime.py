@@ -66,6 +66,11 @@ class ProviderRuntime:
     def public_key(self) -> str:
         return self.identity.public_key
 
+    @property
+    def takes_interjections(self) -> bool:
+        """Whether this provider implements the interjection hook — read off the hook itself, which is what makes the agent card's declaration honest."""
+        return callable(getattr(self.provider, "interject_stream", None))
+
     async def deliver(self, run: DeliveredRun) -> bool | Refusal:
         """The intake decision, answered from state already held — never gated on running anything."""
         if not self._running:

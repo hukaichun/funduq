@@ -101,7 +101,12 @@ class A2AAdapter:
                 )
                 for served in (interfaces or [])
             ],
-            capabilities=pb.AgentCapabilities(streaming=True),
+            capabilities=pb.AgentCapabilities(
+                streaming=True,
+                extensions=[
+                    pb.AgentExtension(uri=uri) for uri in card.get("extensions", [])
+                ],
+            ),
             default_input_modes=["text/plain"],
             default_output_modes=["text/plain"],
             skills=_skills(card.get("skills", [])),

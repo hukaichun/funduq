@@ -28,6 +28,21 @@ entries below say what to change and not only what moved.
 
 ---
 
+## Revision 12 — 2026-09-02
+
+**A provider's interjection capability is discoverable** (closes #146, unblocked
+by #166's fix in revision 11). `Registration` gains `takesInterjections`,
+derived by the runtime from the presence of its `interject_stream` hook —
+never typed by an author, so the declaration cannot lie. funduq writes it
+onto the stored agent card as the interjection extension's URI, and the A2A
+card announces it in the standard slot: `capabilities.extensions`, one
+`AgentExtension` with
+`https://github.com/hukaichun/funduq/ext/interjection/v1`.
+
+The card declares understanding, not acceptance: whether an interjection is
+taken is still the verdict's call at delivery time. A registration that
+omits the field behaves exactly as before.
+
 ## Revision 11 — 2026-09-02
 
 **Every crossing shape now lives in funduq-contract, defined once**, and the
