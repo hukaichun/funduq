@@ -113,6 +113,14 @@ async def dispatch(
     starting_seq: int,
 ) -> bool:
     """Appends the inbound messages to the thread, builds the provider's AG-UI input, commits, and hands the run to the broker."""
+    if inbound.addressed_run_id is not None:
+        target = funduq.broker.get(inbound.addressed_run_id)
+        if target is None or target.thread_id != thread_id:
+            raise InvalidRunInput(
+                f"interjection names '{inbound.addressed_run_id}', which is not a "
+                "live run on this thread"
+            )
+
     messages = await repo.append_thread_messages(
         session, thread_id, run_id, inbound.messages
     )
@@ -159,7 +167,13 @@ async def dispatch(
         )
     if (
         funduq.enqueue_run(
-            run_id, inbound.agent, thread_id, input_json, inbound.protocol, seq=starting_seq
+            run_id,
+            inbound.agent,
+            thread_id,
+            input_json,
+            inbound.protocol,
+            seq=starting_seq,
+            addressed_run_id=inbound.addressed_run_id,
         )
         is None
     ):

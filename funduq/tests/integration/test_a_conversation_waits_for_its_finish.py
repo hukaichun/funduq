@@ -1,11 +1,10 @@
-"""What an unanswered offer holds up, and what it does not.
+"""What holds a conversation, and what releases it.
 
-`writing-a-transport.md` calls this the one timing funduq depends on — a
-thread's delivery order survives a transport that guarantees none because an
-offer's answer comes back before the next utterance is handed over. Nothing
-pinned it, and the sentence describing it was imprecise in a way that matters
-to a provider author: what releases the conversation is the **claim**, not the
-answer. A declined offer answers promptly and holds the thread anyway.
+One thread has one active run. The next utterance of a conversation is
+handed over when the one before it **finishes** — not when it is answered,
+and not when it is claimed. An unanswered offer holds it; a declined offer
+holds it; a claimed run still running holds it. Nothing wider than the one
+conversation waits.
 
 Measured rather than reasoned about, and the first two attempts measured the
 harness instead — see the note on `_settle`.
@@ -30,15 +29,22 @@ class _Identity(ProviderIdentity):
         super().__init__(Ed25519PrivateKey.generate())
 
 
-class _Agent:
+class _GatedAgent:
+    """Holds every run open until released, which is what makes "what is
+    funduq waiting on" observable at all."""
+
+    def __init__(self) -> None:
+        self.release = asyncio.Event()
 
     async def run_stream(self, agent_name: str, run_input: Any):
-        yield {"type": "TEXT_MESSAGE_CONTENT", "messageId": "m", "delta": "hi"}
+        ids = {"threadId": run_input.thread_id, "runId": run_input.run_id}
+        yield {"type": "RUN_STARTED", **ids}
+        await self.release.wait()
+        yield {"type": "RUN_FINISHED", **ids}
 
 
 class _SlowLink(InProcessLink):
-    """Answers offers only when let through, which is what makes "what is
-    funduq waiting on" observable at all."""
+    """Answers offers only when let through."""
 
     def __init__(self, *args, **kwargs) -> None:
         super().__init__(*args, **kwargs)
@@ -46,12 +52,12 @@ class _SlowLink(InProcessLink):
         self.verdict: bool | None = None
         self.offered: list[str] = []
 
-    async def offer(self, run) -> bool:
+    async def deliver(self, run) -> bool:
         self.offered.append(run.run_id)
         if self.verdict is not None:
             return self.verdict
         await self.gate.wait()
-        return await super().offer(run)
+        return await super().deliver(run)
 
 
 async def _settle() -> None:
@@ -67,9 +73,10 @@ async def _settle() -> None:
         await asyncio.sleep(0.02)
 
 
-async def _serving(funduq: Funduq, link_class=_SlowLink):
+async def _serving(funduq: Funduq, agent_impl=None, link_class=_SlowLink):
     identity = _Identity()
-    runtime = ProviderRuntime(identity, _Agent())
+    agent_impl = agent_impl or _GatedAgent()
+    runtime = ProviderRuntime(identity, agent_impl)
     runtime.start()
     link = link_class(funduq, runtime)
     await funduq.attach_provider(link)
@@ -80,7 +87,8 @@ async def _serving(funduq: Funduq, link_class=_SlowLink):
 async def test_an_unanswered_offer_holds_its_own_conversation_and_nothing_else(
     funduq: Funduq,
 ) -> None:
-    link, runtime, agent = await _serving(funduq)
+    agent_impl = _GatedAgent()
+    link, runtime, agent = await _serving(funduq, agent_impl)
     try:
         first = await funduq.start_run(agent, {"messages": []})
         await _settle()
@@ -94,8 +102,7 @@ async def test_an_unanswered_offer_holds_its_own_conversation_and_nothing_else(
 
         assert same_thread.run_id not in link.offered, (
             "the next utterance of a conversation was handed over while the one "
-            "before it was still unanswered — the ordering the whole three-valued "
-            "answer exists to protect"
+            "before it was still unanswered"
         )
         assert other_thread.run_id in link.offered, (
             "an unrelated conversation waited too. Nothing wider than the one "
@@ -103,12 +110,22 @@ async def test_an_unanswered_offer_holds_its_own_conversation_and_nothing_else(
             "every caller on the link"
         )
         assert (await funduq.get_run(same_thread.run_id)).status == "queued"
-        assert (await funduq.get_run(other_thread.run_id)).status == "offering"
 
         link.gate.set()
         await _settle()
 
-        assert same_thread.run_id in link.offered
+        assert same_thread.run_id not in link.offered, (
+            "claiming opened the gate. One thread has one active run: the next "
+            "utterance waits for the turn to finish, not for it to be accepted"
+        )
+        assert (await funduq.get_run(first.run_id)).status == "running"
+
+        agent_impl.release.set()
+        await _settle()
+
+        assert same_thread.run_id in link.offered, (
+            "the turn finished and its conversation stayed held"
+        )
     finally:
         funduq.detach_all_for(link.public_key)
         await runtime.aclose(cancel_in_flight=True)
@@ -117,12 +134,9 @@ async def test_an_unanswered_offer_holds_its_own_conversation_and_nothing_else(
 async def test_a_decline_answers_promptly_and_holds_the_conversation_anyway(
     funduq: Funduq,
 ) -> None:
-    """What releases the conversation is the claim, not the answer.
-
-    A declined run goes back to `queued` at the head of its thread, so the
-    utterance behind it keeps waiting — correctly, since the order is the
-    thing being protected, but not what "held until this answer lands" says.
-    """
+    """A declined run goes back to `queued` at the head of its thread, so the
+    utterance behind it keeps waiting — the order is the thing being
+    protected."""
     link, runtime, agent = await _serving(funduq)
     link.verdict = False
     try:

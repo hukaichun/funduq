@@ -491,14 +491,13 @@ class Funduq:
         if run is None:
             return False
         if run.claimed_by is None:
-            if not self.broker.accept_late_ack(run_id, claimed_by):
-                logger.warning(
-                    "report_event: '%s' reported for run %s, which nobody holds",
-                    claimed_by,
-                    run_id,
-                )
-                return False
-        elif run.claimed_by != claimed_by:
+            logger.warning(
+                "report_event: '%s' reported for run %s, which nobody holds",
+                claimed_by,
+                run_id,
+            )
+            return False
+        if run.claimed_by != claimed_by:
             logger.warning(
                 "report_event: '%s' reported for run %s, which is held by '%s'",
                 claimed_by,
@@ -716,6 +715,7 @@ class Funduq:
         input_json: dict[str, Any],
         protocol: str,
         seq: int = 0,
+        addressed_run_id: str | None = None,
     ) -> RunSnapshot | None:
         """Hands the run to the broker; None if nobody is serving its agent."""
         return self.broker.enqueue_run(
@@ -726,6 +726,7 @@ class Funduq:
             protocol,
             make_handlers(self),
             seq=seq,
+            addressed_run_id=addressed_run_id,
         )
 
     async def start_run(

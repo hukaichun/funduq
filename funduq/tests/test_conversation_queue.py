@@ -124,13 +124,14 @@ async def test_a_message_sent_mid_run_is_queued_not_dropped(funduq, serve):
         )
     )
 
-    # No turn-taking: the second utterance reaches the provider while the
-    # first is still open. It is its own run — not merged — and what to do
-    # with the overlap is the provider's decision.
-    await _until(lambda: len(provider.runs) == 2)
+    # One thread, one active run: the second utterance waits in funduq while
+    # the first is open, and is not dropped — it goes out when the turn ends.
+    await asyncio.sleep(0.1)
+    assert len(provider.runs) == 1, "the turn is open; the next utterance waits"
 
     provider.release.set()
     first_result, second_result = await asyncio.gather(first, second)
+    assert len(provider.runs) == 2
 
     assert first_result.status.state == COMPLETED
     assert second_result.status.state == COMPLETED
@@ -212,7 +213,7 @@ async def test_reopen_run_refuses_a_run_that_is_not_in_the_expected_status(sessi
     assert stored.status == "queued"
 
 
-async def test_two_agui_runs_on_one_thread_flow_side_by_side(funduq, serve):
+async def test_two_agui_runs_on_one_thread_take_turns(funduq, serve):
     from ag_ui.core import RunAgentInput, UserMessage
 
     from funduq.protocols.agui import AGUIAdapter
@@ -242,11 +243,13 @@ async def test_two_agui_runs_on_one_thread_flow_side_by_side(funduq, serve):
 
     second = await adapter.run(agent, _body(first.thread_id, "one more"))
     second_events = asyncio.create_task(_drain(second))
-    # No turn-taking: the second run reaches the provider while the first is
-    # still open; both streams are live.
-    await _until(lambda: len(provider.runs) == 2)
+    # One thread, one active run: the second stream is open toward its caller,
+    # but its run reaches the provider only when the first turn ends.
+    await asyncio.sleep(0.1)
+    assert len(provider.runs) == 1
 
     provider.release.set()
+    await _until(lambda: len(provider.runs) == 2)
     assert {e["type"] for e in await first_events} >= {"RUN_STARTED", "RUN_FINISHED"}
     assert {e["type"] for e in await second_events} >= {"RUN_STARTED", "RUN_FINISHED"}
     assert [r.thread_id for r in provider.runs] == [first.thread_id, first.thread_id]
@@ -469,14 +472,18 @@ async def test_a_task_id_naming_a_running_task_declares_nothing(funduq, serve):
             {**_message("and another thing"), "taskId": first_run_id},
         )
     )
-    await _until(lambda: len(provider.runs) == 2)
+    await asyncio.sleep(0.1)
+    assert len(provider.runs) == 1, (
+        "no declaration, no interjection — an ordinary next run waits its turn"
+    )
+
+    provider.release.set()
+    results = await asyncio.gather(first, second)
+    assert len(provider.runs) == 2
     assert not (provider.runs[1].forwarded_props or {}), (
         "no declaration, no interjection — the run arrives unmarked"
     )
     assert provider.runs[1].thread_id == provider.runs[0].thread_id
-
-    provider.release.set()
-    results = await asyncio.gather(first, second)
     assert {r.status.state for r in results} == {COMPLETED}
 
 

@@ -81,7 +81,7 @@ Command = (
 
 @dataclass(frozen=True)
 class ProviderQuality:
-    """Per-provider counters of protocol violations observed while dispatching: declining an offer after claiming to have room (misdeclared), taking a run and never ending it (abandoned), taking one and not delivering it inside the window (undelivered), not answering an offer within the delivery timeout (unanswered), and acking after funduq gave up waiting (answered_late)."""
+    """Per-provider counters of protocol violations observed while dispatching: declining an offer after claiming to have room (misdeclared), taking a run and never ending it (abandoned), taking one and not delivering it inside the window (undelivered), and not answering an offer within the delivery timeout (unanswered)."""
 
     in_flight: int
     declared: int | None
@@ -89,7 +89,6 @@ class ProviderQuality:
     abandoned: int
     undelivered: int
     unanswered: int
-    answered_late: int
 
 
 @dataclass
@@ -118,7 +117,7 @@ class ConnectedProvider(Protocol):
     async def deliver(self, run: DeliveredRun) -> bool | Refusal:
         ...
 
-    def cancel(self, run_id: str) -> None:
+    async def cancel(self, run_id: str) -> bool:
         ...
 
 
@@ -135,6 +134,8 @@ class Run:
     seq: int = 0
     round_starting_seq: int = 0
     pause_payload: dict[str, Any] | None = None
+    # The run this one asked to join, verbatim from the caller's declaration.
+    addressed_run_id: str | None = None
     # The provider this run is reserved on — set the moment the offer leaves, cleared if it comes back unaccepted.
     offered_to: str | None = None
     # Whether an unanswered "can I be handed over now?" is already in this run's queue.
@@ -240,7 +241,7 @@ class RunBroker:
         # Keyed by thread, because a thread is the pipe whose delivery order funduq guarantees.
         self._pending_by_thread: dict[str, deque[str]] = defaultdict(deque)
         self._live = LiveRoster(
-            ("misdeclared", "abandoned", "undelivered", "unanswered", "answered_late")
+            ("misdeclared", "abandoned", "undelivered", "unanswered")
         )
         self._unserved_since: dict[AgentRef, datetime] = {}
         self._capacity: dict[str, _Capacity] = {}
@@ -321,6 +322,7 @@ class RunBroker:
         protocol: str,
         handlers: HandlerMap,
         seq: int = 0,
+        addressed_run_id: str | None = None,
     ) -> Run | None:
         """Queues a new run for `agent`, gives it its own lane, and — if it is its conversation's turn — asks that lane to try handing it over."""
         if not self.is_running:
@@ -338,13 +340,14 @@ class RunBroker:
             protocol=protocol,
             seq=seq,
             round_starting_seq=seq,
+            addressed_run_id=addressed_run_id,
         )
         self._runs[run_id] = run
         self._handlers[run_id] = handlers
         queue = self._pending_by_thread[thread_id]
         queue.append(run_id)
         self._spawn(_lane(run, self), name=f"run:{run_id}")
-        if queue[0] == run_id:
+        if self._may_dispatch(run):
             self._nudge(run_id)
         return run
 
@@ -405,12 +408,28 @@ class RunBroker:
         else:
             self._pending_by_thread.pop(run.thread_id, None)
 
+    def _may_dispatch(self, run: Run) -> bool:
+        """A run goes out when it is the head of its conversation, or when it is
+        an interjection whose named run is the claimed head it asks to join."""
+        queue = self._pending_by_thread.get(run.thread_id)
+        if not queue or run.run_id not in queue:
+            return False
+        if queue[0] == run.run_id:
+            return True
+        if run.addressed_run_id is None:
+            return False
+        head = self._runs.get(queue[0])
+        return (
+            head is not None
+            and head.claimed_by is not None
+            and head.run_id == run.addressed_run_id
+        )
+
     async def _try_dispatch(self, run: Run) -> None:
         """The run's own answer to "can I be handed over now?" — and, if yes, the handing over."""
         if run.claimed_by is not None or run.offered_to is not None:
             return
-        queue = self._pending_by_thread.get(run.thread_id)
-        if not queue or queue[0] != run.run_id:
+        if not self._may_dispatch(run):
             return
         provider = self._live.serving(run.agent)
         if provider is None:
@@ -499,14 +518,19 @@ class RunBroker:
             capacity.in_flight -= 1
 
     def _take_claim(self, run: Run, provider: ConnectedProvider) -> None:
-        """Records that `provider` accepted `run`: it is no longer waiting to be handed over, so it leaves its conversation's queue and the next utterance gets its turn."""
+        """Records that `provider` accepted `run`. The run stays at the head of its
+        conversation's queue until it finishes — the next utterance waits for the
+        turn to end; only an interjection addressed to this run may go now."""
         run.claimed_by = provider.public_key
         run.claimed_at = datetime.now(timezone.utc)
         run.cancel_notify = provider.cancel
-        self._leave_queue(run)
+        for run_id in list(self._pending_by_thread.get(run.thread_id, ())):
+            waiting = self._runs.get(run_id)
+            if waiting is not None and waiting.addressed_run_id == run.run_id:
+                self._nudge(run_id)
 
     async def _hand_back(self, run: Run) -> None:
-        """Undoes a hand-over nobody accepted: gives the place back and puts the record where the run actually is."""
+        """Undoes a hand-over nobody accepted: gives the place back and puts the record where the run actually is. Nothing re-asks here — the next offer waits for the sweep, a freed place, or a roster change."""
         self._release(run)
         await self._record(run, Requeue())
 
@@ -612,29 +636,6 @@ class RunBroker:
     def active_run_ids(self) -> list[str]:
         return list(self._runs)
 
-    def accept_late_ack(self, run_id: str, claimed_by: str) -> bool:
-        """Lets a provider claim a run after funduq already gave up waiting for its answer (e.g."""
-        run = self._runs.get(run_id)
-        if run is None or run.claimed_by is not None or run.offered_to is not None:
-            return False
-        provider = self._live.serving(run.agent)
-        if provider is None or provider.public_key != claimed_by:
-            return False
-        if not self._take_place(run, provider):
-            return False
-        self._note_abnormal(claimed_by, "answered_late")
-        logger.warning(
-            "provider %s answered late for run %s (%d so far): already producing for "
-            "a run funduq had put back in the queue",
-            claimed_by[:16],
-            run_id,
-            self._live.count(claimed_by, "answered_late"),
-        )
-        self._take_claim(run, provider)
-        # Into the lane rather than applied here: the lane is idle and this is the next thing that happened to the run.
-        run.in_queue.put_nowait(Claim())
-        return True
-
     def quality(self) -> dict[str, ProviderQuality]:
         counters = self._live.counters()
         return {
@@ -648,7 +649,6 @@ class RunBroker:
                         "abandoned",
                         "undelivered",
                         "unanswered",
-                        "answered_late",
                     )
                 },
             )

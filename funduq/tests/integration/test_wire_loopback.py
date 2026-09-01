@@ -59,9 +59,9 @@ class WireLink:
         answer = json.dumps({"accepted": bool(accepted)}).encode()
         return json.loads(answer)["accepted"]
 
-    def cancel(self, run_id: str) -> None:
+    async def cancel(self, run_id: str) -> bool:
         self._runtime.cancel(json.loads(json.dumps(run_id)))
-
+        return True
     async def report_event(self, run_id: str, event) -> None:
         frame = json.dumps({"runId": run_id, "event": event}).encode()
         decoded = json.loads(frame)

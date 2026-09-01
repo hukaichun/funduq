@@ -81,9 +81,8 @@ class _Taker:
     async def deliver(self, run) -> bool:
         return True
 
-    def cancel(self, run_id: str) -> None:
-        pass
-
+    async def cancel(self, run_id: str) -> bool:
+        return True
     def sign_connect(
         self, funduq_public_key: str, funduq_nonce: str, provider_nonce: str
     ) -> str:

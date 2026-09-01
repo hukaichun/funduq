@@ -64,10 +64,9 @@ class Recording:
             await self._hold.wait()
         return self._answers.pop(0) if self._answers else self._default
 
-    def cancel(self, run_id: str) -> None:
+    async def cancel(self, run_id: str) -> bool:
         self.cancelled.append(run_id)
-
-
+        return True
 @pytest.fixture
 async def broker():
     b = RunBroker(deliver_timeout_seconds=0.05, unserved_timeout_seconds=30)
@@ -323,27 +322,40 @@ async def test_a_reconnecting_provider_keeps_its_bucket(broker):
     assert broker.quality()["pk_provider"].in_flight == 1
 
 
-async def test_a_late_ack_is_accepted_from_the_provider_that_owns_the_agent(broker):
-    silent = Recording(hang=True)
-    broker.register_provider({AGENT: silent})
-    _enqueue(broker, "run_1")
-    await _until(lambda: broker.quality()["pk_provider"].unanswered >= 1, timeout=2.0)
+async def test_missing_the_window_is_breakage_answered_by_a_fresh_offer(broker):
+    """An acknowledgement is an intake decision; missing the window means the
+    link or the provider is broken, not that it is thinking. funduq counts it,
+    takes the run back, and offers it again — a provider that had actually
+    taken the run and lost its answer sees the same run offered again and
+    simply accepts again. There is no late-claim path."""
 
-    assert broker.accept_late_ack("run_1", "pk_provider") is True
+    class LostFirstAnswer(Recording):
+        def __init__(self) -> None:
+            super().__init__()
+            self.calls = 0
 
-    quality = broker.quality()["pk_provider"]
-    assert (quality.answered_late, quality.in_flight) == (1, 1)
-    assert broker.get("run_1").claimed_by == "pk_provider"
+        async def deliver(self, run) -> bool:
+            self.calls += 1
+            self.offered.append(run.run_id)
+            if self.calls == 1:
+                await asyncio.Event().wait()
+            return True
 
+    provider = LostFirstAnswer()
+    # Its own broker: the retry rides the sweep, so the sweep must cycle fast.
+    b = RunBroker(deliver_timeout_seconds=0.05, unserved_timeout_seconds=0.1)
+    b.start()
+    try:
+        b.register_provider({AGENT: provider})
+        b.enqueue_run("run_1", AGENT, "thread_run_1", _valid_input("run_1", "thread_run_1"), "ag-ui", {})
+        await _until(lambda: b.quality()["pk_provider"].unanswered >= 1, timeout=2.0)
+        assert b.get("run_1").claimed_by is None, "no answer, no claim"
 
-async def test_a_late_ack_from_anyone_else_is_refused(broker):
-    silent = Recording(hang=True)
-    broker.register_provider({AGENT: silent})
-    _enqueue(broker, "run_1")
-    await _until(lambda: broker.quality()["pk_provider"].unanswered >= 1, timeout=2.0)
-
-    assert broker.accept_late_ack("run_1", "pk_impostor") is False
-    assert broker.get("run_1").claimed_by is None
+        await _until(lambda: b.get("run_1").claimed_by == "pk_provider", timeout=2.0)
+        assert provider.offered == ["run_1", "run_1"], "the same run, offered afresh"
+        assert not hasattr(b, "accept_late_ack"), "the late-claim path is gone"
+    finally:
+        b.stop()
 
 
 async def test_taking_a_run_and_never_ending_it_is_recorded(broker):
@@ -497,17 +509,23 @@ async def test_a_provider_returning_within_the_window_keeps_the_run():
         b.stop()
 
 
-async def test_a_threads_runs_are_offered_in_arrival_order_without_waiting(broker):
-    """funduq imposes no turn-taking: a thread's second utterance is offered
-    while the first is still in flight — whether to run, hold, or absorb it
-    is the provider's decision, not the relay's."""
+async def test_a_threads_next_run_waits_for_the_turn_to_finish(broker):
+    """One thread, one active run: the second utterance is not offered while
+    the first is claimed and running — it goes out when the turn ends."""
+    from funduq.broker import FinishStream
+
     provider = Recording()
     broker.register_provider({AGENT: provider})
     _enqueue(broker, "run_1", thread_id="thread_shared")
     _enqueue(broker, "run_2", thread_id="thread_shared")
 
-    await _until(lambda: provider.offered == ["run_1", "run_2"])
-    assert broker.get("run_1").is_claimed and broker.get("run_2").is_claimed
+    await _until(lambda: broker.get("run_1").is_claimed)
+    await asyncio.sleep(0.1)
+    assert provider.offered == ["run_1"], "the turn is open; the next utterance waits"
+
+    broker.push("run_1", FinishStream())
+    await _until(lambda: broker.get("run_2") and broker.get("run_2").is_claimed, timeout=2.0)
+    assert provider.offered == ["run_1", "run_2"]
 
 
 async def test_a_declined_head_is_not_overtaken_by_its_sibling(broker):
@@ -528,11 +546,14 @@ async def test_a_declined_head_is_not_overtaken_by_its_sibling(broker):
     _enqueue(broker, "run_2", thread_id="thread_shared")
     _enqueue(broker, "run_3", thread_id="thread_shared")
 
-    await _until(lambda: provider.offered == ["run_1", "run_2"])
+    await _until(lambda: broker.get("run_1").is_claimed)
+    broker.push("run_1", FinishStream())
+    await _until(lambda: provider.offered.count("run_2") >= 1, timeout=2.0)
     await asyncio.sleep(0.1)
     assert "run_3" not in provider.offered, "run_3 must not overtake the declined run_2"
 
-    broker.push("run_1", FinishStream())
+    await _until(lambda: broker.get("run_2") and broker.get("run_2").is_claimed, timeout=2.0)
+    broker.push("run_2", FinishStream())
     await _until(lambda: "run_3" in provider.offered, timeout=2.0)
     assert provider.offered == ["run_1", "run_2", "run_2", "run_3"], (
         "the declined head is retried before its sibling is offered at all"
@@ -762,6 +783,13 @@ async def test_one_conversation_is_handed_over_one_utterance_at_a_time(patient_b
     assert provider.offered == ["run_1"], "the second utterance must not overtake the first"
 
     held.set()
+    await _until(lambda: patient_broker.get("run_1").is_claimed)
+    await asyncio.sleep(0.05)
+    assert provider.offered == ["run_1"], "claiming opens no gate; finishing does"
+
+    from funduq.broker import FinishStream
+
+    patient_broker.push("run_1", FinishStream())
     await _until(lambda: provider.offered == ["run_1", "run_2"])
 
 

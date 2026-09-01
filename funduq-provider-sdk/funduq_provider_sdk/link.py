@@ -27,7 +27,8 @@ class FunduqLink(ABC):
         pass
 
     @abstractmethod
-    def cancel(self, run_id: str) -> None:
+    async def cancel(self, run_id: str) -> bool:
+        """Ask the run's thread handler to stop; True acknowledges the ask arrived, never an outcome."""
         pass
 
 

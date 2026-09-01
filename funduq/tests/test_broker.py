@@ -35,10 +35,9 @@ class Taker:
     async def deliver(self, run) -> bool:
         return True
 
-    def cancel(self, run_id: str) -> None:
+    async def cancel(self, run_id: str) -> bool:
         self.asked_to_stop.append(run_id)
-
-
+        return True
 @pytest.fixture
 async def broker():
     b = RunBroker()

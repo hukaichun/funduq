@@ -44,7 +44,7 @@ def test_the_in_process_connection_is_something_funduqs_broker_can_deliver_to():
     for name in ConnectedProvider.__protocol_attrs__:
         assert hasattr(adapter, name), f"ConnectedProvider needs {name}"
     assert inspect.iscoroutinefunction(adapter.deliver)
-    assert not inspect.iscoroutinefunction(adapter.cancel)
+    assert inspect.iscoroutinefunction(adapter.cancel)
 
 
 def test_the_runtime_itself_needs_the_same_trio():
@@ -85,9 +85,8 @@ def test_a_link_that_only_reports_is_not_constructible():
         async def offer(self, run):
             return True
 
-        def cancel(self, run_id):
-            pass
-
+        async def cancel(self, run_id: str) -> bool:
+            return True
         async def report_event(self, run_id, event):
             pass
 

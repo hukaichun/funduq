@@ -111,9 +111,8 @@ async def test_a_permanent_refusal_fails_the_run_with_the_providers_reason(brisk
             self.offers += 1
             return Refusal(reason="this agent was retired, run something newer")
 
-        def cancel(self, run_id: str) -> None:
-            pass
-
+        async def cancel(self, run_id: str) -> bool:
+            return True
     link = Refuses()
     await brisk.attach_provider(link)
     await brisk.register_agents(link, [Registration(name=agent_id.name)])

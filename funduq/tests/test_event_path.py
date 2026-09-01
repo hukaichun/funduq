@@ -30,10 +30,8 @@ class _Taker:
     async def deliver(self, run) -> bool:
         return True
 
-    def cancel(self, run_id: str) -> None:
-        pass
-
-
+    async def cancel(self, run_id: str) -> bool:
+        return True
 async def _delivered(broker: RunBroker, key: str = "sdk_1"):
     """A claimed run, plus the list its lane records relays into. Observed
     through a handler rather than by reading `run.in_queue`: the run has its

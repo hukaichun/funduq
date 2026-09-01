@@ -22,10 +22,8 @@ class _Stub:
     async def deliver(self, run):
         return False
 
-    def cancel(self, run_id: str) -> None:
-        pass
-
-
+    async def cancel(self, run_id: str) -> bool:
+        return True
 class _Forged(_Stub):
     """Claims one identity's public key while holding a different private key."""
 

@@ -85,10 +85,8 @@ class _Decliner:
         self.offered.append(run.run_id)
         return False
 
-    def cancel(self, run_id: str) -> None:
-        pass
-
-
+    async def cancel(self, run_id: str) -> bool:
+        return True
 async def test_a_declined_run_is_reported_back_where_it_came_from(funduq: Funduq) -> None:
     """The dispatch window has two ends and the record follows both. A run
     handed to a provider is "offering"; a provider that declines it leaves it

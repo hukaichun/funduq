@@ -62,8 +62,9 @@ class InProcessLink(FunduqLink):
     async def deliver(self, run: "DeliveredRun") -> bool:
         return await self._runtime.deliver(run)
 
-    def cancel(self, run_id: str) -> None:
+    async def cancel(self, run_id: str) -> bool:
         self._runtime.cancel(run_id)
+        return True
 
 
     async def report_event(self, run_id: str, event: Any) -> None:

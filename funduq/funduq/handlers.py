@@ -131,7 +131,7 @@ async def _handle_finish(funduq: "Funduq", run: Run, cmd: FinishStream) -> None:
 
 
 async def _handle_cancel(funduq: "Funduq", run: Run, cmd: RequestCancel) -> None:
-    """Cancel immediately if no provider has claimed the run yet; otherwise ask the provider to stop."""
+    """Cancel immediately if no provider has claimed the run yet; otherwise ask the provider to stop and observe whether the ask arrived."""
     if run.claimed_by is None:
         async with funduq.session() as session:
             await funduq.mark_run_status(session, run.run_id, "cancelled")
@@ -139,9 +139,18 @@ async def _handle_cancel(funduq: "Funduq", run: Run, cmd: RequestCancel) -> None
 
     async with funduq.session() as session:
         await funduq.mark_run_status(session, run.run_id, "cancelling")
+    delivered = False
     if run.cancel_notify is not None:
-        with contextlib.suppress(Exception):
-            run.cancel_notify(run.run_id)
+        try:
+            delivered = bool(await run.cancel_notify(run.run_id))
+        except Exception:
+            logger.exception("run %s: asking its provider to stop failed", run.run_id)
+    if not delivered:
+        logger.warning(
+            "run %s: the stop request was not confirmed delivered; the run ends "
+            "whenever the provider finishes it",
+            run.run_id,
+        )
 
 
 async def _handle_fail(funduq: "Funduq", run: Run, cmd: Fail) -> None:
