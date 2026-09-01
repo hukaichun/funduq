@@ -72,11 +72,15 @@ rides above the shapes.
   case it is in.
 - **An interjection must name a live run on its own thread.** Naming a
   finished run, an unknown one, or a run on another thread is rejected at
-  the door; if the named run settles before delivery, funduq fails the
-  interjection rather than delivering a join to nothing.
-- **Taking interjections is an opt-in.** A provider takes them by
-  implementing the runtime's interjection hook; without it the runtime
-  refuses them, so the caller learns the agent cannot be interrupted.
+  the door. Being an interjection is a state, not a property: if the named
+  run settles before delivery, the run degrades into the thread's ordinary
+  next turn — queued and offered like any other, its declaration carried
+  verbatim but no longer naming anything live.
+- **Taking interjections is an opt-in.** A run whose declaration names the
+  thread's currently active run goes to the runtime's interjection hook; a
+  provider without the hook refuses it, so the caller learns the agent
+  cannot be interrupted. A declaration naming anything else is handled as an
+  ordinary run, hook or no hook.
 - **Events flow up as report/finish keyed by run id**: ordered within a run,
   unordered across runs.
 - **Cancel is a request, not a command.** The run ends when the provider
