@@ -70,6 +70,13 @@ rides above the shapes.
   which bypasses the queue and goes to the running thread's handler. A
   provider that receives a second run therefore never has to guess which
   case it is in.
+- **An interjection must name a live run on its own thread.** Naming a
+  finished run, an unknown one, or a run on another thread is rejected at
+  the door; if the named run settles before delivery, funduq fails the
+  interjection rather than delivering a join to nothing.
+- **Taking interjections is an opt-in.** A provider takes them by
+  implementing the runtime's interjection hook; without it the runtime
+  refuses them, so the caller learns the agent cannot be interrupted.
 - **Events flow up as report/finish keyed by run id**: ordered within a run,
   unordered across runs.
 - **Cancel is a request, not a command.** The run ends when the provider
@@ -86,3 +93,6 @@ Defined once in funduq-contract, imported by both sides:
 - `Offer` and its verdict; `Cancel` and its `Ack`
 - `Complete`, its chunks, and its end/failure markers
 - `DeliveredRun`, `Registration` — the payloads the calls above carry
+
+Every shape forbids unknown fields: a field the model does not declare is a
+validation error, never silently carried or dropped.
