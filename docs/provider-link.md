@@ -5,8 +5,8 @@ code differs today, the code is what has to move.
 
 Everything that crosses the boundary is a pydantic model, no exceptions, and
 each model is defined exactly once — in funduq-contract, the one package both
-sides already depend on. The transport owns framing, the correlation table,
-reconnection and the socket; none of that appears here.
+sides already depend on. These packages cover up to those models; everything
+past them is the transport's.
 
 ## Before the link: the ticket
 
@@ -44,8 +44,7 @@ request is acknowledged. There is no fire-and-forget in that direction.
 | complete (`id`, the completion request) | receipt, then the chunks, then an end or a failure, all under the same `id` |
 
 The `id` exists because the acknowledgement may return on a different
-connection than the request went down. Where it rides — a field, a URL — is
-the transport's choice.
+connection than the request went down.
 
 Every provider→funduq operation is a plain request with a response: register,
 delete, thread messages, report, finish. The response is the answer; nothing
@@ -78,6 +77,3 @@ Defined once in funduq-contract, imported by both sides:
 - `Offer` and its verdict; `Cancel` and its `Ack`
 - `Complete`, its chunks, and its end/failure markers
 - `DeliveredRun`, `Registration` — the payloads the calls above carry
-
-Anything a transport needs beyond these — an envelope, a status code, a
-heartbeat — is the transport's own vocabulary and lives downstream.
