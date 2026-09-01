@@ -32,6 +32,8 @@ class _Lane:
 
     queue: deque[DeliveredRun] = field(default_factory=deque)
     active_run_id: str | None = None
+    # Waiting for an execution slot, not for its own queue.
+    parked: bool = False
 
 
 class ProviderRuntime:
@@ -55,6 +57,7 @@ class ProviderRuntime:
         self._lanes: dict[str, _Lane] = {}
         self._in_flight: dict[str, asyncio.Task] = {}
         self._queued: dict[str, _Lane] = {}
+        self._parked: deque[str] = deque()
         self._dropped: set[str] = set()
         self._tasks: set[asyncio.Task] = set()
         self._running = False
@@ -138,21 +141,43 @@ class ProviderRuntime:
         task.add_done_callback(self._tasks.discard)
         return task
 
+    def _slot_free(self) -> bool:
+        return (
+            self.max_concurrent_runs is None
+            or len(self._in_flight) < self.max_concurrent_runs
+        )
+
     def _lane_next(self, key: str) -> None:
-        """Advance one lane: start its next queued run, or retire the lane when nothing waits. Every transition here is synchronous, so the one-active-run invariant holds by construction rather than by timing."""
+        """Advance one lane: start its next queued run when an execution slot is free, park it when none is, or retire it when nothing waits. Every transition here is synchronous, so the declared concurrency holds by construction rather than by timing."""
         lane = self._lanes.get(key)
         if lane is None:
             return
         while lane.queue:
-            run = lane.queue.popleft()
-            self._queued.pop(run.run_id, None)
-            if run.run_id in self._dropped:
+            if lane.queue[0].run_id in self._dropped:
+                run = lane.queue.popleft()
+                self._queued.pop(run.run_id, None)
                 self._dropped.discard(run.run_id)
                 continue
+            if not self._slot_free():
+                if not lane.parked:
+                    lane.parked = True
+                    self._parked.append(key)
+                return
+            run = lane.queue.popleft()
+            self._queued.pop(run.run_id, None)
             lane.active_run_id = run.run_id
             self._start_run(run, stream=None, lane_key=key)
             return
         self._lanes.pop(key, None)
+
+    def _kick_parked(self) -> None:
+        while self._parked and self._slot_free():
+            key = self._parked.popleft()
+            lane = self._lanes.get(key)
+            if lane is None:
+                continue
+            lane.parked = False
+            self._lane_next(key)
 
     def _start_run(self, run: DeliveredRun, *, stream, lane_key: str | None) -> None:
         task = self._spawn(self._execute(run, stream), name=f"run:{run.run_id}")
@@ -160,12 +185,12 @@ class ProviderRuntime:
 
         def _done(_task, run_id=run.run_id, key=lane_key) -> None:
             self._in_flight.pop(run_id, None)
-            if key is None:
-                return
-            lane = self._lanes.get(key)
-            if lane is not None and lane.active_run_id == run_id:
-                lane.active_run_id = None
-                self._lane_next(key)
+            if key is not None:
+                lane = self._lanes.get(key)
+                if lane is not None and lane.active_run_id == run_id:
+                    lane.active_run_id = None
+                    self._lane_next(key)
+            self._kick_parked()
 
         task.add_done_callback(_done)
 

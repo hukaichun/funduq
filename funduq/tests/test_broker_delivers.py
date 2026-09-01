@@ -793,21 +793,6 @@ async def test_one_conversation_is_handed_over_one_utterance_at_a_time(patient_b
     await _until(lambda: provider.offered == ["run_1", "run_2"])
 
 
-async def test_several_reasons_to_try_at_once_ask_the_run_once(broker):
-    """A run's chance to be handed over can change for several reasons in the
-    same breath — it was queued, a provider attached, a place freed. Each puts
-    the same question in its lane, and without coalescing the run is offered
-    once per copy: two offers for one dispatchable moment, and two counts
-    against a provider for one decline."""
-    provider = Recording(default=False)
-    broker.register_provider({AGENT: provider})
-    run = _enqueue(broker, "run_1")
-    broker.register_provider({AGENT: provider})
-    broker.register_provider({AGENT: provider})
-
-    assert run.in_queue.qsize() == 1, "one pending question, however many reasons"
-
-
 async def test_a_run_is_not_accepted_for_an_agent_nobody_is_serving(broker):
     """A run is only ever born with a provider online, and the lane is written
     to open by offering rather than by waiting for somebody to appear. Losing a

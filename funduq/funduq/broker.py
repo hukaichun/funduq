@@ -1,9 +1,21 @@
+"""Dispatch, shaped like the protocol.
+
+One thread has one loop: offer the head, wait for the verdict, wait for the
+finish, take the next. The gate at finish is not a rule anybody checks — it
+is the loop standing on `await settled`. The only bypass is an interjection,
+released exactly when the run it names becomes the thread's claimed head.
+
+Each run keeps one inbound queue (`in_queue`) for what happens to it —
+claim, relayed events, finish, cancel, failure — drained by one pump in
+arrival order, so a run's record is ordered by construction.
+"""
+
 from __future__ import annotations
 
 import asyncio
 import contextlib
 import logging
-from collections import defaultdict, deque
+from collections import deque
 from collections.abc import Awaitable, Callable, AsyncIterator
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
@@ -22,28 +34,13 @@ END_OF_STREAM = object()
 
 
 @dataclass
-class TryDispatch:
-    """Something changed that might let this run be handed over: it was just queued, the utterance ahead of it left, a place freed, a provider attached."""
-    pass
-
-
-@dataclass
-class ProviderGone:
-    """The named provider stopped serving."""
-
-    public_key: str
-
-
-@dataclass
 class Offer:
     """The run has been handed to a provider and funduq is waiting for an answer."""
-    pass
 
 
 @dataclass
 class Requeue:
     """The offer was not accepted, so the run goes back where it came from."""
-    pass
 
 
 @dataclass
@@ -73,10 +70,7 @@ class Fail:
     reason: str
 
 
-Command = (
-    TryDispatch | ProviderGone | Offer | Requeue | Claim | RelayEvent
-    | FinishStream | RequestCancel | Fail
-)
+Command = Offer | Requeue | Claim | RelayEvent | FinishStream | RequestCancel | Fail
 
 
 @dataclass(frozen=True)
@@ -123,7 +117,7 @@ class ConnectedProvider(Protocol):
 
 @dataclass
 class Run:
-    """A broker-side run's mutable dispatch state: its position in the pending queue, which provider (if any) has claimed it, and the in/out queues that feed its own lane."""
+    """One run, from queued to forgotten."""
 
     run_id: str
     agent: AgentRef
@@ -136,19 +130,17 @@ class Run:
     pause_payload: dict[str, Any] | None = None
     # The run this one asked to join, verbatim from the caller's declaration.
     addressed_run_id: str | None = None
-    # The provider this run is reserved on — set the moment the offer leaves, cleared if it comes back unaccepted.
     offered_to: str | None = None
-    # Whether an unanswered "can I be handed over now?" is already in this run's queue.
-    dispatch_pending: bool = False
     claimed_by: str | None = None
     claimed_at: datetime | None = None
     noted_abnormal: bool = False
-    cancel_notify: Callable[[str], None] | None = None
+    cancel_notify: Callable[[str], Awaitable[bool]] | None = None
     cancel_requested: bool = False
     saw_run_finished: bool = False
     saw_run_error: bool = False
     in_queue: asyncio.Queue[Command] = field(default_factory=asyncio.Queue)
     out_queue: asyncio.Queue[Any] = field(default_factory=asyncio.Queue)
+    settled: asyncio.Event = field(default_factory=asyncio.Event)
 
 
 @dataclass(frozen=True)
@@ -185,7 +177,7 @@ def _snapshot(run: Run) -> RunSnapshot:
 
 
 async def _drain_run(run: Run) -> AsyncIterator[Any]:
-    """Yields items placed on `run.out_queue` until the END_OF_STREAM sentinel (put there when the run's lane finishes), then returns."""
+    """Yields items placed on `run.out_queue` until the END_OF_STREAM sentinel, then returns."""
     while True:
         item = await run.out_queue.get()
         if item is END_OF_STREAM:
@@ -201,30 +193,18 @@ async def _no_events() -> AsyncIterator[Any]:
 
 HandlerMap = dict[type, Callable[[Run, Any], Awaitable[None]]]
 
-async def _lane(run: Run, owner: "RunBroker") -> None:
-    """A run's own lane, from the moment it is queued until it is forgotten."""
-    while True:
-        cmd = await run.in_queue.get()
-        if isinstance(cmd, TryDispatch):
-            run.dispatch_pending = False
-            await owner._try_dispatch(run)
-            continue
-        if isinstance(cmd, ProviderGone):
-            if run.claimed_by == cmd.public_key:
-                # Took work and will never end it — the same fact, and the same counter, as any other abandonment.
-                owner.push(run.run_id, Fail("provider_left_holding_it"))
-            continue
-        await owner._record(run, cmd)
-        if isinstance(cmd, (FinishStream, Fail)):
-            break
-        if isinstance(cmd, RequestCancel) and run.claimed_by is None:
-            break
-    run.out_queue.put_nowait(END_OF_STREAM)
-    owner.forget(run.run_id)
+
+@dataclass
+class _Thread:
+    """One thread's turn-taking: the queue of runs and the loop that walks it."""
+
+    queue: deque[Run] = field(default_factory=deque)
+    wake: asyncio.Event = field(default_factory=asyncio.Event)
+    task: asyncio.Task | None = None
 
 
 class RunBroker:
-    """Matches queued runs to connected providers, one agent's pending runs at a time, respecting each provider's declared concurrency, and tracks per-provider quality-of-service counters (`ProviderQuality`)."""
+    """Matches queued runs to connected providers, one thread's turn at a time, respecting each provider's declared concurrency, and tracks per-provider quality-of-service counters (`ProviderQuality`)."""
 
     def __init__(
         self,
@@ -238,11 +218,8 @@ class RunBroker:
     ) -> None:
         self._spawn = spawn or self._spawn_unsupervised
         self._runs: dict[str, Run] = {}
-        # Keyed by thread, because a thread is the pipe whose delivery order funduq guarantees.
-        self._pending_by_thread: dict[str, deque[str]] = defaultdict(deque)
-        self._live = LiveRoster(
-            ("misdeclared", "abandoned", "undelivered", "unanswered")
-        )
+        self._threads: dict[str, _Thread] = {}
+        self._live = LiveRoster(("misdeclared", "abandoned", "undelivered", "unanswered"))
         self._unserved_since: dict[AgentRef, datetime] = {}
         self._capacity: dict[str, _Capacity] = {}
         self._handlers: dict[str, HandlerMap] = {}
@@ -256,27 +233,7 @@ class RunBroker:
         self._work_to_do = asyncio.Event()
         self._forget_listeners: list[Callable[[str], None]] = []
 
-    def add_forget_listener(self, listener: Callable[[str], None]) -> None:
-        self._forget_listeners.append(listener)
-
-    def _note_abnormal(self, public_key: str, event: str) -> None:
-        """Records one abnormal event and applies the tolerance."""
-        self._live.note(public_key, event)
-        tolerance = self.quality_tolerance
-        if tolerance is None or self._live.count(public_key, event) < tolerance:
-            return
-        agents = self.agents_served_by(public_key)
-        if agents:
-            self.unregister_provider(agents)
-            logger.warning(
-                "provider %s reached the abnormality allowance (%s: %d of %d); "
-                "withdrawn from service — re-registration is the way back",
-                public_key[:16],
-                event,
-                self._live.count(public_key, event),
-                tolerance,
-            )
-
+    # ---- lifecycle ----------------------------------------------------
 
     def start(self) -> None:
         """Starts the sweep if it isn't already running."""
@@ -294,15 +251,15 @@ class RunBroker:
             self._loop_task = None
 
     async def run_forever(self) -> None:
-        """Runs the two clocks funduq keeps — noting providers that have not delivered what they accepted, and giving up on queued runs whose agent has gone unserved for too long — and nudges the head of every waiting conversation in case something it was blocked on has changed."""
+        """Runs the two clocks funduq keeps — noting providers that have not delivered what they accepted, and giving up on queued runs whose agent has gone unserved for too long — and wakes every waiting thread in case something it was blocked on has changed."""
         while True:
             try:
                 self.note_undelivered(self.undelivered_window_seconds)
                 self.expire_queued(self.unserved_timeout_seconds)
                 self._work_to_do.clear()
-                self._nudge_waiting()
+                self._wake_threads()
                 with contextlib.suppress(TimeoutError):
-                    # Sleep no longer than the shortest window this loop is responsible for observing, or the observation misses it.
+                    # Sleep no longer than the shortest window this loop observes.
                     async with asyncio.timeout(
                         min(self.unserved_timeout_seconds, self.undelivered_window_seconds)
                     ):
@@ -312,6 +269,14 @@ class RunBroker:
             except Exception:
                 logger.exception("broker sweep failed; continuing")
                 await asyncio.sleep(self.sweep_interval_seconds)
+
+    def _spawn_unsupervised(self, coro, *, name: str | None = None) -> asyncio.Task:
+        task = asyncio.create_task(coro, name=name)
+        self._lane_tasks.add(task)
+        task.add_done_callback(self._lane_tasks.discard)
+        return task
+
+    # ---- intake -------------------------------------------------------
 
     def enqueue_run(
         self,
@@ -324,7 +289,7 @@ class RunBroker:
         seq: int = 0,
         addressed_run_id: str | None = None,
     ) -> Run | None:
-        """Queues a new run for `agent`, gives it its own lane, and — if it is its conversation's turn — asks that lane to try handing it over."""
+        """Queues a new run for `agent` on its thread's loop; None if nobody serves the agent."""
         if not self.is_running:
             raise RuntimeError(
                 f"run {run_id}: this broker is not running, so nothing would ever be "
@@ -344,99 +309,93 @@ class RunBroker:
         )
         self._runs[run_id] = run
         self._handlers[run_id] = handlers
-        queue = self._pending_by_thread[thread_id]
-        queue.append(run_id)
-        self._spawn(_lane(run, self), name=f"run:{run_id}")
-        if self._may_dispatch(run):
-            self._nudge(run_id)
+        self._spawn(self._record_pump(run), name=f"run:{run_id}")
+        thread = self._threads.get(thread_id)
+        if thread is None or thread.task is None or thread.task.done():
+            thread = _Thread()
+            self._threads[thread_id] = thread
+            thread.queue.append(run)
+            thread.task = self._spawn(
+                self._thread_loop(thread_id, thread), name=f"thread:{thread_id}"
+            )
+        else:
+            thread.queue.append(run)
+            thread.wake.set()
+            head = thread.queue[0]
+            if head.claimed_by is not None:
+                self._release_interjections(thread, head)
         return run
 
-    def register_provider(self, mapping: dict[AgentRef, ConnectedProvider]) -> None:
-        """Registers (or replaces) the provider serving each given agent and nudges every waiting conversation."""
-        self._live.attach(mapping)
-        for agent in mapping:
-            self._unserved_since.pop(agent, None)
-        for provider in mapping.values():
-            self._capacity.setdefault(
-                provider.public_key, _Capacity(declared=provider.max_concurrent_runs)
-            )
-        self._work_to_do.set()
-        self._nudge_waiting()
+    # ---- the thread loop ----------------------------------------------
 
-    def serving(self, agent: AgentRef) -> ConnectedProvider | None:
-        return self._live.serving(agent)
-
-    def agents_served_by(self, public_key: str) -> list[AgentRef]:
-        return self._live.served_by(public_key)
-
-    def unregister_provider(self, agents: list[AgentRef]) -> None:
-        """Takes `agents` off the live roster and tells every run that was in their provider's hands."""
-        now = datetime.now(timezone.utc)
-        self._live.withdraw(agents)
-        for agent in agents:
-            if self._live.serving(agent) is not None:
+    async def _thread_loop(self, thread_id: str, thread: _Thread) -> None:
+        """One thread's whole life: offer the head, wait for the verdict, wait for the finish, take the next."""
+        while True:
+            while thread.queue and thread.queue[0].settled.is_set():
+                thread.queue.popleft()
+            if not thread.queue:
+                break
+            run = thread.queue[0]
+            provider = self._live.serving(run.agent)
+            if provider is None or not self._take_place(run, provider):
+                await self._wait(thread)
                 continue
-            self._unserved_since[agent] = now
-            for run in list(self._runs.values()):
-                if run.agent != agent:
-                    continue
-                key = run.claimed_by or run.offered_to
-                if key is not None:
-                    run.in_queue.put_nowait(ProviderGone(key))
 
-    def _nudge_waiting(self) -> None:
-        """Asks the head of every waiting conversation to try handing itself over."""
-        for queue in list(self._pending_by_thread.values()):
-            if queue:
-                self._nudge(queue[0])
+            verdict = await self._offer_one(run, provider)
 
-    def _nudge(self, run_id: str) -> None:
-        run = self._runs.get(run_id)
-        if run is None or run.dispatch_pending:
-            return
-        run.dispatch_pending = True
-        run.in_queue.put_nowait(TryDispatch())
+            if verdict == "accepted":
+                self._claim(run, provider)
+                if self._live.serving(run.agent) is not provider:
+                    # It answered from beyond the roster: the provider left while
+                    # the offer was out, and nothing will ever finish this run.
+                    self.push(run.run_id, Fail("provider_left_holding_it"))
+                else:
+                    self._release_interjections(thread, run)
+                await run.settled.wait()
+                continue
 
-    def _leave_queue(self, run: Run) -> None:
-        """Takes `run` out of its conversation's queue and nudges whoever is now at the head."""
-        queue = self._pending_by_thread.get(run.thread_id)
-        if queue is None or run.run_id not in queue:
-            return
-        queue.remove(run.run_id)
-        if queue:
-            self._nudge(queue[0])
-        else:
-            self._pending_by_thread.pop(run.thread_id, None)
+            self._release(run)
+            if verdict == "settled":
+                await run.settled.wait()
+                continue
+            if run.cancel_requested:
+                # The offer came back unaccepted and someone asked to stop:
+                # nothing holds the run any more, so the ask lands now.
+                run.in_queue.put_nowait(RequestCancel())
+                await run.settled.wait()
+                continue
+            await self._record(run, Requeue())
+            if verdict == "declined":
+                self._note_misdeclared(run, provider)
+            await self._wait(thread)
+        if self._threads.get(thread_id) is thread:
+            self._threads.pop(thread_id, None)
 
-    def _may_dispatch(self, run: Run) -> bool:
-        """A run goes out when it is the head of its conversation, or when it is
-        an interjection whose named run is the claimed head it asks to join."""
-        queue = self._pending_by_thread.get(run.thread_id)
-        if not queue or run.run_id not in queue:
-            return False
-        if queue[0] == run.run_id:
-            return True
-        if run.addressed_run_id is None:
-            return False
-        head = self._runs.get(queue[0])
-        return (
-            head is not None
-            and head.claimed_by is not None
-            and head.run_id == run.addressed_run_id
-        )
+    def _claim(self, run: Run, provider: ConnectedProvider) -> None:
+        """Records that `provider` accepted `run`. The claim rides the run's own pump so it lands before any event the provider reports."""
+        run.claimed_by = provider.public_key
+        run.claimed_at = datetime.now(timezone.utc)
+        run.cancel_notify = provider.cancel
+        run.in_queue.put_nowait(Claim())
+        if run.cancel_requested:
+            run.in_queue.put_nowait(RequestCancel())
 
-    async def _try_dispatch(self, run: Run) -> None:
-        """The run's own answer to "can I be handed over now?" — and, if yes, the handing over."""
-        if run.claimed_by is not None or run.offered_to is not None:
-            return
-        if not self._may_dispatch(run):
-            return
-        provider = self._live.serving(run.agent)
-        if provider is None:
-            return
-        if not self._take_place(run, provider):
-            return
+    def _note_misdeclared(self, run: Run, provider: ConnectedProvider) -> None:
+        capacity = self._capacity.get(provider.public_key)
+        if capacity is not None and capacity.has_room:
+            # Declining while claiming room is one abnormal event, and that is all it is.
+            self._note_abnormal(provider.public_key, "misdeclared")
+            logger.warning(
+                "provider %s declined run %s while funduq believed it had room "
+                "(%d/%s in flight); counted, not believed",
+                provider.public_key[:16],
+                run.run_id,
+                capacity.in_flight,
+                capacity.declared,
+            )
 
+    async def _offer_one(self, run: Run, provider: ConnectedProvider) -> str:
+        """One offer, one verdict: 'accepted', 'declined', 'unanswered', or 'settled' (the run died here)."""
         try:
             delivered = DeliveredRun(
                 run_id=run.run_id,
@@ -445,16 +404,14 @@ class RunBroker:
                 thread_id=run.thread_id,
             )
         except ValidationError as e:
-            self._release(run)
             run.in_queue.put_nowait(Fail(f"input does not validate as RunAgentInput: {e}"))
-            return
+            return "settled"
 
         await self._record(run, Offer())
         try:
             async with asyncio.timeout(self.deliver_timeout_seconds):
-                accepted = await provider.deliver(delivered)
+                answer = await provider.deliver(delivered)
         except TimeoutError:
-            await self._hand_back(run)
             self._note_abnormal(provider.public_key, "unanswered")
             logger.warning(
                 "provider %s did not answer an offer of run %s within %ss (%d so far)",
@@ -463,14 +420,13 @@ class RunBroker:
                 self.deliver_timeout_seconds,
                 self._live.count(provider.public_key, "unanswered"),
             )
-            return
+            return "unanswered"
         except Exception:
-            await self._hand_back(run)
             self._note_abnormal(provider.public_key, "unanswered")
             logger.exception("run %s: delivering to its provider failed", run.run_id)
-            return
+            return "unanswered"
 
-        reason = getattr(accepted, "reason", None)
+        reason = getattr(answer, "reason", None)
         if isinstance(reason, str):
             logger.warning(
                 "provider %s permanently refused run %s: %s",
@@ -478,27 +434,50 @@ class RunBroker:
                 run.run_id,
                 reason,
             )
-            # Into its own queue like any other verdict: this lane reads it next and ends the run, and the place goes back with `forget`.
             run.in_queue.put_nowait(Fail(reason))
-            return
-        if not accepted:
-            await self._hand_back(run)
-            capacity = self._capacity.get(provider.public_key)
-            if capacity is not None and capacity.has_room:
-                # Declining while claiming room is one abnormal event, and that is all it is.
-                self._note_abnormal(provider.public_key, "misdeclared")
-                logger.warning(
-                    "provider %s declined run %s while funduq believed it had room "
-                    "(%d/%s in flight); counted, not believed",
-                    provider.public_key[:16],
-                    run.run_id,
-                    capacity.in_flight,
-                    capacity.declared,
-                )
-            return
+            return "settled"
+        return "accepted" if answer else "declined"
 
-        self._take_claim(run, provider)
-        await self._record(run, Claim())
+    async def _wait(self, thread: _Thread) -> None:
+        thread.wake.clear()
+        await thread.wake.wait()
+
+    def _wake_threads(self) -> None:
+        for thread in list(self._threads.values()):
+            thread.wake.set()
+
+    # ---- interjections -------------------------------------------------
+
+    def _release_interjections(self, thread: _Thread, head: Run) -> None:
+        """Pull every queued run addressed to the claimed head and offer it now, beside the turn it joins."""
+        joining = [
+            run
+            for run in list(thread.queue)[1:]
+            if run.addressed_run_id == head.run_id and not run.settled.is_set()
+        ]
+        for run in joining:
+            thread.queue.remove(run)
+            self._spawn(self._interject(run, thread), name=f"interject:{run.run_id}")
+
+    async def _interject(self, run: Run, thread: _Thread) -> None:
+        """Offer an interjection beside the running turn. Declined or unanswered, it rejoins the queue right behind the head and simply becomes the thread's next turn."""
+        provider = self._live.serving(run.agent)
+        if provider is None or not self._take_place(run, provider):
+            thread.queue.insert(min(1, len(thread.queue)), run)
+            return
+        verdict = await self._offer_one(run, provider)
+        if verdict == "accepted":
+            self._claim(run, provider)
+            if self._live.serving(run.agent) is not provider:
+                self.push(run.run_id, Fail("provider_left_holding_it"))
+            return
+        self._release(run)
+        if verdict == "settled":
+            return
+        await self._record(run, Requeue())
+        thread.queue.insert(min(1, len(thread.queue)), run)
+
+    # ---- capacity ------------------------------------------------------
 
     def _take_place(self, run: Run, provider: ConnectedProvider) -> bool:
         """Takes `run`'s place on `provider` if there is one, and says whether it got it."""
@@ -517,22 +496,25 @@ class RunBroker:
         if capacity is not None and capacity.in_flight > 0:
             capacity.in_flight -= 1
 
-    def _take_claim(self, run: Run, provider: ConnectedProvider) -> None:
-        """Records that `provider` accepted `run`. The run stays at the head of its
-        conversation's queue until it finishes — the next utterance waits for the
-        turn to end; only an interjection addressed to this run may go now."""
-        run.claimed_by = provider.public_key
-        run.claimed_at = datetime.now(timezone.utc)
-        run.cancel_notify = provider.cancel
-        for run_id in list(self._pending_by_thread.get(run.thread_id, ())):
-            waiting = self._runs.get(run_id)
-            if waiting is not None and waiting.addressed_run_id == run.run_id:
-                self._nudge(run_id)
+    # ---- the record pump -----------------------------------------------
 
-    async def _hand_back(self, run: Run) -> None:
-        """Undoes a hand-over nobody accepted: gives the place back and puts the record where the run actually is. Nothing re-asks here — the next offer waits for the sweep, a freed place, or a roster change."""
-        self._release(run)
-        await self._record(run, Requeue())
+    async def _record_pump(self, run: Run) -> None:
+        """Drains a run's inbound commands in arrival order, from queued until forgotten."""
+        while True:
+            cmd = await run.in_queue.get()
+            if isinstance(cmd, RequestCancel):
+                if run.claimed_by is None and run.offered_to is not None:
+                    # A verdict is pending; the thread loop settles this after it lands.
+                    continue
+                await self._record(run, cmd)
+                if run.claimed_by is None:
+                    break
+                continue
+            await self._record(run, cmd)
+            if isinstance(cmd, (FinishStream, Fail)):
+                break
+        run.out_queue.put_nowait(END_OF_STREAM)
+        self.forget(run.run_id)
 
     async def _record(self, run: Run, command: Command) -> None:
         """Runs one command's handler."""
@@ -549,18 +531,69 @@ class RunBroker:
                 "run %s: recording %s failed", run.run_id, type(command).__name__
             )
 
-    def _spawn_unsupervised(self, coro, *, name: str | None = None) -> asyncio.Task:
-        task = asyncio.create_task(coro, name=name)
-        self._lane_tasks.add(task)
-        task.add_done_callback(self._lane_tasks.discard)
-        return task
+    # ---- provider roster ----------------------------------------------
+
+    def register_provider(self, mapping: dict[AgentRef, ConnectedProvider]) -> None:
+        """Registers (or replaces) the provider serving each given agent and wakes every waiting thread."""
+        self._live.attach(mapping)
+        for agent in mapping:
+            self._unserved_since.pop(agent, None)
+        for provider in mapping.values():
+            capacity = self._capacity.setdefault(
+                provider.public_key, _Capacity(declared=provider.max_concurrent_runs)
+            )
+            # A re-registration re-declares: the count survives, the limit is the new one.
+            capacity.declared = provider.max_concurrent_runs
+        self._work_to_do.set()
+        self._wake_threads()
+
+    def serving(self, agent: AgentRef) -> ConnectedProvider | None:
+        return self._live.serving(agent)
+
+    def agents_served_by(self, public_key: str) -> list[AgentRef]:
+        return self._live.served_by(public_key)
+
+    def unregister_provider(self, agents: list[AgentRef]) -> None:
+        """Takes `agents` off the live roster and fails every run that was in their provider's hands."""
+        now = datetime.now(timezone.utc)
+        self._live.withdraw(agents)
+        for agent in agents:
+            if self._live.serving(agent) is not None:
+                continue
+            self._unserved_since[agent] = now
+            for run in list(self._runs.values()):
+                if run.agent != agent or run.claimed_by is None:
+                    continue
+                # Took work and will never end it — the same fact, and the same counter, as any other abandonment.
+                self.push(run.run_id, Fail("provider_left_holding_it"))
+        self._wake_threads()
+
+    def _note_abnormal(self, public_key: str, event: str) -> None:
+        """Records one abnormal event and applies the tolerance."""
+        self._live.note(public_key, event)
+        tolerance = self.quality_tolerance
+        if tolerance is None or self._live.count(public_key, event) < tolerance:
+            return
+        agents = self.agents_served_by(public_key)
+        if agents:
+            self.unregister_provider(agents)
+            logger.warning(
+                "provider %s reached the abnormality allowance (%s: %d of %d); "
+                "withdrawn from service — re-registration is the way back",
+                public_key[:16],
+                event,
+                self._live.count(public_key, event),
+                tolerance,
+            )
+
+    # ---- observation and control --------------------------------------
 
     def get(self, run_id: str) -> RunSnapshot | None:
         run = self._runs.get(run_id)
         return _snapshot(run) if run is not None else None
 
     def push(self, run_id: str, command: Command) -> bool:
-        """Enqueues `command` on a run's own lane."""
+        """Enqueues `command` on a run's own record pump."""
         run = self._runs.get(run_id)
         if run is None:
             return False
@@ -577,18 +610,36 @@ class RunBroker:
         return True
 
     def subscribe(self, run_id: str) -> AsyncIterator[Any]:
-        """Returns an async iterator of whatever is pushed to `run_id`'s out_queue, ending when its lane finishes; an empty iterator if `run_id` is unknown."""
+        """Returns an async iterator of whatever is pushed to `run_id`'s out_queue, ending when the run settles; an empty iterator if `run_id` is unknown."""
         run = self._runs.get(run_id)
         return _drain_run(run) if run is not None else _no_events()
 
     def request_cancel(self, run_id: str) -> bool:
-        """Marks the run cancel-requested and puts the request in its own lane."""
+        """Marks the run cancel-requested and puts the request on its pump."""
         run = self._runs.get(run_id)
         if run is None:
             return False
         run.cancel_requested = True
         run.in_queue.put_nowait(RequestCancel())
         return True
+
+    def forget(self, run_id: str) -> None:
+        """Drops a run's tracked state and handlers, gives back the place it was holding, and wakes every waiting thread — a freed place is news."""
+        run = self._runs.pop(run_id, None)
+        self._handlers.pop(run_id, None)
+        if run is not None:
+            run.settled.set()
+            if run.offered_to is not None:
+                self._release(run)
+            self._work_to_do.set()
+            self._wake_threads()
+        for listener in self._forget_listeners:
+            listener(run_id)
+
+    def add_forget_listener(self, listener: Callable[[str], None]) -> None:
+        self._forget_listeners.append(listener)
+
+    # ---- the two clocks ------------------------------------------------
 
     def note_undelivered(self, window_seconds: float) -> list[str]:
         """Counts one `undelivered` against every provider still holding a run it accepted `window_seconds` ago and has not delivered, and returns those run ids."""
@@ -612,15 +663,13 @@ class RunBroker:
         return noted
 
     def expire_queued(self, timeout_seconds: float) -> list[str]:
-        """Gives up on queued (unclaimed) runs whose agent has had no serving provider for longer than `timeout_seconds`, failing each with `Fail("no_provider_took_it")`, and returns their run_ids."""
+        """Gives up on queued (unclaimed, unoffered) runs whose agent has had no serving provider for longer than `timeout_seconds`, failing each with `Fail("no_provider_took_it")`, and returns their run_ids."""
         cutoff = datetime.now(timezone.utc) - timedelta(seconds=timeout_seconds)
         expired: list[str] = []
-        for queue in list(self._pending_by_thread.values()):
-            for run_id in list(queue):
-                run = self._runs.get(run_id)
-                if run is None:
+        for thread in list(self._threads.values()):
+            for run in list(thread.queue):
+                if run.claimed_by is not None or run.offered_to is not None:
                     continue
-                # Read off the run rather than the queue's key: the clock this gives up on is the agent's, and the queue is now the thread's.
                 if self._live.serving(run.agent) is not None:
                     continue
                 unserved_since = self._unserved_since.get(run.agent)
@@ -629,7 +678,7 @@ class RunBroker:
                 )
                 if reference > cutoff:
                     continue
-                expired.append(run_id)
+                expired.append(run.run_id)
                 run.in_queue.put_nowait(Fail("no_provider_took_it"))
         return expired
 
@@ -654,16 +703,3 @@ class RunBroker:
             )
             for key, c in self._capacity.items()
         }
-
-    def forget(self, run_id: str) -> None:
-        """Drops a run's tracked state and handlers, takes it out of its conversation's queue (nudging whoever is now at the head), and gives back the place it was holding — nudging every waiting conversation, because a freed place is news."""
-        run = self._runs.pop(run_id, None)
-        self._handlers.pop(run_id, None)
-        if run is not None:
-            self._leave_queue(run)
-            if run.offered_to is not None:
-                self._release(run)
-                self._work_to_do.set()
-                self._nudge_waiting()
-        for listener in self._forget_listeners:
-            listener(run_id)
