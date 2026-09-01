@@ -80,7 +80,10 @@ rides above the shapes.
   thread's currently active run goes to the runtime's interjection hook; a
   provider without the hook refuses it, so the caller learns the agent
   cannot be interrupted. A declaration naming anything else is handled as an
-  ordinary run, hook or no hook.
+  ordinary run, hook or no hook. The capability is discoverable: the runtime
+  derives it from the hook's presence, the registration carries it, and the
+  agent card announces it in A2A's own extension slot — a declaration of
+  understanding, never a promise to accept.
 - **Events flow up as report/finish keyed by run id**: ordered within a run,
   unordered across runs.
 - **Cancel is a request, not a command.** The run ends when the provider

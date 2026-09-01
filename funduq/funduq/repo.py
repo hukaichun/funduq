@@ -11,6 +11,7 @@ from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from funduq.identity import provider_fingerprint
+from funduq.props import INTERJECTION_EXTENSION_URI
 from funduq.ids import new_id
 from funduq_contract import Registration
 
@@ -122,6 +123,11 @@ async def register_agents(
             "description": agent.description,
             **agent.agent_card_extra,
         }
+        if agent.takes_interjections:
+            declared = list(card.get("extensions", []))
+            if INTERJECTION_EXTENSION_URI not in declared:
+                declared.append(INTERJECTION_EXTENSION_URI)
+            card["extensions"] = declared
         stmt = _upsert(session, agents).values(
             name=name,
             provider_key=public_key,

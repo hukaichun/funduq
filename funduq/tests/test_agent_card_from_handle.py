@@ -99,3 +99,43 @@ async def test_re_registering_replaces_what_the_handle_now_says(funduq, new_iden
     record = await funduq.get_agent(registration["a"])
     stored = record.agent_card if field_name == "agent_card_extra" else record.metadata
     assert stored["skills"] == SKILLS[:1]
+
+
+async def test_a_provider_with_the_hook_declares_interjections_on_its_card(funduq, serve):
+    from funduq.props import INTERJECTION_EXTENSION_URI
+    from funduq.protocols.a2a import A2AAdapter
+
+    class Interjecting:
+        async def run_stream(self, agent_name, run_input):
+            ids = {"threadId": run_input.thread_id, "runId": run_input.run_id}
+            yield {"type": "RUN_STARTED", **ids}
+            yield {"type": "RUN_FINISHED", **ids}
+
+        async def interject_stream(self, agent_name, run_input, active_run_id):
+            ids = {"threadId": run_input.thread_id, "runId": run_input.run_id}
+            yield {"type": "RUN_STARTED", **ids}
+            yield {"type": "RUN_FINISHED", **ids}
+
+    provider = Interjecting()
+    served = await serve(provider, "interruptible")
+    assert served.runtime.takes_interjections is True
+
+    # Re-publish with the declaration the runtime derives, as a serving layer would.
+    await funduq.register_agents(
+        served.link,
+        [Registration(name="interruptible", takes_interjections=served.runtime.takes_interjections)],
+    )
+
+    card = await A2AAdapter(funduq).agent_card(served.agents["interruptible"])
+    assert INTERJECTION_EXTENSION_URI in [e.uri for e in card.capabilities.extensions]
+
+
+async def test_a_provider_without_the_hook_declares_nothing(funduq, serve):
+    from funduq.props import INTERJECTION_EXTENSION_URI
+    from funduq.protocols.a2a import A2AAdapter
+
+    served = await serve(None, "plain-speaker")
+    assert served.runtime.takes_interjections is False
+
+    card = await A2AAdapter(funduq).agent_card(served.agents["plain-speaker"])
+    assert INTERJECTION_EXTENSION_URI not in [e.uri for e in card.capabilities.extensions]

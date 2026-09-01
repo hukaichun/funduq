@@ -32,6 +32,9 @@ class Registration(Shape):
     description: str = ""
     agent_card_extra: dict[str, Any] = Field(default_factory=dict, alias="agentCardExtra")
     metadata: dict[str, Any] = Field(default_factory=dict)
+    # Derived from the runtime's interjection hook, never typed by an author,
+    # so the agent card can say it without anyone being able to lie in it.
+    takes_interjections: bool = Field(default=False, alias="takesInterjections")
 
 
 class DeliveredRun(Shape):
