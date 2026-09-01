@@ -24,6 +24,9 @@ are real today, measured rather than estimated.
 **[The SDKs](sdks.md)** — the packages providers build with, and what each
 publishes.
 
+**[The provider link](provider-link.md)** — how a provider and funduq talk:
+the handshake, the requests, the acks. This is the settled design.
+
 **[Writing a transport](writing-a-transport.md)** and **[the link protocol
 machine](link-protocol-machine.md)** — core hands back objects and pure
 functions; these are how you put them on a wire.
