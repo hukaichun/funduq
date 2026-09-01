@@ -5,6 +5,20 @@ import asyncio
 from funduq.broker import RelayEvent, RunBroker
 from funduq.models import AgentRef
 
+def _valid_input(run_id: str, thread_id: str) -> dict:
+    """The smallest dict that validates as a `RunAgentInput`: the broker now
+    builds the published `DeliveredRun` itself, so a test input must be one."""
+    return {
+        "threadId": thread_id,
+        "runId": run_id,
+        "state": None,
+        "messages": [],
+        "tools": [],
+        "context": [],
+        "forwardedProps": None,
+    }
+
+
 AGENT = AgentRef(provider_key="sdk_1", name="agent_1")
 
 
@@ -33,7 +47,7 @@ async def _delivered(broker: RunBroker, key: str = "sdk_1"):
     async def record(run, cmd) -> None:
         relayed.append(cmd)
 
-    run = broker.enqueue_run("run_1", AGENT, "thread_1", {}, "ag-ui", {RelayEvent: record})
+    run = broker.enqueue_run("run_1", AGENT, "thread_1", _valid_input("run_1", "thread_1"), "ag-ui", {RelayEvent: record})
     async with asyncio.timeout(1):
         while run.claimed_by is None:
             await asyncio.sleep(0)

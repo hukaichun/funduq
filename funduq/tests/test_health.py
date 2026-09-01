@@ -7,6 +7,7 @@ from sqlalchemy import update
 from funduq import repo
 from funduq.core import Funduq
 from funduq.schema import runs
+from funduq_contract import Registration
 
 
 async def _make_paused_run(session, agent, thread_id, seconds_stale: int) -> str:
@@ -41,7 +42,7 @@ async def test_a_pause_has_no_deadline_of_funduqs(session, funduq, new_identity)
     handed back.
     """
     identity = new_identity()
-    registered = await repo.register_agents(session, identity.public_key, [{"name": "translator"}])
+    registered = await repo.register_agents(session, identity.public_key, [Registration(name="translator")])
     agent = registered["translator"]
     thread_id = await repo.create_thread(session, agent)
 
@@ -74,7 +75,7 @@ async def test_a_run_the_broker_has_forgotten_still_gets_its_terminal_event(
     from funduq.handlers import close_with_terminal_event
 
     identity = new_identity()
-    registered = await repo.register_agents(session, identity.public_key, [{"name": "reaped"}])
+    registered = await repo.register_agents(session, identity.public_key, [Registration(name="reaped")])
     agent = registered["reaped"]
     thread_id = await repo.create_thread(session, agent)
     run_id = await _make_paused_run(session, agent, thread_id, seconds_stale=120)
@@ -95,7 +96,7 @@ async def test_a_run_that_reported_its_own_error_is_left_alone(session, funduq, 
     from funduq.handlers import close_with_terminal_event
 
     identity = new_identity()
-    registered = await repo.register_agents(session, identity.public_key, [{"name": "spoke"}])
+    registered = await repo.register_agents(session, identity.public_key, [Registration(name="spoke")])
     agent = registered["spoke"]
     thread_id = await repo.create_thread(session, agent)
     created = await repo.create_run(session, thread_id, agent, "ag-ui", {})
@@ -113,7 +114,7 @@ async def test_orphans_reaped_at_start_get_terminal_events(settings, session, ne
     from funduq.core import Funduq
 
     identity = new_identity()
-    registered = await repo.register_agents(session, identity.public_key, [{"name": "orphan"}])
+    registered = await repo.register_agents(session, identity.public_key, [Registration(name="orphan")])
     agent = registered["orphan"]
     thread_id = await repo.create_thread(session, agent)
     created = await repo.create_run(session, thread_id, agent, "ag-ui", {})

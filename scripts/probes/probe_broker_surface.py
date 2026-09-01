@@ -18,9 +18,24 @@ from funduq.config import CoreSettings
 from funduq.identity import FunduqIdentity
 from funduq.core import Funduq
 from funduq.identity import registration_signing_payload
+from funduq_contract import Registration
 
 DB = Path(tempfile.gettempdir()) / "funduq_probe_surface.db"
 URL = f"sqlite+aiosqlite:///{DB}"
+
+
+def _valid_input(run_id: str, thread_id: str) -> dict:
+    """The smallest dict that validates as a `RunAgentInput`: the broker now
+    builds the published `DeliveredRun` itself, so a test input must be one."""
+    return {
+        "threadId": thread_id,
+        "runId": run_id,
+        "state": None,
+        "messages": [],
+        "tools": [],
+        "context": [],
+        "forwardedProps": None,
+    }
 
 
 def migrate() -> None:
@@ -49,8 +64,8 @@ async def main() -> None:
     pub = key.public_key().public_bytes_raw().hex()
     ts = int(time.time())
     sig = key.sign(registration_signing_payload(["prober"], ts)).hex()
-    reg = await funduq.register_agents(pub, sig, ts, [{"name": "prober"}])
-    agent = reg.agents["prober"]
+    reg = await funduq.register_agents(pub, sig, ts, [Registration(name="prober")])
+    agent = reg["prober"]
 
     handle = await funduq.start_run(agent, {"messages": [], "state": {}})
 

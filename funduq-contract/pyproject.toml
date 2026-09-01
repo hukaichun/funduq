@@ -37,6 +37,10 @@ dependencies = [
     "cryptography>=42.0",
     # Actor-chain hops are JWTs. Signing, not transport.
     "pyjwt[crypto]>=2.9",
+    # The crossing shapes are pydantic models; a run's input is quoted from
+    # AG-UI's own package rather than restated.
+    "pydantic>=2.7",
+    "ag-ui-protocol>=0.1",
 ]
 
 [dependency-groups]

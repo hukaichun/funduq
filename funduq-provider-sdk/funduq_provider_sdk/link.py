@@ -3,8 +3,7 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from typing import Any
 
-from ag_ui.core import Message, RunAgentInput
-from pydantic import ValidationError
+from ag_ui.core import Message
 
 from funduq_provider_sdk.provider import DeliveredRun, Refusal
 
@@ -22,16 +21,8 @@ class FunduqLink(ABC):
     def max_concurrent_runs(self) -> int | None:
         pass
 
-    async def deliver(self, run: Any) -> bool | Refusal:
-        """Translates funduq's internal claimed-run object into a `DeliveredRun` and hands it to `offer`."""
-        try:
-            delivered = DeliveredRun.from_claimed(run)
-        except ValidationError as e:
-            return Refusal(f"input does not validate as RunAgentInput: {e}")
-        return await self.offer(delivered)
-
     @abstractmethod
-    async def offer(self, run: DeliveredRun) -> bool | Refusal:
+    async def deliver(self, run: DeliveredRun) -> bool | Refusal:
         """Accept (`True`), decline transiently (`False` — full right now), or refuse permanently (`Refusal`)."""
         pass
 

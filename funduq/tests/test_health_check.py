@@ -13,6 +13,7 @@ from funduq.db_schema import EXPECTED_SCHEMA_REVISION
 from funduq_provider_sdk import ProviderIdentity
 
 from tests.conftest import publish_offline
+from funduq_contract import Registration
 
 
 
@@ -133,7 +134,7 @@ async def test_the_database_accepts_every_status_the_code_can_write(funduq) -> N
     from funduq.schema import RUN_STATUSES, runs
 
     identity = ProviderIdentity.generate()
-    await publish_offline(funduq, identity, [{"name": "statuses"}])
+    await publish_offline(funduq, identity, [Registration(name="statuses")])
     agent = AgentRef(provider_key=identity.public_key, name="statuses")
 
     async with funduq.session() as session:

@@ -59,7 +59,7 @@ class InProcessLink(FunduqLink):
             funduq_public_key, funduq_nonce, provider_nonce
         )
 
-    async def offer(self, run: "DeliveredRun") -> bool:
+    async def deliver(self, run: "DeliveredRun") -> bool:
         return await self._runtime.deliver(run)
 
     def cancel(self, run_id: str) -> None:

@@ -14,14 +14,15 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 from funduq.changes import RosterChanged, RunStatusChanged
 from funduq.core import Funduq
 from funduq_provider_sdk import ProviderIdentity
+from funduq_contract import Registration
 
 FUNDUQ_PACKAGE = Path(__file__).resolve().parent.parent / "funduq"
 
 
 async def _register(funduq: Funduq, name: str = "echo"):
     identity = ProviderIdentity.generate()
-    registration = await publish_offline(funduq, identity, [{"name": name}])
-    return registration.agents[name], identity
+    registration = await publish_offline(funduq, identity, [Registration(name=name)])
+    return registration[name], identity
 
 
 class _Provider:
@@ -49,7 +50,7 @@ async def test_publishing_changes_the_roster_and_opening_a_link_does_not(
     runtime, link = await attach(identity, _Provider(), [])
     assert seen == [], "a link with nothing published changes no roster"
 
-    await funduq.register_agents(link, [{"name": agent.name}])
+    await funduq.register_agents(link, [Registration(name=agent.name)])
     assert seen == [RosterChanged()]
 
     funduq.detach_all_for(agent.provider_key)

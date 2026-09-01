@@ -19,6 +19,7 @@ from funduq.core import Funduq
 from funduq.models import AgentRef
 from funduq.migrate import migrate as funduq_migrate
 from funduq_provider_sdk import InProcessLink, ProviderIdentity, ProviderRuntime
+from funduq_contract import Registration
 
 
 TEST_SIGNING_SECRET = "test-signing-secret"
@@ -106,7 +107,7 @@ async def publish_agents(funduq: Funduq, link, names: list[str]):
     """Open `link` and publish `names` on it — the two acts the handshake now
     separates, in the order it requires."""
     await funduq.attach_provider(link)
-    return await funduq.register_agents(link, [{"name": n} for n in names])
+    return await funduq.register_agents(link, [Registration(name=n) for n in names])
 
 
 async def publish_llm(funduq: Funduq, link, names: list[str], metadata=None):
@@ -115,7 +116,7 @@ async def publish_llm(funduq: Funduq, link, names: list[str], metadata=None):
     return await funduq.register_llm_providers(link, names, metadata)
 
 
-async def publish_offline(funduq: Funduq, identity, agents: list[dict], provider_name=None):
+async def publish_offline(funduq: Funduq, identity, agents: list[Registration], provider_name=None):
     """Register `agents` under `identity` and leave them registered-but-offline.
 
     That state has one road to it now: open a link, publish on it, close the
@@ -154,7 +155,7 @@ async def attach(funduq: Funduq):
         link = InProcessLink(funduq, runtime)
         await funduq.attach_provider(link)
         if names:
-            await funduq.register_agents(link, [{"name": n} for n in names])
+            await funduq.register_agents(link, [Registration(name=n) for n in names])
         return runtime, link
 
     yield _attach
@@ -215,7 +216,7 @@ async def register(funduq: Funduq):
         runtime.start()
         link = InProcessLink(funduq, runtime)
         await funduq.attach_provider(link)
-        await funduq.register_agents(link, [{"name": n} for n in names])
+        await funduq.register_agents(link, [Registration(name=n) for n in names])
         funduq.detach_provider(identity.public_key, link)
         await runtime.aclose()
         agents = {

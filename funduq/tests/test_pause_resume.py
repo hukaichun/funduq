@@ -5,11 +5,12 @@ import json
 from funduq import repo
 from funduq.broker import FinishStream, RelayEvent, Run
 from funduq.handlers import _handle_finish, _handle_relay
+from funduq_contract import Registration
 
 
 async def test_native_ag_ui_interrupt_outcome_pauses_a_run(session, funduq, new_identity):
     identity = new_identity()
-    registered = await repo.register_agents(session, identity.public_key, [{"name": "b"}])
+    registered = await repo.register_agents(session, identity.public_key, [Registration(name="b")])
     agent_b = registered["b"]
     thread_b = await repo.create_thread(session, agent_b)
     created = await repo.create_run(session, thread_b, agent_b, "ag-ui", {})
@@ -40,7 +41,7 @@ async def test_native_ag_ui_interrupt_outcome_pauses_a_run(session, funduq, new_
 
 async def test_native_ag_ui_success_outcome_completes_a_run_normally(session, funduq, new_identity):
     identity = new_identity()
-    registered = await repo.register_agents(session, identity.public_key, [{"name": "b"}])
+    registered = await repo.register_agents(session, identity.public_key, [Registration(name="b")])
     agent_b = registered["b"]
     thread_b = await repo.create_thread(session, agent_b)
     created = await repo.create_run(session, thread_b, agent_b, "ag-ui", {})
@@ -66,7 +67,7 @@ async def test_finalize_delegated_call_reports_honestly_without_registering_any_
     session, new_identity
 ):
     identity = new_identity()
-    registered = await repo.register_agents(session, identity.public_key, [{"name": "b"}, {"name": "c"}]
+    registered = await repo.register_agents(session, identity.public_key, [Registration(name="b"), Registration(name="c")]
     )
     agent_b, agent_c = registered["b"], registered["c"]
 
@@ -90,7 +91,7 @@ async def test_finalize_delegated_call_reports_honestly_without_registering_any_
 
 async def test_a_delegating_agent_gets_an_honest_answer_by_just_asking_again(session, new_identity):
     identity = new_identity()
-    registered = await repo.register_agents(session, identity.public_key, [{"name": "c"}])
+    registered = await repo.register_agents(session, identity.public_key, [Registration(name="c")])
     agent_c = registered["c"]
     thread_c = await repo.create_thread(session, agent_c)
 
@@ -160,7 +161,7 @@ async def test_an_unanswered_tool_call_pauses_a_run_that_reported_success(
     deferred for someone else to run ends the stream as `success`, so this is
     the shape of a paused run that never says it paused."""
     identity = new_identity()
-    registered = await repo.register_agents(session, identity.public_key, [{"name": "b"}])
+    registered = await repo.register_agents(session, identity.public_key, [Registration(name="b")])
     agent_b = registered["b"]
     thread_b = await repo.create_thread(session, agent_b)
     created = await repo.create_run(session, thread_b, agent_b, "ag-ui", {})
@@ -196,7 +197,7 @@ async def test_a_run_whose_every_tool_call_was_answered_still_completes(
     session, funduq, new_identity
 ):
     identity = new_identity()
-    registered = await repo.register_agents(session, identity.public_key, [{"name": "b"}])
+    registered = await repo.register_agents(session, identity.public_key, [Registration(name="b")])
     agent_b = registered["b"]
     thread_b = await repo.create_thread(session, agent_b)
     created = await repo.create_run(session, thread_b, agent_b, "ag-ui", {})
@@ -228,7 +229,7 @@ async def test_an_interrupt_and_an_unanswered_call_are_recorded_in_one_pause(
     """One turn can ask both ways at once — pydantic-ai returns `approvals` and
     `calls` as separate lists of the same `DeferredToolRequests`."""
     identity = new_identity()
-    registered = await repo.register_agents(session, identity.public_key, [{"name": "b"}])
+    registered = await repo.register_agents(session, identity.public_key, [Registration(name="b")])
     agent_b = registered["b"]
     thread_b = await repo.create_thread(session, agent_b)
     created = await repo.create_run(session, thread_b, agent_b, "ag-ui", {})

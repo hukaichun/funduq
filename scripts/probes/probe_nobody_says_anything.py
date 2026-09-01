@@ -38,6 +38,7 @@ from funduq.core import Funduq
 from funduq.models import AgentRef
 from funduq.schema import agents, providers, run_events, runs, thread_messages, threads
 from funduq_provider_sdk import InProcessLink, ProviderIdentity, ProviderRuntime
+from funduq_contract import Registration
 
 DB = Path(tempfile.gettempdir()) / "funduq_probe_silence.db"
 URL = f"sqlite+aiosqlite:///{DB}"
@@ -69,7 +70,7 @@ async def serve(funduq: Funduq, identity: ProviderIdentity, *names: str):
     runtime.start()
     link = InProcessLink(funduq, runtime)
     await funduq.attach_provider(link)
-    await funduq.register_agents(link, [{"name": n} for n in names])
+    await funduq.register_agents(link, [Registration(name=n) for n in names])
     return runtime, link
 
 

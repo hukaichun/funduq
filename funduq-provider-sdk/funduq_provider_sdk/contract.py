@@ -1,8 +1,13 @@
 from __future__ import annotations
 
-DELIVERED_RUN_FIELDS = frozenset(
-    {"run_id", "agent_name", "run_input", "thread_id", "metadata"}
-)
+def _delivered_run_fields() -> frozenset[str]:
+    """Read off `DeliveredRun` rather than typed out beside it."""
+    from funduq_contract import DeliveredRun
+
+    return frozenset(DeliveredRun.model_fields)
+
+
+DELIVERED_RUN_FIELDS = _delivered_run_fields()
 
 LINK_REPORT_METHODS = {
     "report_event": ("run_id", "event"),

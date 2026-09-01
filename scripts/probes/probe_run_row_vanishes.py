@@ -50,6 +50,7 @@ from funduq.identity import FunduqIdentity
 from funduq.core import Funduq
 from funduq.identity import provider_connect_payload
 from funduq.schema import agents, run_events, runs, thread_messages, threads
+from funduq_contract import Registration
 
 DB = Path(tempfile.gettempdir()) / "funduq_probe_vanish.db"
 URL = f"sqlite+aiosqlite:///{DB}"
@@ -103,8 +104,8 @@ async def main() -> int:
     public_key = key.public_key().public_bytes_raw().hex()
     link = _Taker(key, public_key)
     await funduq.attach_provider(link)
-    registration = await funduq.register_agents(link, [{"name": "a"}])
-    agent = registration.agents["a"]
+    registration = await funduq.register_agents(link, [Registration(name="a")])
+    agent = registration["a"]
 
     handle = await funduq.start_run(agent, {"messages": []})
     async with asyncio.timeout(5):

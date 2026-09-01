@@ -33,6 +33,7 @@ from funduq.protocols.a2a import PROTOCOL_VERSION, A2AAdapter, ServedInterface
 from funduq.protocols.a2a_translate import CANCEL_REQUESTED_METADATA_KEY
 
 from tests.conftest import EchoAgent, publish_offline
+from funduq_contract import Registration
 
 
 def _message(
@@ -213,9 +214,9 @@ async def test_the_agent_card_carries_the_agents_own_version(funduq):
     from tests.conftest import Identity
 
     identity = Identity()
-    registered = await publish_offline(funduq, identity, [{"name": "versioned", "agent_card_extra": {"version": "3.1.4"}}])
+    registered = await publish_offline(funduq, identity, [Registration(name="versioned", agent_card_extra={"version": "3.1.4"})])
 
-    card = await A2AAdapter(funduq).agent_card(registered.agents["versioned"])
+    card = await A2AAdapter(funduq).agent_card(registered["versioned"])
 
     assert card.version == "3.1.4"
 

@@ -21,6 +21,7 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 from funduq.core import Funduq
 from funduq.models import AgentRef
 from funduq_provider_sdk import InProcessLink, ProviderIdentity, ProviderRuntime
+from funduq_contract import Registration
 
 
 class _Identity(ProviderIdentity):
@@ -72,7 +73,7 @@ async def _serving(funduq: Funduq, link_class=_SlowLink):
     runtime.start()
     link = link_class(funduq, runtime)
     await funduq.attach_provider(link)
-    await funduq.register_agents(link, [{"name": "translator"}])
+    await funduq.register_agents(link, [Registration(name="translator")])
     return link, runtime, AgentRef(provider_key=identity.public_key, name="translator")
 
 

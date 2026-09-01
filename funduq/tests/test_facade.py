@@ -10,6 +10,7 @@ from funduq import repo
 from funduq.core import Funduq
 from funduq.errors import NoPendingAsk, RunNotCancellable
 from funduq.models import AgentRef
+from funduq_contract import Registration
 
 
 class EchoProvider:
@@ -55,12 +56,12 @@ class NeverFinishesProvider:
 
 async def _register(funduq, name: str, identity) -> str:
     async with funduq.session() as session:
-        registered = await repo.register_agents(session, identity.public_key, [{"name": name}])
+        registered = await repo.register_agents(session, identity.public_key, [Registration(name=name)])
     return registered[name]
 
 
 async def _register_with_token(funduq, name: str, identity):
-    return await publish_offline(funduq, identity, [{"name": name}])
+    return await publish_offline(funduq, identity, [Registration(name=name)])
 
 
 async def _until(predicate, timeout: float = 1.0) -> None:
@@ -148,7 +149,7 @@ class StubbornProvider:
 async def test_a_worker_that_ignores_the_cancel_still_completes(funduq, new_identity):
     identity = new_identity()
     registration = await _register_with_token(funduq, "stubborn", identity)
-    agent_id = registration.agents["stubborn"]
+    agent_id = registration["stubborn"]
     provider = StubbornProvider(identity)
     await publish_agents(funduq, provider, ["stubborn"])
 

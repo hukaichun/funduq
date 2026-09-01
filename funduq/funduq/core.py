@@ -35,6 +35,8 @@ from funduq.doors import (
     resolve_kyok,
     verify_caller,
 )
+from funduq_contract import Registration
+
 from funduq.db_schema import DEFAULT_DB_SCHEMA, EXPECTED_SCHEMA_REVISION, quoted_schema
 from funduq.errors import (
     AgentInUse,
@@ -58,12 +60,6 @@ from funduq.kyok import ConnectedLLMProvider, KyokRelay
 from funduq.models import AgentRecord, AgentRef, AgentSummary, LlmRef, LlmSummary, RunRecord
 
 logger = logging.getLogger("funduq.core")
-
-
-@dataclass
-class Registration:
-
-    agents: dict[str, AgentRef]
 
 
 @dataclass(frozen=True)
@@ -436,23 +432,19 @@ class Funduq:
     async def register_agents(
         self,
         connection: Any,
-        agents: list[dict[str, Any]],
+        agents: list[Registration],
         provider_name: str | None = None,
-    ) -> Registration:
-        """Publish `agents` on `connection`'s open link and serve them from it."""
+    ) -> dict[str, AgentRef]:
+        """Publish `agents` on `connection`'s open link and serve them from it — the mirror of `register_llm_providers`."""
         public_key = connection.public_key
         registered = await self._agent_roster.register(
             connection,
-            [a["name"] for a in agents],
+            [a.name for a in agents],
             store=lambda session: repo.register_agents(
                 session, public_key, agents, provider_name=provider_name
             ),
         )
-        return Registration(
-            agents={
-                name: AgentRef(provider_key=public_key, name=name) for name in registered
-            }
-        )
+        return {name: AgentRef(provider_key=public_key, name=name) for name in registered}
 
     async def delete_agent(self, connection: Any, name: str) -> None:
         """Remove an agent's record, on the link that serves it."""

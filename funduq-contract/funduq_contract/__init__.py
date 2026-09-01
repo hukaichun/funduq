@@ -23,6 +23,19 @@ from funduq_contract.payloads import (
     provider_connect_payload,
     resolve_payload,
 )
+from funduq_contract.shapes import (
+    Ack,
+    Cancel,
+    Connect,
+    ConnectErr,
+    ConnectOk,
+    DeliveredRun,
+    Offer,
+    Refusal,
+    Registration,
+    Shape,
+    Verdict,
+)
 from funduq_contract.signatures import (
     FINGERPRINT_HEX_LENGTH,
     is_fingerprint,
@@ -32,7 +45,18 @@ from funduq_contract.signatures import (
 )
 
 __all__ = [
+    "Ack",
     "CONTRACT_REVISION",
+    "Cancel",
+    "Connect",
+    "ConnectErr",
+    "ConnectOk",
+    "DeliveredRun",
+    "Offer",
+    "Refusal",
+    "Registration",
+    "Shape",
+    "Verdict",
     "FINGERPRINT_HEX_LENGTH",
     "ChainResult",
     "DispatchTarget",

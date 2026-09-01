@@ -8,6 +8,20 @@ import pytest
 from funduq.broker import Claim, Fail, RequestCancel, RunBroker
 from funduq.models import AgentRef
 
+def _valid_input(run_id: str, thread_id: str) -> dict:
+    """The smallest dict that validates as a `RunAgentInput`: the broker now
+    builds the published `DeliveredRun` itself, so a test input must be one."""
+    return {
+        "threadId": thread_id,
+        "runId": run_id,
+        "state": None,
+        "messages": [],
+        "tools": [],
+        "context": [],
+        "forwardedProps": None,
+    }
+
+
 AGENT = AgentRef(provider_key="pk_provider", name="translator")
 OTHER = AgentRef(provider_key="pk_provider", name="summarizer")
 
@@ -81,8 +95,7 @@ def _enqueue(broker: RunBroker, run_id: str, agent: AgentRef = AGENT, thread_id:
     # Each run gets its own thread unless a test names one: a thread is the
     # unit funduq hands over serially, and most of these tests are about
     # delivery and capacity rather than about a conversation's order.
-    return broker.enqueue_run(
-        run_id, agent, thread_id or f"thread_{run_id}", {"messages": []}, "ag-ui", {}
+    return broker.enqueue_run(run_id, agent, thread_id or f"thread_{run_id}", _valid_input(run_id, thread_id or f"thread_{run_id}"), "ag-ui", {}
     )
 
 
@@ -110,7 +123,8 @@ async def test_the_provider_is_handed_a_value_not_funduqes_dispatch_state(broker
     await _until(lambda: bool(handed))
 
     run = handed[0]
-    assert (run.run_id, run.agent, run.run_input) == ("run_1", AGENT, {"messages": []})
+    assert (run.run_id, run.agent_name) == ("run_1", AGENT.name)
+    assert (run.run_input.run_id, run.run_input.thread_id) == ("run_1", run.thread_id)
     assert not hasattr(run, "in_queue") and not hasattr(run, "out_queue")
 
 
@@ -205,7 +219,7 @@ async def test_runs_of_a_withdrawn_provider_expire_on_the_ordinary_road():
         async def _record_fail(run, cmd) -> None:
             failed.append((run.run_id, cmd.reason))
 
-        b.enqueue_run("run_1", AGENT, "t1", {"messages": []}, "ag-ui", {Fail: _record_fail})
+        b.enqueue_run("run_1", AGENT, "t1", _valid_input("run_1", "t1"), "ag-ui", {Fail: _record_fail})
         await _until(lambda: provider.offered == ["run_1"])
         await _until(lambda: failed == [("run_1", "no_provider_took_it")], timeout=2.0)
     finally:
@@ -639,7 +653,7 @@ async def test_a_cancel_inside_the_dispatch_window_waits_for_the_answer(patient_
     }
     provider = Recording(hold=held)
     patient_broker.register_provider({AGENT: provider})
-    patient_broker.enqueue_run("run_1", AGENT, "thread_1", {"messages": []}, "ag-ui", handlers)
+    patient_broker.enqueue_run("run_1", AGENT, "thread_1", _valid_input("run_1", "thread_1"), "ag-ui", handlers)
     await _until(lambda: provider.offered == ["run_1"])
 
     assert patient_broker.request_cancel("run_1") is True
@@ -658,7 +672,7 @@ async def test_a_cancel_inside_the_window_settles_the_run_when_nobody_takes_it(p
     handlers = {RequestCancel: await _recorder(seen, "cancel")}
     provider = Recording(default=False, hold=held)
     patient_broker.register_provider({AGENT: provider})
-    patient_broker.enqueue_run("run_1", AGENT, "thread_1", {"messages": []}, "ag-ui", handlers)
+    patient_broker.enqueue_run("run_1", AGENT, "thread_1", _valid_input("run_1", "thread_1"), "ag-ui", handlers)
     await _until(lambda: provider.offered == ["run_1"])
 
     patient_broker.request_cancel("run_1")
@@ -688,7 +702,7 @@ async def test_a_provider_that_stopped_serving_while_answering_does_not_keep_the
     }
     provider = Recording(hold=held)
     patient_broker.register_provider({AGENT: provider})
-    patient_broker.enqueue_run("run_1", AGENT, "thread_1", {"messages": []}, "ag-ui", handlers)
+    patient_broker.enqueue_run("run_1", AGENT, "thread_1", _valid_input("run_1", "thread_1"), "ag-ui", handlers)
     await _until(lambda: provider.offered == ["run_1"])
 
     patient_broker.unregister_provider([AGENT])

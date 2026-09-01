@@ -12,6 +12,7 @@ from funduq import repo
 from funduq.config import CoreSettings
 from funduq.broker import RunBroker
 from funduq.core import Funduq
+from funduq_contract import Registration
 
 
 class NeverFinishesProvider:
@@ -41,7 +42,7 @@ async def _until(predicate, timeout: float = 5.0) -> None:
 
 async def _register(funduq, *names: str):
     identity = ProviderIdentity.generate()
-    registration = await publish_offline(funduq, identity, [{"name": n} for n in names])
+    registration = await publish_offline(funduq, identity, [Registration(name=n) for n in names])
     return registration, identity
 
 
@@ -69,7 +70,7 @@ async def brisk(settings: CoreSettings):
 
 async def test_a_provider_that_raises_reaches_the_caller_as_run_error(brisk):
     registration, identity = await _register(brisk, "explodes")
-    agent_id = registration.agents["explodes"]
+    agent_id = registration["explodes"]
 
     class Exploding:
         async def run_stream(self, agent_id: str, run_input: dict):
@@ -96,7 +97,7 @@ async def test_a_permanent_refusal_fails_the_run_with_the_providers_reason(brisk
     from funduq_provider_sdk import Refusal
 
     registration, identity = await _register(brisk, "retired")
-    agent_id = registration.agents["retired"]
+    agent_id = registration["retired"]
 
     class Refuses:
         max_concurrent_runs = None
@@ -108,14 +109,14 @@ async def test_a_permanent_refusal_fails_the_run_with_the_providers_reason(brisk
 
         async def deliver(self, run):
             self.offers += 1
-            return Refusal("this agent was retired, run something newer")
+            return Refusal(reason="this agent was retired, run something newer")
 
         def cancel(self, run_id: str) -> None:
             pass
 
     link = Refuses()
     await brisk.attach_provider(link)
-    await brisk.register_agents(link, [{"name": agent_id.name}])
+    await brisk.register_agents(link, [Registration(name=agent_id.name)])
     handle = await brisk.start_run(agent_id, {"messages": []})
 
     events = [e async for e in handle.events()]
@@ -132,7 +133,7 @@ async def test_a_permanent_refusal_fails_the_run_with_the_providers_reason(brisk
 
 async def test_a_malformed_event_fails_the_run_instead_of_relaying_garbage(brisk):
     registration, identity = await _register(brisk, "malformed")
-    agent_id = registration.agents["malformed"]
+    agent_id = registration["malformed"]
 
     class SendsGarbage:
         async def run_stream(self, agent_id: str, run_input: dict):
@@ -159,7 +160,7 @@ async def test_a_malformed_event_fails_the_run_instead_of_relaying_garbage(brisk
 
 async def test_a_provider_that_reports_its_own_failure_is_not_corrected(brisk):
     registration, identity = await _register(brisk, "polite")
-    agent_id = registration.agents["polite"]
+    agent_id = registration["polite"]
 
     class ReportsItsOwn:
         async def run_stream(self, agent_id: str, run_input: dict):
@@ -181,7 +182,7 @@ async def test_a_provider_that_reports_its_own_failure_is_not_corrected(brisk):
 
 async def test_a_cancelled_run_gets_no_run_error(brisk):
     registration, identity = await _register(brisk, "stoppable")
-    agent_id = registration.agents["stoppable"]
+    agent_id = registration["stoppable"]
     started = asyncio.Event()
 
     class WaitsForever:
@@ -219,7 +220,7 @@ async def test_a_run_nobody_ever_comes_for_is_given_up_on(settings: CoreSettings
     runtime = None
     try:
         registration, identity = await _register(funduq, "unserved")
-        agent = registration.agents["unserved"]
+        agent = registration["unserved"]
 
         runtime = ProviderRuntime(
             identity, NeverFinishesProvider(), max_queued_runs=1, max_concurrent_runs=1
@@ -257,7 +258,7 @@ async def test_a_run_nobody_ever_comes_for_is_given_up_on(settings: CoreSettings
 
 async def test_an_event_type_funduq_does_not_know_is_relayed_untouched(brisk):
     registration, identity = await _register(brisk, "futuristic")
-    agent_id = registration.agents["futuristic"]
+    agent_id = registration["futuristic"]
     future_event = {
         "type": "SOME_FUTURE_EVENT",
         "payload": {"nested": ["anything", 42]},
@@ -290,7 +291,7 @@ async def test_an_event_type_funduq_does_not_know_is_relayed_untouched(brisk):
 
 async def test_an_event_with_no_type_string_is_malformation_not_version_skew(brisk):
     registration, identity = await _register(brisk, "typeless")
-    agent_id = registration.agents["typeless"]
+    agent_id = registration["typeless"]
 
     class SendsTypeless:
         async def run_stream(self, agent_id: str, run_input: dict):
@@ -333,7 +334,7 @@ async def test_a_provider_that_leaves_holding_a_run_fails_it_at_once(settings: C
     runtime = None
     try:
         registration, identity = await _register(funduq, "held")
-        agent = registration.agents["held"]
+        agent = registration["held"]
         provider = BlockedProvider()
         runtime = ProviderRuntime(identity, provider)
         runtime.start()
@@ -380,7 +381,7 @@ async def test_a_provider_that_is_merely_quiet_keeps_its_run(settings: CoreSetti
     runtime = None
     try:
         registration, identity = await _register(funduq, "thinking")
-        agent = registration.agents["thinking"]
+        agent = registration["thinking"]
         provider = BlockedProvider()
         runtime = ProviderRuntime(identity, provider)
         runtime.start()
@@ -418,7 +419,7 @@ async def test_a_provider_that_delivers_nothing_is_counted_not_cut_off(settings:
     runtime = None
     try:
         registration, identity = await _register(funduq, "squatter")
-        agent = registration.agents["squatter"]
+        agent = registration["squatter"]
         provider = BlockedProvider()          # emits RUN_STARTED, then nothing, forever
         runtime = ProviderRuntime(identity, provider)
         runtime.start()
@@ -464,7 +465,7 @@ async def test_one_run_never_counts_twice_against_its_provider(settings: CoreSet
     runtime = None
     try:
         registration, identity = await _register(funduq, "slow-then-gone")
-        agent = registration.agents["slow-then-gone"]
+        agent = registration["slow-then-gone"]
         provider = BlockedProvider()
         runtime = ProviderRuntime(identity, provider)
         runtime.start()

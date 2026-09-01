@@ -23,6 +23,7 @@ from a2a.types import a2a_pb2 as pb
 
 from funduq import repo
 from funduq.protocols.a2a import A2AAdapter
+from funduq_contract import Registration
 
 COMPLETED = pb.TaskState.TASK_STATE_COMPLETED
 INPUT_REQUIRED = pb.TaskState.TASK_STATE_INPUT_REQUIRED
@@ -196,7 +197,7 @@ async def test_an_unaddressed_message_does_not_resume_the_paused_task(funduq, se
 
 async def test_reopen_run_refuses_a_run_that_is_not_in_the_expected_status(session, new_identity):
     identity = new_identity()
-    registered = await repo.register_agents(session, identity.public_key, [{"name": "r"}])
+    registered = await repo.register_agents(session, identity.public_key, [Registration(name="r")])
     agent = registered["r"]
     thread_id = await repo.create_thread(session, agent)
     created = await repo.create_run(session, thread_id, agent, "ag-ui", {})
@@ -271,7 +272,7 @@ async def tight(settings):
 
     async def _serve(provider, name):
         identity = ProviderIdentity.generate()
-        registration = await publish_offline(funduq, identity, [{"name": name}])
+        registration = await publish_offline(funduq, identity, [Registration(name=name)])
         # One run at a time: with the provider's capacity full, further
         # utterances stay in funduq's own buffer — which is what these tests
         # bound. (funduq itself imposes no turn-taking.)
@@ -279,7 +280,7 @@ async def tight(settings):
         runtimes.append(runtime)
         runtime.start()
         await publish_agents(funduq, InProcessLink(funduq, runtime), [name])
-        return registration.agents[name]
+        return registration[name]
 
     funduq.serve_one = _serve
     try:

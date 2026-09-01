@@ -28,18 +28,6 @@ class LlmRef(BaseModel):
         return f"{self.provider_key[:16]}…/{self.name}"
 
 
-class ClaimedRun(BaseModel):
-
-    model_config = ConfigDict(frozen=True)
-
-    run_id: str
-    agent: AgentRef
-    thread_id: str
-    run_input: dict[str, Any]
-    # Part of the delivered-run wire frame; funduq currently writes no keys into it (a caller's addressing rides inside the run input itself, as the message's own A2A `taskId`).
-    metadata: dict[str, Any] = Field(default_factory=dict)
-
-
 class LlmSummary(BaseModel):
     """A roster-list view of a registered LLM offering: enough to display and pick one (including online status), the mirror of `AgentSummary`."""
 

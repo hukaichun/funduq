@@ -8,6 +8,7 @@ from funduq.core import Funduq
 from funduq.errors import AgentInUse, AgentNotFound, InvalidRegistration
 from funduq_provider_sdk import InProcessLink, ProviderIdentity, ProviderRuntime
 from funduq.models import AgentRef
+from funduq_contract import Registration
 
 
 class _Provider:
@@ -34,7 +35,7 @@ async def _link(funduq: Funduq, identity, provider=None):
 
 async def _serving(funduq: Funduq, identity, *names: str):
     link, runtime = await _link(funduq, identity)
-    await funduq.register_agents(link, [{"name": n} for n in names])
+    await funduq.register_agents(link, [Registration(name=n) for n in names])
     return link, runtime
 
 
@@ -82,7 +83,7 @@ async def test_an_unused_agent_is_deleted_even_while_this_link_serves_it(funduq)
     assert await funduq.get_agent(agent) is None
     assert not funduq.is_serving(agent)
 
-    await funduq.register_agents(link, [{"name": "typo"}])
+    await funduq.register_agents(link, [Registration(name="typo")])
     assert await funduq.get_agent(agent) is not None
     await runtime.aclose()
 
@@ -129,7 +130,7 @@ async def test_an_agent_that_has_held_a_conversation_is_refused(funduq):
         await funduq.delete_agent(link, "worked")
     assert refused.value.reason == "has_history"
 
-    await funduq.register_agents(link, [{"name": "something-else"}])
+    await funduq.register_agents(link, [Registration(name="something-else")])
     assert [a.online for a in await funduq.list_agents() if a.name == "worked"] == [False]
     assert await funduq.get_agent(agent) is not None
     await runtime.aclose()

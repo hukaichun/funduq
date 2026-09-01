@@ -22,19 +22,15 @@ from funduq_provider_sdk import (
 
 from funduq import repo
 from funduq.broker import ConnectedProvider, RunBroker
-from funduq.models import ClaimedRun
 
 
-def test_the_adapter_can_fill_every_field_the_sdk_declares():
+def test_both_sides_deliver_the_same_published_shape():
+    from funduq_contract import DeliveredRun as ContractDeliveredRun
+    import funduq.broker as broker_module
+
+    assert DeliveredRun is ContractDeliveredRun
+    assert broker_module.DeliveredRun is ContractDeliveredRun
     assert set(DeliveredRun.model_fields) == DELIVERED_RUN_FIELDS
-
-    source = inspect.getsource(DeliveredRun.from_claimed)
-    for field in ("run_id", "agent_name", "run_input", "thread_id"):
-        assert f"{field}=" in source, f"the adapter never fills {field}"
-
-
-def test_what_funduq_delivers_still_carries_what_the_adapter_reads():
-    assert {"run_id", "agent", "thread_id", "run_input"} <= set(ClaimedRun.model_fields)
 
 
 def test_the_two_sides_agree_on_what_a_connected_provider_is():
@@ -124,9 +120,9 @@ def test_funduq_still_has_the_two_calls_the_adapter_reports_through():
 
 def test_a_handle_can_express_everything_register_agents_reads():
     source = inspect.getsource(repo.register_agents)
-    read_by_funduq = set(re.findall(r"agent(?:\.get\(|\[)[\"']([a-z_]+)[\"']", source))
+    read_by_funduq = set(re.findall(r"agent\.([a-z_]+)", source))
 
-    assert read_by_funduq, "no keys found — the regex stopped matching, not a passing test"
+    assert read_by_funduq, "no fields found — the scan stopped matching, not a passing test"
     assert read_by_funduq == set(REGISTRATION_FIELDS), (
         f"register_agents reads {sorted(read_by_funduq)}, "
         f"the SDK declares {sorted(REGISTRATION_FIELDS)}"
@@ -142,6 +138,6 @@ def test_the_handle_actually_carries_those_fields():
 
 
 def test_a_refusal_is_read_by_the_attribute_the_sdk_declares():
-    assert getattr(Refusal("gone"), "reason") == "gone"
+    assert getattr(Refusal(reason="gone"), "reason") == "gone"
     source = inspect.getsource(RunBroker._try_dispatch)
     assert 'getattr(accepted, "reason"' in source

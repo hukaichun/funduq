@@ -9,8 +9,12 @@ from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from typing import Any, Protocol
 
+from ag_ui.core import RunAgentInput
+from funduq_contract import DeliveredRun
+from pydantic import ValidationError
+
 from funduq.live_roster import LiveRoster
-from funduq.models import AgentRef, ClaimedRun
+from funduq.models import AgentRef
 
 logger = logging.getLogger("funduq.broker")
 
@@ -111,7 +115,7 @@ class ConnectedProvider(Protocol):
     public_key: str
     max_concurrent_runs: int | None
 
-    async def deliver(self, run: ClaimedRun) -> bool | Refusal:
+    async def deliver(self, run: DeliveredRun) -> bool | Refusal:
         ...
 
     def cancel(self, run_id: str) -> None:
@@ -414,17 +418,22 @@ class RunBroker:
         if not self._take_place(run, provider):
             return
 
+        try:
+            delivered = DeliveredRun(
+                run_id=run.run_id,
+                agent_name=run.agent.name,
+                run_input=RunAgentInput.model_validate(run.input_json),
+                thread_id=run.thread_id,
+            )
+        except ValidationError as e:
+            self._release(run)
+            run.in_queue.put_nowait(Fail(f"input does not validate as RunAgentInput: {e}"))
+            return
+
         await self._record(run, Offer())
         try:
             async with asyncio.timeout(self.deliver_timeout_seconds):
-                accepted = await provider.deliver(
-                    ClaimedRun(
-                        run_id=run.run_id,
-                        agent=run.agent,
-                        thread_id=run.thread_id,
-                        run_input=run.input_json,
-                    )
-                )
+                accepted = await provider.deliver(delivered)
         except TimeoutError:
             await self._hand_back(run)
             self._note_abnormal(provider.public_key, "unanswered")

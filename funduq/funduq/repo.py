@@ -12,6 +12,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from funduq.identity import provider_fingerprint
 from funduq.ids import new_id
+from funduq_contract import Registration
+
 from funduq.models import AgentRecord, AgentRef, AgentSummary, LlmRef, LlmSummary, RunRecord
 from funduq.props import OBSERVED_METADATA_KEY
 from funduq.schema import (
@@ -103,7 +105,7 @@ async def set_provider_name(session: AsyncSession, public_key: str, display_name
 async def register_agents(
     session: AsyncSession,
     public_key: str,
-    agents_batch: list[dict[str, Any]],
+    agents_batch: list[Registration],
     provider_name: str | None = None,
 ) -> dict[str, AgentRef]:
     """Registers or refreshes agents for `public_key`, and returns an `AgentRef` per name."""
@@ -114,17 +116,17 @@ async def register_agents(
     now = _utcnow()
     registered: dict[str, AgentRef] = {}
     for agent in agents_batch:
-        name = agent["name"]
+        name = agent.name
         card = {
             "name": name,
-            "description": agent.get("description", ""),
-            **agent.get("agent_card_extra", {}),
+            "description": agent.description,
+            **agent.agent_card_extra,
         }
         stmt = _upsert(session, agents).values(
             name=name,
             provider_key=public_key,
             agent_card=card,
-            metadata=agent.get("metadata", {}),
+            metadata=agent.metadata,
             joined_at=now,
             last_seen_at=now,
         )

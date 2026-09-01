@@ -31,6 +31,7 @@ from funduq_provider_sdk import (
 from funduq.kyok import CompletionRequest
 from funduq.models import LlmRef
 from funduq.protocols.agui import AGUIAdapter
+from funduq_contract import Registration
 
 
 class WireLink:
@@ -51,8 +52,8 @@ class WireLink:
         relayed = funduq_nonce.encode().decode()
         return self._runtime.identity.sign_connect(relayed_key, relayed, provider_nonce)
 
-    async def deliver(self, run) -> bool | Refusal:
-        frame = DeliveredRun.from_claimed(run).model_dump_json(by_alias=True).encode()
+    async def deliver(self, run: DeliveredRun) -> bool | Refusal:
+        frame = run.model_dump_json(by_alias=True).encode()
         delivered = DeliveredRun.model_validate_json(frame)
         accepted = await self._runtime.deliver(delivered)
         answer = json.dumps({"accepted": bool(accepted)}).encode()
@@ -86,7 +87,7 @@ async def test_a_run_travels_as_byte_frames_end_to_end(funduq):
         yield {"type": "RUN_FINISHED", **ids}
 
     identity = ProviderIdentity.generate()
-    registration = await publish_offline(funduq, identity, [{"name": "wired"}])
+    registration = await publish_offline(funduq, identity, [Registration(name="wired")])
     runtime = ProviderRuntime(identity, HandleProvider([AgentHandle("wired", agent)]))
     runtime.start()
     link = WireLink(funduq, runtime)
@@ -94,7 +95,7 @@ async def test_a_run_travels_as_byte_frames_end_to_end(funduq):
         await publish_agents(funduq, link, ["wired"])
 
         stream = await AGUIAdapter(funduq).run(
-            registration.agents["wired"],
+            registration["wired"],
             RunAgentInput(
                 thread_id="t-wire",
                 run_id="ignored",

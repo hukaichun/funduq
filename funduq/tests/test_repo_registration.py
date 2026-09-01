@@ -9,6 +9,7 @@ from funduq import repo
 from funduq.identity import provider_fingerprint
 from funduq.models import AgentRef
 from funduq.schema import agents, providers
+from funduq_contract import Registration
 
 
 async def _listed(session, funduq):
@@ -19,7 +20,7 @@ async def _listed(session, funduq):
 
 async def test_registering_the_same_agent_twice_is_the_same_agent(session, new_identity):
     identity = new_identity()
-    batch = [{"name": "greeter", "description": "hi"}]
+    batch = [Registration(name="greeter", description="hi")]
 
     first = await repo.register_agents(session, identity.public_key, batch)
     joined_at = (
@@ -41,7 +42,7 @@ async def test_registering_the_same_agent_twice_is_the_same_agent(session, new_i
 async def test_the_same_name_under_two_identities_is_two_agents(session, new_identity):
     a = new_identity()
     b = new_identity()
-    batch = [{"name": "greeter"}]
+    batch = [Registration(name="greeter")]
 
     result_a = await repo.register_agents(session, a.public_key, batch)
     result_b = await repo.register_agents(session, b.public_key, batch)
@@ -56,12 +57,12 @@ async def test_the_same_name_under_two_identities_is_two_agents(session, new_ide
 
 async def test_omitting_an_agent_keeps_it_rather_than_removing_it(session, funduq, new_identity):
     identity = new_identity()
-    both = [{"name": "greeter"}, {"name": "translator"}]
+    both = [Registration(name="greeter"), Registration(name="translator")]
 
     registered = await repo.register_agents(session, identity.public_key, both)
     translator = registered["translator"]
 
-    await repo.register_agents(session, identity.public_key, [{"name": "greeter"}])
+    await repo.register_agents(session, identity.public_key, [Registration(name="greeter")])
 
     assert {a.name for a in await _listed(session, funduq)} == {"greeter", "translator"}
     assert await repo.resolve_agent(session, identity.public_key, "translator") is not None
@@ -72,7 +73,7 @@ async def test_list_agents_excludes_an_agent_nothing_has_heard_from_in_weeks(
     session, funduq, new_identity
 ):
     identity = new_identity()
-    await repo.register_agents(session, identity.public_key, [{"name": "greeter"}])
+    await repo.register_agents(session, identity.public_key, [Registration(name="greeter")])
 
     assert len(await _listed(session, funduq)) == 1
 
@@ -86,7 +87,7 @@ async def test_list_agents_excludes_an_agent_nothing_has_heard_from_in_weeks(
 
 async def test_list_agents_reports_public_key_and_provider_name(session, funduq, new_identity):
     identity = new_identity()
-    await repo.register_agents(session, identity.public_key, [{"name": "greeter"}], provider_name="Ada's Stall"
+    await repo.register_agents(session, identity.public_key, [Registration(name="greeter")], provider_name="Ada's Stall"
     )
 
     listed = await _listed(session, funduq)
@@ -96,21 +97,21 @@ async def test_list_agents_reports_public_key_and_provider_name(session, funduq,
 
 async def test_provider_name_defaults_to_none_and_is_sticky_across_registrations(session, funduq, new_identity):
     identity = new_identity()
-    await repo.register_agents(session, identity.public_key, [{"name": "greeter"}])
+    await repo.register_agents(session, identity.public_key, [Registration(name="greeter")])
     assert (await _listed(session, funduq))[0].provider_name is None
 
-    await repo.register_agents(session, identity.public_key, [{"name": "greeter"}], provider_name="Ada's Stall"
+    await repo.register_agents(session, identity.public_key, [Registration(name="greeter")], provider_name="Ada's Stall"
     )
     assert (await _listed(session, funduq))[0].provider_name == "Ada's Stall"
 
-    await repo.register_agents(session, identity.public_key, [{"name": "greeter"}])
+    await repo.register_agents(session, identity.public_key, [Registration(name="greeter")])
     assert (await _listed(session, funduq))[0].provider_name == "Ada's Stall"
 
 
 async def test_an_agent_is_addressable_by_whose_it_is_and_what_it_is_called(session, new_identity):
     a, b = new_identity(), new_identity()
-    mine = await repo.register_agents(session, a.public_key, [{"name": "translator"}])
-    theirs = await repo.register_agents(session, b.public_key, [{"name": "translator"}])
+    mine = await repo.register_agents(session, a.public_key, [Registration(name="translator")])
+    theirs = await repo.register_agents(session, b.public_key, [Registration(name="translator")])
 
     resolved_a = await repo.resolve_agent(session, a.public_key, "translator")
     resolved_b = await repo.resolve_agent(session, b.public_key, "translator")
@@ -120,7 +121,7 @@ async def test_an_agent_is_addressable_by_whose_it_is_and_what_it_is_called(sess
 
 async def test_resolving_an_agent_a_provider_never_registered_is_a_miss(session, new_identity):
     identity = new_identity()
-    await repo.register_agents(session, identity.public_key, [{"name": "translator"}])
+    await repo.register_agents(session, identity.public_key, [Registration(name="translator")])
 
     assert await repo.resolve_agent(session, identity.public_key, "summarizer") is None
     assert await repo.resolve_agent(session, new_identity().public_key, "translator") is None
@@ -128,8 +129,8 @@ async def test_resolving_an_agent_a_provider_never_registered_is_a_miss(session,
 
 async def test_an_agent_that_went_quiet_is_still_addressable(session, new_identity):
     identity = new_identity()
-    await repo.register_agents(session, identity.public_key, [{"name": "translator"}])
-    await repo.register_agents(session, identity.public_key, [{"name": "summarizer"}])
+    await repo.register_agents(session, identity.public_key, [Registration(name="translator")])
+    await repo.register_agents(session, identity.public_key, [Registration(name="summarizer")])
 
     assert await repo.resolve_agent(session, identity.public_key, "translator") is not None
     assert await repo.resolve_agent(session, identity.public_key, "summarizer") is not None
@@ -137,7 +138,7 @@ async def test_an_agent_that_went_quiet_is_still_addressable(session, new_identi
 
 async def test_a_provider_is_addressable_by_its_fingerprint(session, new_identity):
     identity = new_identity()
-    ids = await repo.register_agents(session, identity.public_key, [{"name": "translator"}])
+    ids = await repo.register_agents(session, identity.public_key, [Registration(name="translator")])
     fingerprint = provider_fingerprint(identity.public_key)
 
     by_key = await repo.resolve_agent(session, identity.public_key, "translator")
@@ -151,14 +152,14 @@ async def test_a_provider_is_addressable_by_its_fingerprint(session, new_identit
 
 async def test_an_identity_that_never_named_itself_is_still_addressable(session, new_identity):
     identity = new_identity()
-    await repo.register_agents(session, identity.public_key, [{"name": "solo"}])
+    await repo.register_agents(session, identity.public_key, [Registration(name="solo")])
 
     assert await repo.resolve_agent(session, provider_fingerprint(identity.public_key), "solo")
 
 
 async def test_a_second_key_cannot_take_an_existing_fingerprint(session, new_identity):
     mine, theirs = new_identity(), new_identity()
-    await repo.register_agents(session, mine.public_key, [{"name": "translator"}])
+    await repo.register_agents(session, mine.public_key, [Registration(name="translator")])
     await session.execute(
         update(providers)
         .where(providers.c.public_key == mine.public_key)
@@ -167,14 +168,14 @@ async def test_a_second_key_cannot_take_an_existing_fingerprint(session, new_ide
     await session.commit()
 
     with pytest.raises(repo.ProviderFingerprintTaken):
-        await repo.register_agents(session, theirs.public_key, [{"name": "impostor"}])
+        await repo.register_agents(session, theirs.public_key, [Registration(name="impostor")])
 
     assert await repo.get_agent_names_for_provider(session, theirs.public_key) == set()
 
 
 async def test_junk_resolves_to_nothing_rather_than_raising(session, new_identity):
     identity = new_identity()
-    await repo.register_agents(session, identity.public_key, [{"name": "translator"}])
+    await repo.register_agents(session, identity.public_key, [Registration(name="translator")])
 
     for junk in ("", "nope", "z" * 16, provider_fingerprint(identity.public_key).upper()):
         assert await repo.resolve_agent(session, junk, "translator") is None

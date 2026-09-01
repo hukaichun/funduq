@@ -10,6 +10,7 @@ from funduq_provider_sdk import InProcessLink, AgentHandle, HandleProvider, Prov
 
 from funduq import repo
 from funduq.models import AgentRef
+from funduq_contract import Registration
 
 
 async def _until(predicate, timeout: float = 5.0) -> None:
@@ -28,7 +29,7 @@ async def runtimes():
 
 async def _attach(funduq, runtimes, agents: dict, **kwargs) -> ProviderIdentity:
     identity = ProviderIdentity.generate()
-    await publish_offline(funduq, identity, [{"name": n} for n in agents])
+    await publish_offline(funduq, identity, [Registration(name=n) for n in agents])
     runtime = ProviderRuntime(
         identity,
         HandleProvider([AgentHandle(name, fn) for name, fn in agents.items()]),

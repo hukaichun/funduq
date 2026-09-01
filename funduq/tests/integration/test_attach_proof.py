@@ -9,6 +9,7 @@ from funduq.errors import InvalidRegistration
 from tests.conftest import DATABASE_URL, TEST_SIGNING_SECRET, publish_offline
 from funduq.config import CoreSettings
 from funduq.identity import FunduqIdentity
+from funduq_contract import Registration
 
 
 class _Stub:
@@ -40,7 +41,7 @@ class _Forged(_Stub):
 
 async def _registered(funduq, name: str) -> ProviderIdentity:
     identity = ProviderIdentity.generate()
-    await publish_offline(funduq, identity, [{"name": name}])
+    await publish_offline(funduq, identity, [Registration(name=name)])
     return identity
 
 
@@ -123,7 +124,7 @@ async def test_nothing_may_be_published_without_an_open_link(funduq):
     stub = _Stub(identity.public_key)
 
     with pytest.raises(InvalidRegistration, match="not on an open link"):
-        await funduq.register_agents(stub, [{"name": "closed"}])
+        await funduq.register_agents(stub, [Registration(name="closed")])
     with pytest.raises(InvalidRegistration, match="not on an open link"):
         await funduq.delete_agent(stub, "closed")
 
@@ -144,7 +145,7 @@ async def test_a_silent_connection_is_rejected_and_the_signer_admitted():
 
         signer = _Forged(identity.public_key, identity)
         await funduq.attach_provider(signer)
-        await funduq.register_agents(signer, [{"name": "strict"}])
+        await funduq.register_agents(signer, [Registration(name="strict")])
         from funduq.models import AgentRef
 
         assert funduq.is_serving(AgentRef(provider_key=identity.public_key, name="strict"))
