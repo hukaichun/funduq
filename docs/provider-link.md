@@ -44,7 +44,12 @@ request is acknowledged. There is no fire-and-forget in that direction.
 | complete (`id`, the completion request) | receipt, then the chunks, then an end or a failure, all under the same `id` |
 
 The `id` exists because the acknowledgement may return on a different
-connection than the request went down.
+connection than the request went down. A verdict carries the run id as well:
+after the delivery timeout the request it answers is no longer outstanding
+anywhere, and an acknowledgement that matches nothing outstanding is not
+garbage — it goes to core, which answers it against the run's own state (the
+late-claim path). The `id` says which asking is being answered; the run id
+says which run it is about, and survives the asking being given up.
 
 Every provider→funduq operation is a plain request with a response: register,
 delete, thread messages, report, finish. The response is the answer; nothing
