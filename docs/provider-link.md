@@ -39,17 +39,21 @@ request is acknowledged. There is no fire-and-forget in that direction.
 
 | request | acknowledgement |
 |---|---|
-| offer (`id`, the run) | the verdict — accepted, declined or refused — within the delivery timeout; an answer that misses the window must still be sent |
+| offer (`id`, the run) | the verdict — accepted, declined or refused |
 | cancel (`id`, the run id) | receipt: "the thread's handler was told" — never an outcome |
 | complete (`id`, the completion request) | receipt, then the chunks, then an end or a failure, all under the same `id` |
 
 The `id` exists because the acknowledgement may return on a different
-connection than the request went down. A verdict carries the run id as well:
-after the delivery timeout the request it answers is no longer outstanding
-anywhere, and an acknowledgement that matches nothing outstanding is not
-garbage — it goes to core, which answers it against the run's own state (the
-late-claim path). The `id` says which asking is being answered; the run id
-says which run it is about, and survives the asking being given up.
+connection than the request went down.
+
+An acknowledgement is an intake decision, answered from state the provider
+already holds — never gated on running anything. That is why the delivery
+timeout is short: missing it means the link or the provider is broken, not
+that it is thinking. funduq takes the run back and re-offers it; an
+acknowledgement that arrives after that matches nothing and is answered
+false, which is a guard, not a path. A provider that had actually taken the
+run and lost its answer sees the same run offered again and simply accepts
+again.
 
 Every provider→funduq operation is a plain request with a response: register,
 delete, thread messages, report, finish. The response is the answer; nothing
