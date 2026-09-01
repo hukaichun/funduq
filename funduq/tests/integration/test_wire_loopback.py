@@ -28,7 +28,6 @@ from funduq_provider_sdk import (
     Refusal,
 )
 
-from funduq.kyok import CompletionRequest
 from funduq.models import LlmRef
 from funduq.protocols.agui import AGUIAdapter
 from funduq_contract import Registration
@@ -130,8 +129,8 @@ class WireLLMLink:
     ) -> str:
         return self._identity.sign_connect(funduq_public_key, funduq_nonce, provider_nonce)
 
-    def complete(self, request: CompletionRequest):
-        frame = DeliveredCompletion.from_request(request).model_dump_json(by_alias=True).encode()
+    def complete(self, request: DeliveredCompletion):
+        frame = request.model_dump_json(by_alias=True).encode()
         delivered = DeliveredCompletion.model_validate_json(frame)
 
         async def _chunks():
@@ -163,9 +162,11 @@ async def test_a_completion_travels_as_byte_frames(funduq):
 
     ref = LlmRef(provider_key=identity.public_key, name="wire-model")
     serving = funduq.kyok_relay.serving(ref)
-    request = CompletionRequest(
+    agent_ref = registration_ref(identity)
+    request = DeliveredCompletion(
         run_id="run-wire",
-        agent=registration_ref(identity),
+        provider_key=agent_ref.provider_key,
+        agent_name=agent_ref.name,
         body={"model": "wire-model", "messages": [{"role": "user", "content": "hi"}]},
         llm_name="wire-model",
     )

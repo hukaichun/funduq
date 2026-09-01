@@ -54,5 +54,5 @@ class InProcessLLMProvider(FunduqLLMLink):
                 f"the funduq answering this link-open did not prove '{self._funduq_public_key}'"
             )
 
-    def serve(self, delivered: DeliveredCompletion) -> AsyncIterator[ChatCompletionChunk]:
-        return self._llm(delivered)
+    def complete(self, request: DeliveredCompletion) -> AsyncIterator[ChatCompletionChunk]:
+        return self._llm(request)

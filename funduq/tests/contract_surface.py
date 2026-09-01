@@ -85,59 +85,28 @@ def _link_surface() -> list[str]:
     )
 
 
-def _protocol_surface() -> list[str]:
-    """The link protocol's frames and both machines' verbs.
+def _shapes_surface() -> list[str]:
+    """Every crossing shape funduq-contract defines: name plus field aliases.
 
-    In the surface for the reason `_contract_api_surface` is: this is a
-    published protocol, and a second implementation — the Go probe exists to
-    be one — reads these frames. A renamed `kind`, a renamed aliased field or
-    an added machine verb is a change that implementation has to act on, and
-    none of it moves a vector, because the vectors pin payload shapes and this
-    is a vocabulary.
-
-    Leaving it out would repeat, one package over, the mistake this file
-    already records making once: a surface an outside implementation depends
-    on, sitting outside the fingerprint, so a break ships with a changelog
-    entry saying nothing changed.
-
-    Both link kinds, because both are published. `dir()` deduplicates the
-    frames the LLM module re-exports from the agent one, so a frame shared by
-    the two vocabularies is counted once and a rename to it still moves this.
+    In the surface because these ARE the wire: a renamed field or a dropped
+    shape is a change every transport and every second implementation has to
+    act on. Read live off the models, never copied.
     """
-    from funduq_provider_sdk.protocol import frames as fr
-    from funduq_provider_sdk.protocol import events as ev
-    from funduq_provider_sdk.protocol.funduq_side import FunduqSide
-    from funduq_provider_sdk.protocol.provider_side import ProviderSide
-    from funduq_provider_sdk.llm import protocol as llm
+    import funduq_contract
+    from funduq_contract import Shape
 
     out: list[str] = []
-    for module in (fr, llm):
-        for name in sorted(dir(module)):
-            member = getattr(module, name)
-            if not (isinstance(member, type) and issubclass(member, fr.Frame)):
-                continue
-            if member is fr.Frame:
-                continue
-            fields = sorted(
-                field.alias or field_name for field_name, field in member.model_fields.items()
-            )
-            out.append(f"frame:{name}:{','.join(fields)}")
-    for module in (ev, llm):
-        for name in sorted(dir(module)):
-            member = getattr(module, name)
-            if not (isinstance(member, type) and issubclass(member, ev.Event)):
-                continue
-            if member is ev.Event:
-                continue
-            out.append(f"event:{name}:{','.join(sorted(member.model_fields))}")
-    for machine in (FunduqSide, ProviderSide, llm.FunduqLlmSide, llm.ProviderLlmSide):
-        verbs = sorted(
-            attr
-            for attr, member in inspect.getmembers(machine)
-            if not attr.startswith("_")
-            and (inspect.isfunction(member) or isinstance(member, property))
+    for name in sorted(funduq_contract.__all__):
+        member = getattr(funduq_contract, name)
+        if not (isinstance(member, type) and issubclass(member, Shape)):
+            continue
+        if member is Shape:
+            continue
+        fields = sorted(
+            field.alias or field_name
+            for field_name, field in member.model_fields.items()
         )
-        out.append(f"machine:{machine.__name__}:{','.join(verbs)}")
+        out.append(f"shape:{name}:{','.join(fields)}")
     return out
 
 
@@ -194,8 +163,15 @@ def _contract_api_surface() -> list[str]:
     def shape(name: str) -> str:
         member = getattr(funduq_contract, name)
         if inspect.isclass(member):
-            fields = getattr(member, "__dataclass_fields__", {})
-            parts = [f"{f.name}:{f.type}" for f in fields.values()]
+            model_fields = getattr(member, "model_fields", None)
+            if model_fields is not None:
+                parts = [
+                    f"{field_name}:{field.alias or field_name}"
+                    for field_name, field in model_fields.items()
+                ]
+            else:
+                fields = getattr(member, "__dataclass_fields__", {})
+                parts = [f"{f.name}:{f.type}" for f in fields.values()]
             parts += sorted(
                 f"{attr}()"
                 for attr, value in vars(member).items()
@@ -259,7 +235,7 @@ def surface() -> dict[str, Any]:
         "vectors": _vectors_surface(),
         "settings": _settings_surface(),
         "link": _link_surface(),
-        "protocol": _protocol_surface(),
+        "shapes": _shapes_surface(),
         "a2a": _a2a_surface(),
         "typing": _typing_surface(),
     }

@@ -1,6 +1,6 @@
 """What both sides of funduq agree the bytes are."""
 
-CONTRACT_REVISION = 10
+CONTRACT_REVISION = 11
 """Which revision of funduq's contract this package implements."""
 
 from funduq_contract.chain import (
@@ -26,9 +26,15 @@ from funduq_contract.payloads import (
 from funduq_contract.shapes import (
     Ack,
     Cancel,
+    Chunk,
+    Complete,
+    CompletionBody,
+    CompletionEnd,
+    CompletionFailed,
     Connect,
     ConnectErr,
     ConnectOk,
+    DeliveredCompletion,
     DeliveredRun,
     Offer,
     Refusal,
@@ -48,9 +54,15 @@ __all__ = [
     "Ack",
     "CONTRACT_REVISION",
     "Cancel",
+    "Chunk",
+    "Complete",
+    "CompletionBody",
+    "CompletionEnd",
+    "CompletionFailed",
     "Connect",
     "ConnectErr",
     "ConnectOk",
+    "DeliveredCompletion",
     "DeliveredRun",
     "Offer",
     "Refusal",

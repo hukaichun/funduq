@@ -41,6 +41,8 @@ dependencies = [
     # AG-UI's own package rather than restated.
     "pydantic>=2.7",
     "ag-ui-protocol>=0.1",
+    # The completion shapes are OpenAI's — the types, never the client.
+    "openai>=1.50",
 ]
 
 [dependency-groups]

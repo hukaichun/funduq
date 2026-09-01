@@ -13,11 +13,11 @@ courtesy someone remembers.
 
 **The surface** is what an outside implementation would have to change its
 own code to keep up with: the vectors themselves, `CoreSettings` fields and
-whether each is required, the provider link's verbs, the link protocol's
-frames and every machine's verbs on both link kinds, the A2A protocol
-version and transport bindings, whether each package ships its PEP 561
-marker, and every public name `funduq_contract` exports with the shape it
-exports it as. Prose and internals are not in it — see `funduq/tests/contract_surface.py`, which
+whether each is required, the provider link's verbs, every crossing shape
+funduq-contract defines with its field aliases, the A2A protocol version
+and transport bindings, whether each package ships its PEP 561 marker, and
+every public name `funduq_contract` exports with the shape it exports it
+as. Prose and internals are not in it — see `funduq/tests/contract_surface.py`, which
 reads every part of it live rather than from a copy.
 
 This started before anything was published, which is the point: it is a
@@ -27,6 +27,47 @@ onwards a stranger can install a version and be wrong about it, so the
 entries below say what to change and not only what moved.
 
 ---
+
+## Revision 11 — 2026-09-02
+
+**Every crossing shape now lives in funduq-contract, defined once**, and the
+frame vocabulary, both sans-io state machines and their codec are withdrawn.
+[The provider link](provider-link.md) is the settled design this implements.
+
+If you implemented against revision 10:
+
+- **Import the shapes from `funduq_contract`**: `Connect` / `ConnectOk` /
+  `ConnectErr` (the opening exchange), `Offer` and `Verdict`, `Cancel` and
+  `Ack`, `Complete` / `Chunk` / `CompletionEnd` / `CompletionFailed`,
+  `DeliveredRun`, `DeliveredCompletion`, `Registration`, `Refusal`.
+  `funduq_provider_sdk.protocol` and `funduq_provider_sdk.llm.protocol` are
+  gone, machines and all — over a wire the provider-initiated calls are
+  plain request/response, so there is nothing left for a machine to order.
+- **`FunduqLink` changed**: `deliver` now receives the published
+  `DeliveredRun` itself (the claimed-run translation is gone, and so is
+  `offer` as a separate verb), and `cancel` is `async`, returning an
+  acknowledgement that the ask arrived — never an outcome.
+- **`ConnectedLLMProvider.complete` receives `DeliveredCompletion`**; core's
+  `CompletionRequest` and the SDK's `from_request` translation are gone.
+  A completion body is validated as OpenAI's own request shape, with
+  extension keys allowed through verbatim.
+- **`register_agents` takes `Registration` models end to end** and returns a
+  plain `{name: AgentRef}` mapping, mirroring `register_llm_providers`.
+- **The verdict vocabulary is unchanged** (accepted / declined / refused),
+  but a late answer is no longer a path: `accept_late_ack` and the
+  `answered_late` counter are gone. Missing the delivery window is breakage,
+  answered by a fresh offer of the same run.
+- **The conversation gate moved from claim to finish.** One thread has one
+  active run; the next utterance is offered when the turn ends. The only
+  bypass is a declared interjection whose named run is the thread's claimed
+  head; naming anything else is rejected at the door, and a declaration
+  whose target settles before delivery degrades to an ordinary next turn.
+- **Field-list constants are withdrawn** (`DELIVERED_RUN_FIELDS`,
+  `REGISTRATION_FIELDS`, `CONNECTED_PROVIDER_ATTRS`, `LINK_REPORT_METHODS`,
+  `LINK_QUERY_METHODS` and the llm equivalents): the models are the single
+  definition, so there is nothing left for the lists to police.
+- `funduq-contract` now depends on `pydantic`, `ag-ui-protocol` and
+  `openai` — types, never a client, and still no I/O anywhere.
 
 ## Revision 10 — 2026-08-27
 

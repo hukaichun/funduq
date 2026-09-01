@@ -1,8 +1,6 @@
 from __future__ import annotations
 
 from collections.abc import AsyncIterator
-from dataclasses import dataclass
-
 from openai.types.chat import ChatCompletionChunk
 
 from funduq_provider_sdk.llm import (
@@ -16,23 +14,21 @@ def test_delivered_completion_fields_match_contract():
     assert {"run_id", "llm_name", "body"} <= set(DeliveredCompletion.model_fields)
 
 
-@dataclass(frozen=True)
-class _AgentRefLike:
-    provider_key: str
-    name: str
+def _delivered(**overrides) -> DeliveredCompletion:
+    base = dict(
+        run_id="run_1",
+        provider_key="ab" * 32,
+        agent_name="translator",
+        body={"model": "m", "messages": []},
+        llm_name="gpt4",
+        context={"voucher": "v1"},
+        actor_chain=["jwt1", "jwt2"],
+    )
+    base.update(overrides)
+    return DeliveredCompletion(**base)
 
 
-@dataclass(frozen=True)
-class _CompletionRequestLike:
-    run_id: str
-    agent: _AgentRefLike
-    body: dict
-    llm_name: str = "gpt4"
-    context: dict | None = None
-    actor_chain: list | None = None
-
-
-async def test_inprocess_provider_hands_its_llm_a_delivered_completion():
+async def test_inprocess_provider_hands_its_llm_the_delivered_completion_untouched():
     seen: list[DeliveredCompletion] = []
 
     async def llm(delivered: DeliveredCompletion) -> AsyncIterator[ChatCompletionChunk]:
@@ -41,27 +37,11 @@ async def test_inprocess_provider_hands_its_llm_a_delivered_completion():
         yield  # pragma: no cover — makes this an async generator
 
     provider = InProcessLLMProvider(ProviderIdentity.generate(), llm)
-    request = _CompletionRequestLike(
-        run_id="run_1",
-        agent=_AgentRefLike(provider_key="ab" * 32, name="translator"),
-        body={"model": "m", "messages": []},
-        context={"voucher": "v1"},
-        actor_chain=["jwt1", "jwt2"],
-    )
+    request = _delivered()
     async for _ in provider.complete(request):
         pass
 
-    assert seen == [
-        DeliveredCompletion(
-            run_id="run_1",
-            provider_key="ab" * 32,
-            agent_name="translator",
-            body={"model": "m", "messages": []},
-            llm_name="gpt4",
-            context={"voucher": "v1"},
-            actor_chain=["jwt1", "jwt2"],
-        )
-    ]
+    assert seen == [request]
 
 
 def test_public_key_is_the_identitys_own():
@@ -69,7 +49,7 @@ def test_public_key_is_the_identitys_own():
     assert InProcessLLMProvider(identity, llm=None).public_key == identity.public_key
 
 
-async def test_any_link_gets_the_same_translation_the_in_process_one_does():
+async def test_any_link_receives_the_published_shape_itself():
     from funduq_provider_sdk.llm import FunduqLLMLink
 
     seen: list[DeliveredCompletion] = []
@@ -79,8 +59,8 @@ async def test_any_link_gets_the_same_translation_the_in_process_one_does():
         def public_key(self) -> str:
             return "abc123"
 
-        def serve(self, delivered: DeliveredCompletion) -> AsyncIterator[ChatCompletionChunk]:
-            seen.append(delivered)
+        def complete(self, request: DeliveredCompletion) -> AsyncIterator[ChatCompletionChunk]:
+            seen.append(request)
 
             async def _nothing():
                 return
@@ -88,18 +68,13 @@ async def test_any_link_gets_the_same_translation_the_in_process_one_does():
 
             return _nothing()
 
-    request = _CompletionRequestLike(
-        run_id="r-1",
-        agent=_AgentRefLike(provider_key="k", name="a"),
-        body={"model": "m", "messages": []},
-        context={"voucher": "v"},
-        actor_chain=["hop0"],
-    )
+    request = _delivered(run_id="r-1", provider_key="k", agent_name="a",
+                         context={"voucher": "v"}, actor_chain=["hop0"])
     async for _ in RecordingLink().complete(request):
         pass
 
     (delivered,) = seen
-    assert (delivered.run_id, delivered.provider_key, delivered.agent_name) == ("r-1", "k", "a")
+    assert delivered is request
     assert (delivered.context, delivered.actor_chain) == ({"voucher": "v"}, ["hop0"])
 
 
@@ -116,9 +91,7 @@ async def test_the_readme_ceiling_pattern_refuses_structurally():
         yield
 
     provider = InProcessLLMProvider(ProviderIdentity.generate(), guarded)
-    request = _CompletionRequestLike(
-        run_id="r-capped", agent=_AgentRefLike(provider_key="k", name="a"), body={}
-    )
+    request = _delivered(run_id="r-capped", provider_key="k", agent_name="a")
     for _ in range(2):
         async for _ in provider.complete(request):
             pass

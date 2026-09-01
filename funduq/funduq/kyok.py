@@ -9,7 +9,8 @@ from collections.abc import AsyncIterator
 from dataclasses import dataclass
 from typing import Any, Protocol
 
-from openai.types.chat import ChatCompletionChunk, CompletionCreateParams
+from funduq_contract import DeliveredCompletion
+from openai.types.chat import ChatCompletionChunk
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from funduq.live_roster import LiveRoster
@@ -133,22 +134,11 @@ class KyokBinding:
     actor_chain: list[str] | None = None
 
 
-@dataclass(frozen=True)
-class CompletionRequest:
-
-    run_id: str
-    agent: AgentRef
-    body: CompletionCreateParams
-    llm_name: str = ""
-    context: Any = None
-    actor_chain: list[str] | None = None
-
-
 class ConnectedLLMProvider(Protocol):
 
     public_key: str
 
-    def complete(self, request: CompletionRequest) -> AsyncIterator[ChatCompletionChunk]: ...
+    def complete(self, request: DeliveredCompletion) -> AsyncIterator[ChatCompletionChunk]: ...
 
 
 @dataclass(frozen=True)

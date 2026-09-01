@@ -7,7 +7,9 @@ from collections.abc import AsyncIterator
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, cast
 
-from openai.types.chat import ChatCompletion, ChatCompletionChunk, CompletionCreateParams
+from funduq_contract import DeliveredCompletion
+from openai.types.chat import ChatCompletion, ChatCompletionChunk
+from pydantic import ValidationError
 from openai.types.chat.chat_completion import Choice
 from openai.types.chat.chat_completion_message import ChatCompletionMessage
 from openai.types.shared import ErrorObject
@@ -19,7 +21,7 @@ from funduq.identity import (
     kyok_call_payload,
     verify_signature,
 )
-from funduq.kyok import CompletionRequest, KyokToken, verify_kyok_token
+from funduq.kyok import KyokToken, verify_kyok_token
 
 if TYPE_CHECKING:
     from funduq.core import Funduq
@@ -102,7 +104,7 @@ class KyokAdapter:
         await self._verify_caller(token, bearer, body, timestamp, signature)
 
         try:
-            payload = cast(CompletionCreateParams, json.loads(body))
+            payload = json.loads(body)
         except json.JSONDecodeError as e:
             raise KyokRejected("KYOK completion body is not valid JSON", status=400) from e
 
@@ -115,20 +117,26 @@ class KyokAdapter:
                 f"LLM provider '{binding.llm_provider}' is not attached", status=503
             )
 
+        try:
+            delivered = DeliveredCompletion(
+                run_id=token.run_id,
+                provider_key=token.agent.provider_key,
+                agent_name=token.agent.name,
+                body=payload,
+                llm_name=binding.llm_provider.name,
+                context=binding.context,
+                actor_chain=binding.actor_chain,
+            )
+        except ValidationError as e:
+            raise KyokRejected(
+                f"KYOK completion body is not a chat-completion request: {e}", status=400
+            ) from e
+
         return CompletionRelay(
             stream_requested=bool(payload.get("stream")),
             chunks=self._counted(
                 binding.llm_provider.provider_key,
-                link.complete(
-                    CompletionRequest(
-                        run_id=token.run_id,
-                        agent=token.agent,
-                        body=payload,
-                        llm_name=binding.llm_provider.name,
-                        context=binding.context,
-                        actor_chain=binding.actor_chain,
-                    )
-                ),
+                link.complete(delivered),
             ),
         )
 
