@@ -52,13 +52,12 @@ export FUNDUQ_DATABASE_URL=postgresql+psycopg://funduq:funduq@localhost:5433/fun
 (cd funduq && uv run pytest -v)
 ```
 
-`conftest.py` supplies a throwaway SQLite file and a test signing secret
-when the corresponding env vars are unset, so `pytest` works out of the
-box; exporting `FUNDUQ_DATABASE_URL` (and/or `FUNDUQ_TOKEN_SIGNING_SECRET`)
-overrides those defaults. Note the running server has no default for
-`FUNDUQ_TOKEN_SIGNING_SECRET` — it must be set explicitly to start funduq (an
-insecure fallback would be a real auth bypass), unlike `FUNDUQ_DATABASE_URL`,
-which defaults to a local SQLite file.
+`conftest.py` supplies a throwaway SQLite file when `FUNDUQ_DATABASE_URL`
+is unset, so `pytest` works out of the box; exporting it points the same
+suite at Postgres. That variable is the *test harness's* — core itself
+reads no environment: `CoreSettings` is constructed explicitly, and
+`token_signing_secret` has no default (an insecure fallback would be a
+real auth bypass), so whoever embeds funduq must pass one.
 
 The test suite applies `funduq/alembic/` itself (see `tests/conftest.py`'s
 `_schema` fixture) — no separate migration step needed for tests. A real

@@ -319,6 +319,9 @@ class Funduq:
         self.broker = broker or RunBroker(
             spawn=self.spawn,
             quality_tolerance=self.settings.provider_quality_tolerance,
+            unserved_timeout_seconds=self.settings.unserved_timeout_seconds,
+            deliver_timeout_seconds=self.settings.deliver_timeout_seconds,
+            undelivered_window_seconds=self.settings.undelivered_window_seconds,
         )
         self.kyok_relay = KyokRelay()
         self.broker.add_forget_listener(self.kyok_relay.discard)
