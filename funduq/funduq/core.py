@@ -437,11 +437,21 @@ class Funduq:
     ) -> dict[str, AgentRef]:
         """Publish `agents` on `connection`'s open link and serve them from it — the mirror of `register_llm_providers`."""
         public_key = connection.public_key
+
+        def declared(agent: Registration) -> Registration:
+            # The interjection declaration is derived, never the author's
+            # word: the connection answers from the agent's hook itself
+            # (in-process), or from what the remote link declared. What the
+            # caller typed in the field is overwritten either way.
+            return agent.model_copy(
+                update={"takes_interjections": connection.takes_interjections(agent.name)}
+            )
+
         registered = await self._agent_roster.register(
             connection,
             [a.name for a in agents],
             store=lambda session: repo.register_agents(
-                session, public_key, agents, provider_name=provider_name
+                session, public_key, [declared(a) for a in agents], provider_name=provider_name
             ),
         )
         return {name: AgentRef(provider_key=public_key, name=name) for name in registered}

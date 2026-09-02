@@ -10,11 +10,13 @@ from funduq_contract import DeliveredRun, Refusal
 from funduq_provider_sdk import ProviderIdentity, ProviderRuntime
 
 
-def _delivered(run_id: str, thread_id: str, *, addressed: str | None = None) -> DeliveredRun:
+def _delivered(
+    run_id: str, thread_id: str, *, addressed: str | None = None, agent: str = "a"
+) -> DeliveredRun:
     props = {"addressedRunId": addressed} if addressed else None
     return DeliveredRun(
         run_id=run_id,
-        agent_name="a",
+        agent_name=agent,
         run_input=RunAgentInput.model_validate(
             {
                 "threadId": thread_id,
@@ -124,11 +126,14 @@ async def test_an_interjection_reaches_the_hook_while_the_run_it_names_is_live()
             super().__init__()
             self.interjected: list[tuple[str, str]] = []
 
-        async def interject_stream(self, agent_name, run_input, active_run_id):
-            self.interjected.append((run_input.run_id, active_run_id))
-            ids = {"threadId": run_input.thread_id, "runId": run_input.run_id}
-            yield {"type": "RUN_STARTED", **ids}
-            yield {"type": "RUN_FINISHED", **ids}
+        def interjection_hook(self, agent_name):
+            async def hook(run_input, active_run_id):
+                self.interjected.append((run_input.run_id, active_run_id))
+                ids = {"threadId": run_input.thread_id, "runId": run_input.run_id}
+                yield {"type": "RUN_STARTED", **ids}
+                yield {"type": "RUN_FINISHED", **ids}
+
+            return hook
 
     agent = InterjectingAgent()
     runtime = ProviderRuntime(ProviderIdentity.generate(), agent)
@@ -182,5 +187,68 @@ async def test_cancelling_a_queued_run_finishes_it_without_running_it():
         agent.gate("r1").set()
         await _settled(lambda: sink.finished == ["r2", "r1"])
         assert agent.started == ["r1"], "the cancelled run never executed"
+    finally:
+        await runtime.aclose(cancel_in_flight=True)
+
+
+async def test_the_handles_hook_answers_for_both_the_card_and_the_route():
+    """One agent opts in, its neighbour does not — and the declaration, the
+    runtime's answer and the routing all read the same handle field, so no
+    combination of forgetting can make them disagree."""
+    from funduq_provider_sdk import AgentHandle, HandleProvider
+
+    gate = asyncio.Event()
+    started: list[str] = []
+    interjected: list[tuple[str, str]] = []
+
+    async def hold(run_input: RunAgentInput):
+        started.append(run_input.run_id)
+        ids = {"threadId": run_input.thread_id, "runId": run_input.run_id}
+        yield {"type": "RUN_STARTED", **ids}
+        await gate.wait()
+        yield {"type": "RUN_FINISHED", **ids}
+
+    async def hook(run_input: RunAgentInput, active_run_id: str):
+        interjected.append((run_input.run_id, active_run_id))
+        ids = {"threadId": run_input.thread_id, "runId": run_input.run_id}
+        yield {"type": "RUN_STARTED", **ids}
+        yield {"type": "RUN_FINISHED", **ids}
+
+    provider = HandleProvider(
+        [
+            AgentHandle("open-door", hold, interject_stream=hook),
+            AgentHandle("shut-door", hold),
+        ]
+    )
+    assert provider.agents["open-door"].as_registration().takes_interjections is True
+    assert provider.agents["shut-door"].as_registration().takes_interjections is False
+
+    runtime = ProviderRuntime(ProviderIdentity.generate(), provider)
+    sink = _Sink(runtime)
+    runtime.start()
+    try:
+        assert runtime.takes_interjections("open-door") is True
+        assert runtime.takes_interjections("shut-door") is False
+
+        await runtime.deliver(_delivered("r1", "t1", agent="open-door"))
+        await runtime.deliver(_delivered("r4", "t2", agent="shut-door"))
+        await _settled(lambda: sorted(started) == ["r1", "r4"])
+
+        assert (
+            await runtime.deliver(
+                _delivered("r2", "t1", addressed="r1", agent="open-door")
+            )
+            is True
+        )
+        await _settled(lambda: interjected == [("r2", "r1")])
+
+        answer = await runtime.deliver(
+            _delivered("r5", "t2", addressed="r4", agent="shut-door")
+        )
+        assert isinstance(answer, Refusal)
+        assert "shut-door" in answer.reason
+
+        gate.set()
+        await _settled(lambda: {"r1", "r2", "r4"} <= set(sink.finished))
     finally:
         await runtime.aclose(cancel_in_flight=True)

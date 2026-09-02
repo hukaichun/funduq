@@ -22,6 +22,9 @@ class _StubConnection:
 
     async def cancel(self, run_id: str) -> bool:
         return True
+
+    def takes_interjections(self, agent_name: str) -> bool:
+        return False
 async def test_a_replaced_agent_connections_cleanup_leaves_the_replacement_serving(funduq, register):
     served = await register("worker")
     key = served.identity.public_key

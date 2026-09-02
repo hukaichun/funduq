@@ -113,6 +113,9 @@ async def test_a_permanent_refusal_fails_the_run_with_the_providers_reason(brisk
 
         async def cancel(self, run_id: str) -> bool:
             return True
+
+        def takes_interjections(self, agent_name: str) -> bool:
+            return False
     link = Refuses()
     await brisk.attach_provider(link)
     await brisk.register_agents(link, [Registration(name=agent_id.name)])

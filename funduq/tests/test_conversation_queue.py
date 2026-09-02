@@ -81,11 +81,14 @@ class GateAgent:
         await self.release.wait()
         yield {"type": "RUN_FINISHED", **ids}
 
-    async def interject_stream(self, agent_name: str, run_input, active_run_id: str):
-        self.runs.append(run_input)
-        ids = {"threadId": run_input.thread_id, "runId": run_input.run_id}
-        yield {"type": "RUN_STARTED", **ids}
-        yield {"type": "RUN_FINISHED", **ids}
+    def interjection_hook(self, agent_name: str):
+        async def hook(run_input, active_run_id: str):
+            self.runs.append(run_input)
+            ids = {"threadId": run_input.thread_id, "runId": run_input.run_id}
+            yield {"type": "RUN_STARTED", **ids}
+            yield {"type": "RUN_FINISHED", **ids}
+
+        return hook
 
 
 class AskingAgent:
