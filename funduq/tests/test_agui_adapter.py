@@ -181,3 +181,31 @@ async def test_an_unknown_thread_is_empty_rather_than_an_error(funduq, serve):
     served = await serve(None, "solo")
 
     assert await served.runtime.link.thread_messages("no-such-thread") == []
+
+
+async def test_the_minted_id_rides_the_answer(funduq, serve):
+    """Thread ids are funduq-minted; the caller's own string never addresses
+    state. The real id is not hidden: it rides `RUN_STARTED.threadId` —
+    AG-UI's own field — and the stream handle carries it too."""
+    served = await serve(None, "solo")
+
+    result = await AGUIAdapter(funduq).run(served.agents["solo"], _body("my-own-thread"))
+
+    events = [event async for event in result.events]
+    assert result.thread_id != "my-own-thread"
+    assert events[0]["threadId"] == result.thread_id
+
+
+async def test_the_same_invented_id_twice_is_two_conversations(funduq, serve):
+    """The deliberate cost of funduq-minted ids: a client that invents a
+    thread id and keeps resending it gets a fresh thread every call.
+    Continuing a conversation means using the id the answer carried."""
+    served = await serve(None, "solo")
+    adapter = AGUIAdapter(funduq)
+
+    first = await adapter.run(served.agents["solo"], _body("my-own-thread"))
+    async for _ in first.events:
+        pass
+    second = await adapter.run(served.agents["solo"], _body("my-own-thread"))
+
+    assert first.thread_id != second.thread_id

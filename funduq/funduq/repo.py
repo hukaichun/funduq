@@ -446,7 +446,14 @@ async def ensure_thread(
     create_if_missing: bool = False,
     head_key: str | None = None,
 ) -> str:
-    """Resolves a thread id for `agent`, creating a new thread when `thread_id` is None."""
+    """Resolves a thread id for `agent`, creating a new thread when `thread_id` is None.
+
+    Thread ids are funduq-minted, always: `create_if_missing` mints a fresh id
+    and the caller's unknown string is never adopted. A caller-chosen name that
+    addressed state would be a credential anyone can forge — two callers picking
+    the same string would share a history and a queue lane. The real protections
+    (agent binding, segment head) guard only threads funduq itself named.
+    """
     if thread_id is not None:
         existing = await get_thread(session, thread_id)
         if existing is None:
