@@ -15,6 +15,7 @@ from funduq.identity import (
     verify_cancel,
     verify_delegation,
     verify_resolution,
+    verify_view,
 )
 from funduq.kyok import KyokBinding, KyokOptIn, parse_kyok_opt_in, strip_kyok_context
 from funduq.models import AgentRef
@@ -211,6 +212,27 @@ def authorize_cancel(run: Any, metadata: dict[str, Any]) -> str | None:
         metadata.get("cancel") or {},
         run.run_id,
         {run.head_key, run.provider_key},
+        metadata.get("delegation"),
+    )
+
+
+def authorize_view(run: Any, metadata: dict[str, Any]) -> str | None:
+    """Refuses a read of a bound run that carries no view proof from one of its parties, and returns the authority that asked (`None` for an unbound run).
+
+    The read circle is wider than the act circle: every actor on the run's
+    chain may look — responsibility flowed through them — while cancel and
+    resolve stay with the head and the serving provider. An unbound run has
+    no parties to scope to and stays as public as its funduq-minted id.
+    """
+    if run.head_key is None:
+        return None
+    allowed = {run.head_key, run.provider_key}
+    if run.actor_chain:
+        allowed |= set(verify_chain(run.actor_chain).actor_public_keys)
+    return verify_view(
+        metadata.get("view") or {},
+        run.run_id,
+        allowed,
         metadata.get("delegation"),
     )
 

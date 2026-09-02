@@ -9,6 +9,7 @@ _CONNECT_FUNDUQ = "funduq-connect-funduq"
 _DELEGATE = "funduq-delegate"
 _RESOLVE = "funduq-resolve"
 _CANCEL = "funduq-cancel"
+_VIEW = "funduq-view"
 
 
 def provider_connect_payload(
@@ -41,3 +42,8 @@ def resolve_payload(run_id: str, timestamp: int) -> bytes:
 def cancel_payload(run_id: str, timestamp: int) -> bytes:
     """The bytes an authority signs to ask that a run be stopped: "I ask this run to stop, now"."""
     return f"{_CANCEL}:{run_id}:{timestamp}".encode()
+
+
+def view_payload(run_id: str, timestamp: int) -> bytes:
+    """The bytes a chain party signs to read a bound run: "I ask to see this run, now"."""
+    return f"{_VIEW}:{run_id}:{timestamp}".encode()

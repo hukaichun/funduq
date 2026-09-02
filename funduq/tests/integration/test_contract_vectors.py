@@ -7,6 +7,7 @@ from funduq.identity import (
     delegation_payload,
     cancel_payload,
     resolve_payload,
+    view_payload,
     provider_connect_payload,
     funduq_connect_payload,
     kyok_call_payload,
@@ -34,6 +35,7 @@ BUILDERS = {
     ),
     "resolution": lambda i: resolve_payload(i["run_id"], i["timestamp"]),
     "cancel": lambda i: cancel_payload(i["run_id"], i["timestamp"]),
+    "view": lambda i: view_payload(i["run_id"], i["timestamp"]),
 }
 
 
