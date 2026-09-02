@@ -140,3 +140,51 @@ async def test_the_transports_authenticated_identity_is_handed_down(
     )
 
     assert seen["presenter_key"] == "pk-of-the-hop"
+
+
+def test_every_send_configuration_field_is_either_honoured_or_deliberately_not():
+    """The configuration is the caller's requirements for the call; a field
+    nobody answers is the next #145. An upstream addition fails this
+    assertion, so it arrives as a decision to make, not as silence."""
+    fields = {f.name for f in pb.SendMessageConfiguration.DESCRIPTOR.fields}
+    HONOURED = {"return_immediately", "history_length"}
+    NOT_HONOURED = {
+        # funduq pushes nothing outward on a caller's behalf.
+        "task_push_notification_config",
+        # The door speaks text/plain only, and the card says so.
+        "accepted_output_modes",
+    }
+    assert fields == HONOURED | NOT_HONOURED
+
+
+async def test_return_immediately_is_honoured_through_the_handler(funduq, serve):
+    import asyncio
+
+    class Holding:
+        def __init__(self) -> None:
+            self.release = asyncio.Event()
+
+        async def run_stream(self, agent_name, run_input):
+            ids = {"threadId": run_input.thread_id, "runId": run_input.run_id}
+            yield {"type": "RUN_STARTED", **ids}
+            await self.release.wait()
+            yield {"type": "RUN_FINISHED", **ids}
+
+    provider = Holding()
+    served = await serve(provider, "slow")
+    handler = A2ARequestHandler(funduq, served.agents["slow"])
+    request = pb.SendMessageRequest(
+        message=pb.Message(
+            message_id="m-in", role=pb.Role.ROLE_USER, parts=[pb.Part(text="hi")]
+        ),
+        configuration=pb.SendMessageConfiguration(return_immediately=True),
+    )
+
+    async with asyncio.timeout(5):
+        task = await handler.on_message_send(request, ServerCallContext())
+
+    assert task.status.state in (
+        pb.TaskState.TASK_STATE_SUBMITTED,
+        pb.TaskState.TASK_STATE_WORKING,
+    )
+    provider.release.set()

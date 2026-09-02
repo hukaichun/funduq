@@ -339,3 +339,53 @@ async def test_the_opening_snapshot_already_carries_the_callers_message(funduq, 
         m.role == pb.Role.ROLE_USER and m.parts[0].text == "hi"
         for m in opening.history
     )
+
+
+async def test_return_immediately_answers_before_the_run_finishes(funduq, serve):
+    """The polling road: send, get a snapshot at once, poll `get_task` to a
+    terminal state. funduq's queued lane makes `submitted` a state with real
+    duration, and this is how a polling caller learns that is where its run is."""
+
+    class Holding:
+        def __init__(self) -> None:
+            self.release = asyncio.Event()
+
+        async def run_stream(self, agent_name, run_input):
+            ids = {"threadId": run_input.thread_id, "runId": run_input.run_id}
+            yield {"type": "RUN_STARTED", **ids}
+            await self.release.wait()
+            yield {"type": "RUN_FINISHED", **ids}
+
+    provider = Holding()
+    served = await serve(provider, "slow")
+    adapter = A2AAdapter(funduq)
+
+    async with asyncio.timeout(5):
+        task = await adapter.send_task(
+            served.agents["slow"], _message("hi"), return_immediately=True
+        )
+
+    assert task.status.state in (
+        pb.TaskState.TASK_STATE_SUBMITTED,
+        pb.TaskState.TASK_STATE_WORKING,
+    )
+    assert any(m.parts[0].text == "hi" for m in task.history)
+
+    provider.release.set()
+    async with asyncio.timeout(5):
+        while True:
+            got = await adapter.get_task(served.agents["slow"], task.id)
+            if got.status.state == pb.TaskState.TASK_STATE_COMPLETED:
+                break
+            await asyncio.sleep(0.02)
+
+
+async def test_history_length_keeps_the_last_messages(funduq, callee):
+    adapter = A2AAdapter(funduq)
+    sent = await adapter.send_task(callee, _message("hi"))
+    assert len(sent.history) >= 2, "one exchange stores at least two messages"
+
+    trimmed = await adapter.get_task(callee, sent.id, history_length=1)
+
+    assert len(trimmed.history) == 1
+    assert trimmed.history[0].role == pb.Role.ROLE_AGENT
