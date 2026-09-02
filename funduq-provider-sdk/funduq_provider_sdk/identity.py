@@ -66,10 +66,9 @@ class ProviderIdentity:
         )
 
 
-    def sign_resolution(self, run_id: str, timestamp: int | None = None) -> tuple[str, int]:
-        """Signs the resolution of a paused run: `(signature, timestamp)` over `resolve_payload(run_id, timestamp)`."""
-        timestamp = int(time.time()) if timestamp is None else timestamp
-        return self.sign(resolve_payload(run_id, timestamp)), timestamp
+    def sign_resolution(self, run_id: str, ask_ids: list[str]) -> str:
+        """Signs the resolution of a paused run over `resolve_payload(run_id, ask_ids)` — `ask_ids` is everything the run said it was waiting on, and the signature is good for exactly that ask and no other."""
+        return self.sign(resolve_payload(run_id, ask_ids))
 
     def sign_cancel(self, run_id: str, timestamp: int | None = None) -> tuple[str, int]:
         """Signs a request that a run be stopped: `(signature, timestamp)` over `cancel_payload(run_id, timestamp)`."""

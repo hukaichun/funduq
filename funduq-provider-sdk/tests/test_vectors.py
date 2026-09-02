@@ -22,7 +22,7 @@ BUILDERS = {
         i["funduq_public_key"], i["funduq_nonce"], i["provider_nonce"]
     ),
     "funduq-connect": lambda i: funduq_connect_payload(i["funduq_nonce"], i["provider_nonce"]),
-    "resolution": lambda i: resolve_payload(i["run_id"], i["timestamp"]),
+    "resolution": lambda i: resolve_payload(i["run_id"], i["ask_ids"]),
     "cancel": lambda i: cancel_payload(i["run_id"], i["timestamp"]),
 }
 

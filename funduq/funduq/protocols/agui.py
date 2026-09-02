@@ -103,7 +103,11 @@ class AGUIAdapter:
                 thread_id=thread_id,
                 entrance="result" if is_result else "utterance",
                 ask=(
-                    PendingAsk(run_id=paused["run_id"], head_key=paused.get("head_key"))
+                    PendingAsk(
+                        run_id=paused["run_id"],
+                        head_key=paused.get("head_key"),
+                        ask_ids=frozenset(outstanding),
+                    )
                     if paused is not None and is_result
                     else None
                 ),

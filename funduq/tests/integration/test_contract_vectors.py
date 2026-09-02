@@ -29,7 +29,7 @@ BUILDERS = {
     "kyok-call": lambda i: kyok_call_payload(
         i["bearer"], i["timestamp"], i["body_sha256_hex"]
     ),
-    "resolution": lambda i: resolve_payload(i["run_id"], i["timestamp"]),
+    "resolution": lambda i: resolve_payload(i["run_id"], i["ask_ids"]),
     "cancel": lambda i: cancel_payload(i["run_id"], i["timestamp"]),
     "view": lambda i: view_payload(i["run_id"], i["timestamp"]),
 }

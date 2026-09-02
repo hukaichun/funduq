@@ -59,7 +59,7 @@ def test_no_two_acts_produce_the_same_bytes():
         provider_connect_payload("fk", "n1", "n2"),
         funduq_connect_payload("n1", "n2"),
         kyok_call_payload("bearer", 1, "hash"),
-        resolve_payload("run", 1),
+        resolve_payload("run", ["tc_1"]),
         cancel_payload("run", 1),
     ]
     prefixes = [p.split(b":", 1)[0] for p in payloads]
@@ -73,9 +73,11 @@ def test_the_same_arguments_always_give_the_same_bytes():
     read from the environment. An implementation in another language can
     reproduce them from the vectors alone, which it could not if anything here
     varied per call."""
-    assert resolve_payload("run", 1) == resolve_payload("run", 1)
-    assert resolve_payload("run", 1) != resolve_payload("run", 2)
-    assert resolve_payload("run", 1) != resolve_payload("other", 1)
+    assert resolve_payload("run", ["b", "a"]) == resolve_payload("run", ["a", "b"]), (
+        "the asks are a set; order of presentation is not part of the instance"
+    )
+    assert resolve_payload("run", ["a"]) != resolve_payload("run", ["a", "b"])
+    assert resolve_payload("run", ["a"]) != resolve_payload("other", ["a"])
 
 
 def test_a_chain_links_and_reports_both_of_its_ends():
@@ -324,7 +326,7 @@ def test_verify_signature_answers_false_instead_of_raising():
     wrong key, malformed hex — so they get the same answer. An exception for
     one of them would invite it being handled differently by accident."""
     key = _key()
-    payload = resolve_payload("run", 1)
+    payload = resolve_payload("run", ["int_1"])
     signature = key.sign(payload).hex()
 
     assert verify_signature(_hex(key), signature, payload)

@@ -80,11 +80,33 @@ def _verify_signed_act(
     return signer
 
 
-def verify_resolution(resolution: dict, run_id: str, allowed_keys: set[str]) -> str:
-    """Verifies a resolution proof for a paused run and returns the signer."""
-    return _verify_signed_act(
-        resolution, run_id, resolve_payload, allowed_keys, InvalidResolution, "resolve",
-    )
+def verify_resolution(
+    resolution: dict, run_id: str, ask_ids: set[str], allowed_keys: set[str]
+) -> str:
+    """Verifies a resolution proof for a paused run and returns the signer.
+
+    Resolve is not in the timestamp family: the signature binds the exact
+    asks being answered (`ask_ids`, the run's outstanding interrupt /
+    tool-call ids), so the proof is single-purpose by construction — a
+    later pause has new ids — and carries no time. Both sides derive the
+    signed bytes from the same set via `resolve_payload`.
+    """
+    try:
+        signer = resolution["publicKey"]
+        signature = resolution["signature"]
+    except (KeyError, TypeError) as e:
+        raise InvalidResolution(f"malformed resolve proof: {e}") from e
+    if signer not in allowed_keys:
+        raise InvalidResolution(
+            "the signer is not an authority for this run — neither its "
+            "segment head nor its provider (cannot resolve it)"
+        )
+    if not verify_signature(signer, signature, resolve_payload(run_id, ask_ids)):
+        raise InvalidResolution(
+            "resolve signature does not verify — it must sign this run's "
+            "outstanding asks, exactly"
+        )
+    return signer
 
 
 def verify_cancel(cancel: dict, run_id: str, allowed_keys: set[str]) -> str:

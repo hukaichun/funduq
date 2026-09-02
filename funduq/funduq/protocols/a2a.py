@@ -40,6 +40,7 @@ from funduq.errors import (
     ThreadOwnershipMismatch,
 )
 from funduq.identity import InvalidView, verify_resolution
+from funduq.pause import outstanding_asks
 from funduq.props import ADDRESSED_RUN_METADATA_KEY
 from funduq.models import AgentRef
 from funduq.protocols.a2a_translate import (
@@ -340,10 +341,12 @@ class A2AAdapter:
                 and addressed.status == "input-required"
                 and addressed.head_key is not None
             ):
-                # A chained ask names its authorities; the resolution must be signed by one of them.
+                # A chained ask names its authorities; the resolution must be
+                # signed by one of them, over exactly the asks still open.
                 answered_by = verify_resolution(
                     metadata.get("resolution") or {},
                     task_id,
+                    outstanding_asks(addressed.metadata or {}),
                     {addressed.head_key, agent.provider_key},
                 )
             reopened = (

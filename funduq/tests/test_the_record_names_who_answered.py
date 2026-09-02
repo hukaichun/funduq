@@ -58,13 +58,11 @@ async def _observed(funduq, run_id: str) -> dict:
     return (run.metadata or {}).get(OBSERVED_METADATA_KEY) or {}
 
 
-def _answer(identity, run_id: str) -> dict:
-    signature, timestamp = identity.sign_resolution(run_id)
+def _answer(identity, run_id: str, ask_ids: tuple[str, ...] = ("int_1",)) -> dict:
     return {
         "resolution": {
             "publicKey": identity.public_key,
-            "timestamp": timestamp,
-            "signature": signature,
+            "signature": identity.sign_resolution(run_id, ask_ids),
         }
     }
 
@@ -132,13 +130,45 @@ async def test_two_answers_are_two_entries_in_order(funduq, serve, new_identity)
         agent,
         _message("two", task_id=first.id),
         actor_chain=[keeper.sign_chain_hop()],
-        metadata=_answer(keeper, first.id),
+        metadata=_answer(keeper, first.id, ("int_2",)),
     )
 
     assert (await _observed(funduq, first.id))["answeredBy"] == [
         head.public_key,
         keeper.public_key,
     ]
+
+
+async def test_an_old_proof_does_not_answer_a_new_ask(funduq, serve, new_identity):
+    """The signature binds the exact asks being answered, so a proof observed
+    in flight is worthless against the next pause: the run asks again with
+    new ids, and the old signature does not cover them. This is what replaced
+    the freshness window for resolve — instance binding instead of a clock."""
+    served = await serve(_PausesTwice(), "asks-again")
+    agent = served.agents["asks-again"]
+    head = new_identity()
+
+    first = await A2AAdapter(funduq).send_task(
+        agent, _message("go"), actor_chain=[head.sign_chain_hop()]
+    )
+    stolen = _answer(head, first.id)  # signs the first ask, "int_1"
+    await A2AAdapter(funduq).send_task(
+        agent,
+        _message("one", task_id=first.id),
+        actor_chain=[head.sign_chain_hop()],
+        metadata=stolen,
+    )
+
+    # The run paused again ("int_2"); replaying the first proof is refused.
+    from funduq.identity import InvalidResolution
+
+    with pytest.raises(InvalidResolution):
+        await A2AAdapter(funduq).send_task(
+            agent,
+            _message("replayed", task_id=first.id),
+            actor_chain=[head.sign_chain_hop()],
+            metadata=stolen,
+        )
 
 
 async def test_an_unbound_run_names_nobody(funduq, serve):
