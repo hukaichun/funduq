@@ -33,10 +33,16 @@ entries below say what to change and not only what moved.
 **The broker's three waits are `CoreSettings` fields** (the last live item
 of #181's adopter review). `unserved_timeout_seconds` (45.0),
 `deliver_timeout_seconds` (5.0) and `undelivered_window_seconds` (1800.0)
-join settings — reachable through `FUNDUQ_*` environment variables like any
-other — and `RunBroker`'s keyword defaults are the same single definitions,
-so a broker built bare and one built by `Funduq` agree. Defaults unchanged;
-an embedder that never touches them sees no difference.
+join settings, and `RunBroker`'s keyword defaults are the same single
+definitions, so a broker built bare and one built by `Funduq` agree.
+Defaults unchanged; an embedder that never touches them sees no difference.
+
+**`CoreSettings.from_env` is removed**, and with it the `FUNDUQ_*`
+environment surface. Configuration is an argument: core reads no
+environment at all, and a deployment that keeps configuration there reads
+it itself and constructs `CoreSettings` with the values. An embedder that
+called `from_env` now writes that read out — the test suite's own
+`conftest.py` is the pattern.
 
 ## Revision 13 — 2026-09-04
 

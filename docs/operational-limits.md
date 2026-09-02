@@ -148,8 +148,8 @@ eventually built on.
 
 ## The broker's three waits are settings
 
-`CoreSettings` fields, reachable through the environment like any other
-(`FUNDUQ_DELIVER_TIMEOUT_SECONDS` and so on):
+`CoreSettings` fields, told to funduq the way everything else is — an
+explicit constructor argument, never the environment (core reads none):
 
 | | default | what it bounds |
 |---|---|---|
