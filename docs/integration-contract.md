@@ -36,8 +36,9 @@ inference funduq makes. The largest opt-in is the responsibility chain:
 a thread whose first run carries an actor chain binds the chain's head
 at birth — thereafter only the head or the serving provider may write
 to it, and a paused ask on a chained run is answered only with a
-signature from those keys (`metadata.resolution`, the
-`funduq-resolve:{run_id}:{timestamp}` payload), and **stopping one of
+signature from those keys (`metadata.resolution`, signed over the run's
+outstanding ask ids via the `funduq-resolve` payload — good for exactly
+that ask and no other), and **stopping one of
 its runs takes the same authority** (`metadata.cancel`, the
 `funduq-cancel:{run_id}:{timestamp}` payload — A2A's `CancelTaskRequest`
 carries `metadata` even though it carries no message, so a standard

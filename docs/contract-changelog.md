@@ -28,6 +28,33 @@ entries below say what to change and not only what moved.
 
 ---
 
+## Revision 16 — 2026-09-03
+
+**A resolve proof signs the ask it answers** (#236). `resolve_payload`
+takes the paused run's outstanding ask ids (its interrupt / tool-call
+ids) instead of a timestamp; the signed bytes are
+`funduq-resolve:{run_id}:{sha256 of the ids, sorted and NUL-joined}`,
+with canonicalization inside the builder and nowhere else. The wire
+proof shrinks to `{publicKey, signature}` — no timestamp rides in it and
+**the 60-second freshness window no longer applies to resolve**, because
+instance binding replaces the clock: a later pause has new ids, so the
+proof never verifies against any ask but the one it was signed for, and
+replay against that ask is consumed by the status-guarded reopen.
+
+Why this and not a content hash: message-content integrity is the
+channel's job everywhere in this system (utterances carry no signature
+at all), so signing one message kind's content would buy an inconsistent
+guarantee at the price of cross-transport canonicalization. Binding the
+*instance* is the authorization-level fix, and ids are opaque strings —
+nothing to canonicalize but order.
+
+Migration: a signer now signs what it is answering —
+`sign_resolution(run_id, ask_ids)` in the provider SDK, where `ask_ids`
+is everything the pause said it was waiting on. Cancel and view are
+unchanged (still the timestamp family). Resolve was the one act where
+replay changed what happened; it is now the one act that cannot be
+replayed at all.
+
 ## Revision 15 — 2026-09-03
 
 **The session delegation certificate is removed** (#237). `delegation_payload`

@@ -181,10 +181,12 @@ async def dispatch(
 
 @dataclass(frozen=True)
 class PendingAsk:
-    """The paused run a result would land on, and the key authorized to answer it."""
+    """The paused run a result would land on, the key authorized to answer it,
+    and the outstanding ask ids a resolution proof must sign."""
 
     run_id: str
     head_key: str | None
+    ask_ids: frozenset[str] = frozenset()
 
 
 @dataclass(frozen=True)
@@ -248,6 +250,7 @@ async def open_run(
             answered_by = verify_resolution(
                 metadata.get("resolution") or {},
                 ask.run_id,
+                set(ask.ask_ids),
                 {ask.head_key, agent.provider_key},
             )
         if await repo.reopen_run(

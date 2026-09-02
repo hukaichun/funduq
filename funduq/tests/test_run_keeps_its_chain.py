@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-import time
-
 import jwt
 
 from funduq import repo
@@ -116,7 +114,6 @@ async def test_a_resume_does_not_replace_the_chain_the_run_was_opened_under(
     [_ async for _ in handle.events()]
     await _until(lambda: handle.run_id not in funduq.active_runs())
 
-    timestamp = int(time.time())
     resumed = await funduq.resume_run(
         handle.run_id,
         {
@@ -127,8 +124,7 @@ async def test_a_resume_does_not_replace_the_chain_the_run_was_opened_under(
             "actorChain": [answerer.sign_chain_hop()],
             "resolution": {
                 "publicKey": caller.public_key,
-                "timestamp": timestamp,
-                "signature": caller.sign(resolve_payload(handle.run_id, timestamp)),
+                "signature": caller.sign(resolve_payload(handle.run_id, ["int_1"])),
             },
         },
         presenter_key=answerer.public_key,
@@ -181,7 +177,7 @@ async def test_the_agent_sees_the_same_chain_on_every_round(funduq, serve, new_i
     first = await A2AAdapter(funduq).send_task(
         agent, _message("go"), actor_chain=[head.sign_chain_hop()]
     )
-    signature, timestamp = keeper.sign_resolution(first.id)
+    signature = keeper.sign_resolution(first.id, ["int_1"])
     await A2AAdapter(funduq).send_task(
         agent,
         _message("the provider answers its own ask", task_id=first.id),
@@ -189,7 +185,6 @@ async def test_the_agent_sees_the_same_chain_on_every_round(funduq, serve, new_i
         metadata={
             "resolution": {
                 "publicKey": keeper.public_key,
-                "timestamp": timestamp,
                 "signature": signature,
             }
         },
@@ -247,7 +242,6 @@ async def test_the_agui_door_relays_the_runs_chain_on_a_resume_too(funduq, serve
     [_ async for _ in first.events]
     await _until(lambda: first.run_id not in funduq.active_runs())
 
-    timestamp = int(time.time())
     answered = await adapter.run(
         agent,
         _body(
@@ -259,8 +253,7 @@ async def test_the_agui_door_relays_the_runs_chain_on_a_resume_too(funduq, serve
                 "actorChain": [keeper.sign_chain_hop()],
                 "resolution": {
                     "publicKey": keeper.public_key,
-                    "timestamp": timestamp,
-                    "signature": keeper.sign(resolve_payload(first.run_id, timestamp)),
+                    "signature": keeper.sign(resolve_payload(first.run_id, ["int_1"])),
                 },
             },
             resume=[ResumeEntry.model_validate(

@@ -57,6 +57,7 @@ from funduq.identity import (
     verify_signature,
 )
 from funduq.kyok import ConnectedLLMProvider, KyokRelay
+from funduq.pause import outstanding_asks
 from funduq.models import AgentRecord, AgentRef, AgentSummary, LlmRef, LlmSummary, RunRecord
 
 logger = logging.getLogger("funduq.core")
@@ -832,7 +833,11 @@ class Funduq:
                 agent=agent,
                 thread_id=stored.thread_id,
                 entrance="result",
-                ask=PendingAsk(run_id=run_id, head_key=stored.head_key),
+                ask=PendingAsk(
+                    run_id=run_id,
+                    head_key=stored.head_key,
+                    ask_ids=frozenset(outstanding_asks(stored.metadata or {})),
+                ),
                 run_input=run_input,
                 metadata=caller_metadata,
                 head_key=head_key,
