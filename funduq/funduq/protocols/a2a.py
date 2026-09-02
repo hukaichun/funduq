@@ -130,13 +130,15 @@ class A2AAdapter:
         actor_chain: list[str] | None = None,
         metadata: dict[str, Any] | None = None,
         presenter_key: str | None = None,
+        return_immediately: bool = False,
+        history_length: int | None = None,
     ) -> pb.Task:
-        """Sends `message` to `agent` as a new (or continuing, via `context_id`/`task_id`) A2A task, waits for it to settle, and returns the resulting `Task`."""
+        """Sends `message` to `agent` as a new (or continuing, via `context_id`/`task_id`) A2A task, waits for it to settle, and returns the resulting `Task`. With `return_immediately` it answers with the Task as it stands instead — funduq's queued lane makes `submitted` a state with real duration, and this is how a polling caller learns that is where its run is."""
         with _in_a2as_words():
             run_id, thread_id, is_live = await self._start_run(
                 agent, _params(message, actor_chain, metadata), presenter_key=presenter_key
             )
-        if is_live and self._funduq.broker.get(run_id) is not None:
+        if not return_immediately and is_live and self._funduq.broker.get(run_id) is not None:
             async for _ in self._funduq.broker.subscribe(run_id):
                 pass
         stored = await self._funduq.get_run(run_id)
@@ -146,6 +148,8 @@ class A2AAdapter:
             await self._display_name(agent),
             stored.status if stored else "completed",
             await self._funduq.get_run_events(run_id),
+            thread_messages=await self._funduq.get_thread_messages(thread_id),
+            history_length=history_length,
         )
 
     async def send_task_streaming(
@@ -173,6 +177,7 @@ class A2AAdapter:
                 await self._display_name(agent),
                 stored.status if stored else "queued",
                 [],
+                thread_messages=await self._funduq.get_thread_messages(thread_id),
             )
             if not live:
                 status = stored.status if stored else "completed"
@@ -200,6 +205,7 @@ class A2AAdapter:
             await self._display_name(agent),
             run.status,
             await self._funduq.get_run_events(task_id),
+            thread_messages=await self._funduq.get_thread_messages(thread_id),
         )
 
         async def results() -> AsyncIterator[Event]:
@@ -217,7 +223,9 @@ class A2AAdapter:
 
         return results()
 
-    async def get_task(self, agent: AgentRef, task_id: str) -> pb.Task | None:
+    async def get_task(
+        self, agent: AgentRef, task_id: str, *, history_length: int | None = None
+    ) -> pb.Task | None:
         """Returns the current `Task` for `task_id`, or None if it doesn't belong to `agent`."""
         run = await self._run_of(agent, task_id)
         if run is None:
@@ -228,6 +236,8 @@ class A2AAdapter:
             await self._display_name(agent),
             run.status,
             await self._funduq.get_run_events(task_id),
+            thread_messages=await self._funduq.get_thread_messages(run.thread_id),
+            history_length=history_length,
         )
 
     async def cancel_task(
@@ -252,6 +262,7 @@ class A2AAdapter:
             await self._display_name(agent),
             current.status,
             await self._funduq.get_run_events(task_id),
+            thread_messages=await self._funduq.get_thread_messages(run.thread_id),
             cancel_requested=asked,
         )
 
@@ -396,12 +407,17 @@ class A2ARequestHandler(RequestHandler):
     async def on_message_send(
         self, params: pb.SendMessageRequest, context: ServerCallContext
     ) -> pb.Task:
+        # Of the configuration's four fields, two are honoured here and two
+        # deliberately not — the stance is pinned by
+        # test_every_send_configuration_field_is_either_honoured_or_deliberately_not.
         wire = MessageToDict(params)
         return await self._adapter.send_task(
             self._agent,
             wire.get("message", {}),
             metadata=wire.get("metadata"),
             presenter_key=self._presenter_key(context),
+            return_immediately=params.configuration.return_immediately,
+            history_length=params.configuration.history_length or None,
         )
 
     @validate_request_params
@@ -422,7 +438,9 @@ class A2ARequestHandler(RequestHandler):
     async def on_get_task(
         self, params: pb.GetTaskRequest, context: ServerCallContext
     ) -> pb.Task | None:
-        return await self._adapter.get_task(self._agent, params.id)
+        return await self._adapter.get_task(
+            self._agent, params.id, history_length=params.history_length or None
+        )
 
     @validate_request_params
     async def on_cancel_task(
