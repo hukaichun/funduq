@@ -512,8 +512,10 @@ dispute-resolution policy。〔Pagnia & Gärtner, TUD-BS-1999-02, 1999〕
 
 **第二個實例,而且它才是主證。** 一個暫停的 run 被回答時,簽名要對上
 `{ask.head_key, agent.provider_key}`——**只有該段的 head(或正在服務的
-供應方)能回答那個暫停**;取消走同一條路。〔`doors.py:294-301, 341-346`;
-`test_pause_resume.py`、`test_responsibility_chains.py`〕這是同一條規則的
+供應方)能回答那個暫停**;取消走同一條路。〔`doors.open_run` →
+`identity.verify_resolution`、`doors.authorize_cancel` →
+`identity.verify_cancel`;`test_pause_resume.py`、
+`test_responsibility_chains.py`〕這是同一條規則的
 實作,而且不帶任何實驗性標註。
 
 > **論文裡要誠實寫的**:KYOK 那個實例是實驗性的,作為「疊加可行」的示範

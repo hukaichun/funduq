@@ -125,7 +125,9 @@ document of record，而那份文件落後於它描述的東西——**沒有任
 - **為什麼錯**：對照程式碼後，機制頁上的東西幾乎都在——thread 出生綁 head
   （`repo.py` `ThreadMembershipRequired`）、回答與取消都要授權集合裡的簽名
   （`verify_resolution` / `verify_cancel`）、delegation certificate
-  （`verify_delegation`）、extend/break 是動作不是欄位。**37 個測試在測那個
+  （`verify_delegation`；〔2026-09-03 註〕這一項其後於 funduq#238 被**刻意
+  移除**——授權是 policy——所以它今天不在不是這條退回去，是設計又走了一步）、
+  extend/break 是動作不是欄位。**37 個測試在測那個
   「沒有實作」的機制。** 真正缺的只有 voucher，而機制頁本來就寫它是
   deployment 自己的 IdP 才做得到的揭露。
 - **方向值得注意**：前十三條都是把自己講得太滿，這一條是**把自己講得太扁**。

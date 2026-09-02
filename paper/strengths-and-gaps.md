@@ -395,13 +395,16 @@ chains 那一列寫成 **not implemented — design record only**，於是這條
 | thread 出生時綁 head，其後只有 head 或服務它的 provider 可寫 | `repo.py` `head_key` + `ThreadMembershipRequired` |
 | 回答 paused ask 需要授權集合裡的簽名 | `doors.open_run` → `identity.verify_resolution` |
 | 停止一個 run 要同一份權威 | `doors.authorize_cancel` → `identity.verify_cancel` |
-| session delegation certificate 把權利掛回耐久金鑰 | `identity.verify_delegation` |
+| ~~session delegation certificate 把權利掛回耐久金鑰~~ | **已於 2026-09-02 隨 funduq#238 移除**——授權是 policy，policy 歸 wire 側；權利直接由耐久金鑰簽 |
 | extend 是動作、break 是不動作（沒有欄位） | `extend_chain`，break 即不呼叫 |
 | 責任在 run 出生時定下、resume 不更換 | `repo.reopen_run` 不碰 `head_key` / `actor_chain` |
 
-**測試數**：`test_responsibility_chains.py` 13、`test_presenter_check.py` 7、
-`test_in_process_delegation.py` 9、`test_delegation_chain.py` 5、
-`test_run_keeps_its_chain.py` 3 —— **37 個測試在測那個「沒有實作」的機制**。
+**測試數（2026-09-03 重數）**：`test_responsibility_chains.py` 12、
+`test_presenter_check.py` 7、`test_in_process_delegation.py` 9、
+`test_delegation_chain.py` 5、`test_run_keeps_its_chain.py` 5 ——
+**38 個測試在測那個「沒有實作」的機制**。（`test_delegation_chain.py` 與
+`test_in_process_delegation.py` 名字帶 delegation，測的是活著的 actor chain
+`extend_chain`/`verify_chain`，不是被移除的 certificate——不要因名字誤刪。）
 
 **真正沒實作的只有 voucher**（把金鑰翻譯成人），而機制頁本來就寫它是
 deployment 自己的 IdP 才做得到的揭露。
