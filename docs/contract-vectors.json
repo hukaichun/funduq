@@ -1,7 +1,7 @@
 {
  "contract": {
-  "revision": 14,
-  "fingerprint": "sha256:02e23dc98b7956f79d4356d2539a041984861a157aea08c2287bf4d5bc4a7dc7",
+  "revision": 15,
+  "fingerprint": "sha256:68fcbfe125f4886b6d85f943362fc84dcdbc143b1fd297927d7d1220573458db",
   "note": "The revision an external implementation is written against, and a hash of the surface it depends on — the vectors below, plus what the contract_surface helper reads live from the code (CoreSettings fields and whether each is required, the provider link's verbs, every crossing shape funduq-contract defines, the A2A protocol's frames and every machine's verbs on both link kinds, the A2A protocol version and transport bindings, whether each package ships its PEP 561 marker, and every public name funduq_contract exports with the shape it exports it as). Prose (`note` and `comment` at any depth) is excluded, so rewording an explanation is not a contract change. A test recomputes the hash and fails when it differs from this one, so a contract change cannot land without bumping `revision` and adding a line to docs/contract-changelog.md. The fingerprint is not itself a compatibility statement: read the changelog to learn what moved."
  },
  "comment": "Authoritative byte-level vectors for the payloads funduq verifies signatures over. funduq's own test suites consume this file, so it cannot drift from the implementation; an external implementation in any language replays it: build each payload from `inputs`, assert the exact `payload_utf8` bytes, and check `signature_hex` verifies (or, since Ed25519 is deterministic, reproduce it) under the published test key. The test key is for vectors only — never accept it in a real deployment.",
@@ -43,16 +43,6 @@
    },
    "payload_utf8": "funduq-connect-funduq:b7b7b7b7b7b7b7b7b7b7b7b7b7b7b7b7:c9c9c9c9c9c9c9c9c9c9c9c9c9c9c9c9",
    "signature_hex": "52eb6a978325e7da8a67844eece4a801f85c0a4eaea0e692830ad277353efe64da3b8dba45e2bc10107ba3a447798144d6af606aa710e0bf15496d5781536d0e"
-  },
-  {
-   "kind": "delegation",
-   "note": "the session delegation certificate's signed bytes: a durable key (here the test key) names an ephemeral delegate key and an expiry. Wire form: {authorityPublicKey, delegatePublicKey, expiresAt, signature} verified by funduq.identity.verify_delegation. The certificate alone moves nothing without the delegate's own private key, so it is safe to store and relay. expires_at is far-future so the vector stays valid.",
-   "inputs": {
-    "delegate_public_key": "805440ee48051fc82ea64d905acabff0d21780f7fcaba6900e0e41387b1d4a57",
-    "expires_at": 9999999999
-   },
-   "payload_utf8": "funduq-delegate:805440ee48051fc82ea64d905acabff0d21780f7fcaba6900e0e41387b1d4a57:9999999999",
-   "signature_hex": "5cdc463a0c1a59333b565f4f41df7a76cb8d3982ab04a95e4bdc0d94833275d79c848270e05c9017d9ed13fb2f449d1568142b748b1a6905e60f5b42a1b6b100"
   },
   {
    "kind": "resolution",

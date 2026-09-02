@@ -4,7 +4,6 @@ import json
 from pathlib import Path
 
 from funduq.identity import (
-    delegation_payload,
     cancel_payload,
     resolve_payload,
     view_payload,
@@ -29,9 +28,6 @@ BUILDERS = {
     "funduq-connect": lambda i: funduq_connect_payload(i["funduq_nonce"], i["provider_nonce"]),
     "kyok-call": lambda i: kyok_call_payload(
         i["bearer"], i["timestamp"], i["body_sha256_hex"]
-    ),
-    "delegation": lambda i: delegation_payload(
-        i["delegate_public_key"], i["expires_at"]
     ),
     "resolution": lambda i: resolve_payload(i["run_id"], i["timestamp"]),
     "cancel": lambda i: cancel_payload(i["run_id"], i["timestamp"]),

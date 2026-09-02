@@ -28,7 +28,29 @@ entries below say what to change and not only what moved.
 
 ---
 
-## Revision 14 — 2026-09-04
+## Revision 15 — 2026-09-03
+
+**The session delegation certificate is removed** (#237). `delegation_payload`
+leaves `funduq_contract` (the `funduq-delegate` tag with it), `sign_delegation`
+leaves the provider SDK, and core no longer reads `metadata.delegation`
+anywhere: a chain's head is the key that signed hop zero, a
+cancel/resolve/view proof counts for exactly the key that signed it, and
+nothing is relayed under `forwardedProps.delegation` any more.
+
+Why: this repo does no wire, and the wire side is where policy lives.
+Everything else in core's identity machinery records facts and demands
+proof from the keys those facts name; the certificate was the one piece
+that *manufactured* authority ("B counts as A until T") — an unscoped
+grant, which is policy, and any delegation policy is implementable
+entirely at the authenticating seat, which holds the keys and decides
+which one signs. Nothing in any production flow ever issued one.
+
+An external implementation that sent `metadata.delegation` must now sign
+with the durable key directly (or have its gateway do so). One that never
+sent it changes nothing. The dead `SESSION_TOKEN_TTL_SECONDS` constant
+left `funduq.identity` in the same sweep.
+
+## Revision 14 — 2026-09-02
 
 **The broker's three waits are `CoreSettings` fields** (the last live item
 of #181's adopter review). `unserved_timeout_seconds` (45.0),

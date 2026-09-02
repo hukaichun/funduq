@@ -6,7 +6,6 @@ from __future__ import annotations
 _KYOK_CALL = "funduq-kyok-call"
 _CONNECT_PROVIDER = "funduq-connect-provider"
 _CONNECT_FUNDUQ = "funduq-connect-funduq"
-_DELEGATE = "funduq-delegate"
 _RESOLVE = "funduq-resolve"
 _CANCEL = "funduq-cancel"
 _VIEW = "funduq-view"
@@ -27,11 +26,6 @@ def funduq_connect_payload(funduq_nonce: str, provider_nonce: str) -> bytes:
 def kyok_call_payload(bearer: str, timestamp: int, body_hash: str) -> bytes:
     """The bytes an agent provider signs to prove it made a given KYOK completion call."""
     return f"{_KYOK_CALL}:{bearer}:{timestamp}:{body_hash}".encode()
-
-
-def delegation_payload(delegate_public_key: str, expires_at: int) -> bytes:
-    """The bytes a durable key signs to name a session key: "SK acts for me until T"."""
-    return f"{_DELEGATE}:{delegate_public_key}:{expires_at}".encode()
 
 
 def resolve_payload(run_id: str, timestamp: int) -> bytes:

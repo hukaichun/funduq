@@ -345,7 +345,6 @@ class A2AAdapter:
                     metadata.get("resolution") or {},
                     task_id,
                     {addressed.head_key, agent.provider_key},
-                    metadata.get("delegation"),
                 )
             reopened = (
                 addressed is not None
@@ -429,7 +428,7 @@ class A2ARequestHandler(RequestHandler):
         self._presenter_key_of = presenter_key_of
         # A2A's read requests carry no caller data, so a view proof for a
         # bound run rides the transport (a header, typically); this hook is
-        # where the transport hands it down as `{"view": …, "delegation": …}`.
+        # where the transport hands it down as `{"view": …}`.
         self._view_metadata_of = view_metadata_of
 
     def _presenter_key(self, context: ServerCallContext) -> str | None:
