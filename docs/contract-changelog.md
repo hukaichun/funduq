@@ -28,6 +28,16 @@ entries below say what to change and not only what moved.
 
 ---
 
+## Revision 14 — 2026-09-04
+
+**The broker's three waits are `CoreSettings` fields** (the last live item
+of #181's adopter review). `unserved_timeout_seconds` (45.0),
+`deliver_timeout_seconds` (5.0) and `undelivered_window_seconds` (1800.0)
+join settings — reachable through `FUNDUQ_*` environment variables like any
+other — and `RunBroker`'s keyword defaults are the same single definitions,
+so a broker built bare and one built by `Funduq` agree. Defaults unchanged;
+an embedder that never touches them sees no difference.
+
 ## Revision 13 — 2026-09-04
 
 **Reading a bound run requires a view proof** (closes #148's exposure).

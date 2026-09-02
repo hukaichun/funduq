@@ -25,6 +25,11 @@ from ag_ui.core import RunAgentInput
 from funduq_contract import DeliveredRun
 from pydantic import ValidationError
 
+from funduq.config import (
+    DELIVER_TIMEOUT_SECONDS,
+    UNDELIVERED_WINDOW_SECONDS,
+    UNSERVED_TIMEOUT_SECONDS,
+)
 from funduq.live_roster import LiveRoster
 from funduq.models import AgentRef
 
@@ -211,9 +216,9 @@ class RunBroker:
         spawn=None,
         *,
         sweep_interval_seconds: float = 1.0,
-        unserved_timeout_seconds: float = 45.0,
-        deliver_timeout_seconds: float = 5.0,
-        undelivered_window_seconds: float = 1800.0,
+        unserved_timeout_seconds: float = UNSERVED_TIMEOUT_SECONDS,
+        deliver_timeout_seconds: float = DELIVER_TIMEOUT_SECONDS,
+        undelivered_window_seconds: float = UNDELIVERED_WINDOW_SECONDS,
         quality_tolerance: int | None = None,
     ) -> None:
         self._spawn = spawn or self._spawn_unsupervised

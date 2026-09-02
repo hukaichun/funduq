@@ -91,3 +91,38 @@ def test_funduq_cannot_be_built_without_being_told():
     site said so, which is the whole objection."""
     with pytest.raises(TypeError):
         Funduq()
+
+
+def test_the_brokers_waits_are_settings_and_reach_the_broker():
+    """The three waits are embedder policy: set in `CoreSettings` (or its
+    environment mirror), they must arrive on the broker `Funduq` builds."""
+    from funduq.config import CoreSettings
+    from funduq.core import Funduq
+
+    settings = CoreSettings.from_env(
+        {
+            "FUNDUQ_TOKEN_SIGNING_SECRET": "s",
+            "FUNDUQ_IDENTITY_PRIVATE_KEY": "a" * 64,
+            "FUNDUQ_DELIVER_TIMEOUT_SECONDS": "0.5",
+            "FUNDUQ_UNSERVED_TIMEOUT_SECONDS": "9",
+            "FUNDUQ_UNDELIVERED_WINDOW_SECONDS": "60",
+        }
+    )
+    funduq = Funduq(settings)
+
+    assert funduq.broker.deliver_timeout_seconds == 0.5
+    assert funduq.broker.unserved_timeout_seconds == 9.0
+    assert funduq.broker.undelivered_window_seconds == 60.0
+
+
+def test_a_bare_broker_and_a_settings_built_one_agree_on_the_defaults():
+    """One definition: `RunBroker()`'s keyword defaults are the same names
+    `CoreSettings` carries, so nothing has to be kept in sync by hand."""
+    from funduq.broker import RunBroker
+    from funduq.config import CoreSettings
+
+    bare = RunBroker()
+    fields = CoreSettings.model_fields
+    assert bare.deliver_timeout_seconds == fields["deliver_timeout_seconds"].default
+    assert bare.unserved_timeout_seconds == fields["unserved_timeout_seconds"].default
+    assert bare.undelivered_window_seconds == fields["undelivered_window_seconds"].default

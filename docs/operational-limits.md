@@ -146,10 +146,10 @@ forever, because nothing keys off a node being gone.
 Those eight are the requirements list for the scaling work, whatever it is
 eventually built on.
 
-## Timing an embedder cannot reach
+## The broker's three waits are settings
 
-Three of the broker's timings are constructor keyword arguments rather than
-`CoreSettings` fields:
+`CoreSettings` fields, reachable through the environment like any other
+(`FUNDUQ_DELIVER_TIMEOUT_SECONDS` and so on):
 
 | | default | what it bounds |
 |---|---|---|
@@ -157,12 +157,6 @@ Three of the broker's timings are constructor keyword arguments rather than
 | `unserved_timeout_seconds` | 45.0 | how long a run stays queued with nobody serving it |
 | `undelivered_window_seconds` | 1800.0 | the window in the section above |
 
-They cannot be set through settings or the environment. Changing one means
-constructing `RunBroker` yourself and passing it to `Funduq(broker=...)`.
-That is a defect rather than a design — these are policy, the way
-`provider_quality_tolerance` is policy — and it is on the list to fix.
-
-Unlike the identity-layer timings funduq has been shedding, these cannot
-simply be removed: they model real waiting, and detecting a provider that
-has stopped answering needs a clock. The fix is to move them out to the
-embedder, not to delete them.
+They model real waiting — detecting a provider that has stopped answering
+needs a clock — so they are embedder policy, the way
+`provider_quality_tolerance` is, rather than something funduq could shed.
