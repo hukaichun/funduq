@@ -311,5 +311,7 @@ state。A2A 講不出來的那些有一個具名的去處
 a2a-python 也持有一個空隙，四題的答案卻是相反的：消費點在上一個 `execute()`
 返回之後，所以插話結構上不可能。接上 `DefaultRequestHandler` ＋
 `AgentExecutor` ＋ `ActiveTask` 那一疊，等於默默改採那一組答案，而且不會有
-任何東西變紅。要用的是 `RequestHandler` 這個**介面**（在下游實作），不是它
-的迴圈持有者。
+任何東西變紅。要用的是 `RequestHandler` 這個**介面**（core 以
+`A2ARequestHandler` 實作它，轉發給 adapter；transport 把套件自己的
+dispatcher 掛上來，要支援到哪個 spec 版本、哪些 binding 是 transport 的決
+定），不是它的迴圈持有者。

@@ -51,6 +51,12 @@ ALLOWED_MODULE_PREFIXES = {
     # KYOK's wire shapes are OpenAI chat-completions; the types package
     # imports no client.
     "openai.types",
+    # The `RequestHandler` ABC is the protocol's operation surface: pure
+    # signatures over pb types, and importing it loads no transport module
+    # (checked: starlette stays unimported). Its siblings stay forbidden —
+    # `DefaultRequestHandler` is a loop holder whose gap answers are not
+    # funduq's, and the response helpers are envelope I/O.
+    "a2a.server.request_handlers.request_handler",
 }
 
 

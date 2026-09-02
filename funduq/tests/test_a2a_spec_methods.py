@@ -10,7 +10,8 @@ client regardless of what it declared, and answered v0.3's names with v1.0's
 shapes — which a v0.3 client rejects outright.
 
 A transport mounts `a2a.server.routes.jsonrpc_dispatcher.JsonRpcDispatcher`
-over a `RequestHandler` that forwards to this adapter, and gets the names,
+over `A2ARequestHandler` — the `RequestHandler` that forwards to this
+adapter, exercised in `test_a2a_request_handler.py` — and gets the names,
 the envelopes, the error codes and the version negotiation from the package
 that defines them. What stays here is what funduq actually decides, and one
 conformance test so a spec change lands as a red test in this repo rather
