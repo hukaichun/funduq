@@ -157,7 +157,11 @@ funduq 把 cancel 記成請求、只記錄觀察到的結果——**同一側**�
 
 ### A8 我們已經有一個「只記錄不評斷」的實作示範
 
-`docs/mechanisms/quality.md`（**已實作**：`live_roster.py` 計數器）：
+原出處 `docs/mechanisms/quality.md` 已隨 `5503c91` 刪除；引文釘在
+[歷史](https://github.com/hukaichun/funduq/blob/c3bbc5c65fa0ced3520d2858c94fd9fed70a81ab/docs/mechanisms/quality.md)。
+**實作仍在，而且是行為證據**：`broker.quality()` / `kyok.quality()`、
+`live_roster.py` 的 per-identity 計數器——而 code 裡**沒有任何東西讀這些
+計數器來做決定**，這就是 judge nothing 的可驗形式（引文原文）：
 
 > What funduq does instead of verifying is count what it then observes, per
 > provider, and **judge nothing**… funduq attaches **no consequence** to any
@@ -284,8 +288,10 @@ action」不成立。論文可以主張 broker 位置與責任路徑，**不可�
 
 ### B1【必須先決定】`input-required` 的路由與 failure 歸屬，是同一個 bit 還是兩個？
 
-**現況**：`docs/design-records.md`「One question per delegation edge decides
-the whole tree」用的是**故障容忍**測試（*if the sub agent gets stuck or
+**現況**：design-records「One question per delegation edge decides
+the whole tree」（頁面已隨 `5503c91` 刪除，引文釘在
+[歷史](https://github.com/hukaichun/funduq/blob/c3bbc5c65fa0ced3520d2858c94fd9fed70a81ab/docs/design-records.md)）
+用的是**故障容忍**測試（*if the sub agent gets stuck or
 fails, can I carry on without it?* Yes → break，且為預設）。兩模式模型用的是
 **身分**測試（我是代理還是資源擁有者？）。
 
@@ -331,7 +337,12 @@ fails, can I carry on without it?* Yes → break，且為預設）。兩模式�
 
 ### B3【B5 的下游症狀，不是獨立項目】rule zero 的解法是責任鏈本身
 
-**設計記錄現在寫的**（`docs/design-records.md` → Open contradictions）：
+**活文件現在寫的**（原出處 design-records 已隨 `5503c91` 刪除、引文釘在
+[歷史](https://github.com/hukaichun/funduq/blob/c3bbc5c65fa0ced3520d2858c94fd9fed70a81ab/docs/design-records.md)；
+**同一個主張搬進了 `docs/integration-contract.md` 的「Current gaps, stated
+plainly」，逐字**：「Who may do so is gated by nothing more than knowing the
+id… (a recorded contradiction, not a position). When A2A v1.1's
+`elicitationId` lands, **that is the marker this interim rule yields to**」）：
 
 > Answering a paused A2A task rides `taskId`… knowing a task id is enough to
 > answer someone else's paused question. **That is the interim marker until
@@ -344,8 +355,10 @@ clients **never required** to set it；servers **MAY** ignore it；servers
 **MUST NOT** reject a message solely because it is absent or unknown。
 它是**關聯提示，不是授權權杖**。
 
-**第二重（更重要）**：指望外部依賴，而內部的解法早就寫在自己的機制文件裡。
-`docs/mechanisms/responsibility-chains.md`：
+**第二重（更重要）**：指望外部依賴，而內部的解法不只寫了，**已經實作**
+（bound thread 的回答走 `identity.verify_resolution`、rev 16 起簽 ask
+實例）。機制頁原文（頁面已隨 `5503c91` 刪除，引文釘在
+[歷史](https://github.com/hukaichun/funduq/blob/c3bbc5c65fa0ced3520d2858c94fd9fed70a81ab/docs/mechanisms/responsibility-chains.md)）：
 
 > **Identifiers are never credentials: knowing a thread id is not what
 > entitles a party to resume it.**
@@ -359,8 +372,9 @@ clients **never required** to set it；servers **MAY** ignore it；servers
 **所以 B3 不是獨立項目，是 B5 的症狀**：上游是責任鏈的實作，不是 A2A 的
 版本進度。
 
-**唯一該獨立做的動作**：把設計記錄那句改掉，指向責任鏈而不是 `elicitationId`
-（單獨 PR，不混進論文分支）。
+**唯一該獨立做的動作（2026-09-03 更新目標）**：design-records 沒了，但那句
+話活在 `docs/integration-contract.md`——把「yields to `elicitationId`」改成
+指向責任鏈（單獨 PR，不混進論文分支）。
 
 ---
 
@@ -420,17 +434,32 @@ deployment 自己的 IdP 才做得到的揭露。
 
 ---
 
-### B6 rule zero 目前與程式碼矛盾
+### B6 rule zero 與程式碼的矛盾【2026-09-03 對 main 重推：證據搬家，矛盾縮小】
 
-`docs/design-records.md` 自承：`thread_id` 今天**就是**憑證——
-「the de facto resume credential is knowledge of `thread_id`」，而且
+**原證據**：design-records 自承 `thread_id` 今天**就是**憑證——
+「the de facto resume credential is knowledge of `thread_id`」、
 「Answering a paused A2A task rides `taskId`, so this contradiction now has
-**money and authority** behind it rather than just read access」。
+**money and authority** behind it rather than just read access」。該頁已隨
+`5503c91` 刪除（引文釘在
+[歷史](https://github.com/hukaichun/funduq/blob/c3bbc5c65fa0ced3520d2858c94fd9fed70a81ab/docs/design-records.md)）——
+但**自承沒有消失，搬進了活文件**：`docs/integration-contract.md`「Current
+gaps, stated plainly」逐字寫著「Who may do so is gated by **nothing more
+than knowing the id**, the same capability-by-identifier trust every thread
+reference carries today (**a recorded contradiction, not a position**)」。
 
-**為什麼重要**：rule zero 是 A3 差異化的支柱之一。論文若把它當既成事實寫，
-會與自己的 repo 矛盾——正是 CLAUDE.md 警告的那種「文件說一套、程式碼另一套」。
+**對 2026-09-03 的 main 重推，矛盾只剩 unbound 路徑**：綁了 chain 的
+thread，寫入限 head/provider（`ThreadMembershipRequired`）、回答 pause 要
+`identity.verify_resolution`（contract rev 16 起簽 ask 實例，proof 對別的
+ask 永不驗過）、cancel 要 `verify_cancel`——rule zero 在 opt-in 之處是
+**實作了的**（38 tests）。沒綁 chain 的 thread 維持 open behavior，
+`taskId` 依然是 de facto 憑證。funduq#238 又拆掉了 delegation certificate
+（製造權力的憑證＝policy，歸 wire 側），方向一致。
 
-**動作**：論文裡必須標成 designed-not-implemented，或先修。
+**動作（取代原來的二選一）**：**不必**標 designed-not-implemented，也不必
+「先修」。誠實的寫法：identifiers-never-credentials 是 **opt-in 機制的
+性質**——鏈在，識別子就不是憑證；鏈不在，開放行為是**被記錄的預設**
+（契約文件自己標明 recorded contradiction），不是被忽略的洞。B6 於是不再
+undercut A3：record-only 的中介對不 opt-in 的呼叫方本來就無權利可給。
 
 ---
 

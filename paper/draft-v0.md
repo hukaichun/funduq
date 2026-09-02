@@ -413,8 +413,9 @@ per-edge 的旗標,因為沒有東西需要旗標來表示。**
 
 > **圖 1 在下面,三格。** 這是全篇唯一一張圖,而 §5 沒有它幾乎讀不懂。
 > 這裡畫成 ASCII 是為了在草稿裡讀得到;定稿時轉 TikZ,三格保持三格。
-> 同一張圖的 mermaid 版本在 `docs/mechanisms/responsibility-chains.md`
-> 的 "Why a witness"。
+> 同一張圖的 mermaid 版本在被 `5503c91` 刪除的機制頁 "Why a witness"
+> 一節,釘在[歷史](https://github.com/hukaichun/funduq/blob/c3bbc5c65fa0ced3520d2858c94fd9fed70a81ab/docs/mechanisms/responsibility-chains.md)。
+> 下面的 ASCII 是唯一在樹裡的版本,以它為準。
 
 ```
 圖 1  為什麼兩方之間分不開,見證者補上什麼,以及它補不到哪裡
