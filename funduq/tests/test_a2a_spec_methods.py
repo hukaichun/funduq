@@ -309,3 +309,33 @@ async def test_cancelling_a_paused_task_is_refused_in_the_same_words(funduq, ser
     # And the ask it was still holding is untouched: refusing a cancel must
     # not be a way to settle a run funduq has observed nothing about.
     assert (await funduq.get_run(paused.id)).status == "input-required"
+
+
+async def test_the_task_carries_the_conversation_as_history(funduq, callee):
+    """A2A's Task travels with its conversation; funduq holds the thread's
+    messages and the Task now says so — user messages as ROLE_USER, the
+    agent's replies as ROLE_AGENT."""
+    adapter = A2AAdapter(funduq)
+    sent = await adapter.send_task(callee, _message("hi"))
+
+    got = await adapter.get_task(callee, sent.id)
+
+    spoken = [(m.role, m.parts[0].text) for m in got.history]
+    assert (pb.Role.ROLE_USER, "hi") in spoken
+    assert any(role == pb.Role.ROLE_AGENT for role, _ in spoken)
+    assert all(m.context_id == got.context_id for m in got.history)
+
+
+async def test_the_opening_snapshot_already_carries_the_callers_message(funduq, callee):
+    """Inbound messages are persisted at the door, before any provider runs —
+    so the stream's opening Task can already show the caller what the thread
+    holds."""
+    stream = await A2AAdapter(funduq).send_task_streaming(callee, _message("hi"))
+
+    events = [event async for event in stream]
+
+    opening = events[0]
+    assert any(
+        m.role == pb.Role.ROLE_USER and m.parts[0].text == "hi"
+        for m in opening.history
+    )

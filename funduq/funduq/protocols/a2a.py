@@ -146,6 +146,7 @@ class A2AAdapter:
             await self._display_name(agent),
             stored.status if stored else "completed",
             await self._funduq.get_run_events(run_id),
+            thread_messages=await self._funduq.get_thread_messages(thread_id),
         )
 
     async def send_task_streaming(
@@ -173,6 +174,7 @@ class A2AAdapter:
                 await self._display_name(agent),
                 stored.status if stored else "queued",
                 [],
+                thread_messages=await self._funduq.get_thread_messages(thread_id),
             )
             if not live:
                 status = stored.status if stored else "completed"
@@ -200,6 +202,7 @@ class A2AAdapter:
             await self._display_name(agent),
             run.status,
             await self._funduq.get_run_events(task_id),
+            thread_messages=await self._funduq.get_thread_messages(thread_id),
         )
 
         async def results() -> AsyncIterator[Event]:
@@ -228,6 +231,7 @@ class A2AAdapter:
             await self._display_name(agent),
             run.status,
             await self._funduq.get_run_events(task_id),
+            thread_messages=await self._funduq.get_thread_messages(run.thread_id),
         )
 
     async def cancel_task(
@@ -252,6 +256,7 @@ class A2AAdapter:
             await self._display_name(agent),
             current.status,
             await self._funduq.get_run_events(task_id),
+            thread_messages=await self._funduq.get_thread_messages(run.thread_id),
             cancel_requested=asked,
         )
 

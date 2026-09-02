@@ -157,6 +157,23 @@ def _status_update(
     return update
 
 
+def history_of(
+    thread_messages: list[dict[str, Any]], context_id: str, *, limit: int | None = None
+) -> list[pb.Message]:
+    """The Task's `history`: each stored user/assistant thread message becomes one A2A `Message` — the reverse of `a2a_message_to_agui_messages`. Other roles are funduq-internal machinery, not the conversation, and stay out. `limit` keeps the last N after that filter."""
+    history = [
+        pb.Message(
+            message_id=str(message.get("id") or ""),
+            context_id=context_id,
+            role=pb.Role.ROLE_AGENT if message.get("role") == "assistant" else pb.Role.ROLE_USER,
+            parts=[pb.Part(text=str(message.get("content") or ""))],
+        )
+        for message in thread_messages
+        if message.get("role") in ("user", "assistant")
+    ]
+    return history[-limit:] if limit else history
+
+
 def build_task(
     task_id: str,
     context_id: str,
@@ -164,9 +181,11 @@ def build_task(
     run_status: str,
     run_events: list[dict[str, Any]],
     *,
+    thread_messages: list[dict[str, Any]] | None = None,
+    history_length: int | None = None,
     cancel_requested: bool = False,
 ) -> pb.Task:
-    """Builds an A2A `Task` from a run's stored status and event history, merging each message's text-content deltas (in event order) into one artifact per `messageId`, and carrying every unmapped event, in order, under `metadata.agui_events`."""
+    """Builds an A2A `Task` from a run's stored status and event history, merging each message's text-content deltas (in event order) into one artifact per `messageId`, filling `history` from the thread's stored messages, and carrying every unmapped event, in order, under `metadata.agui_events`."""
     merged: dict[str, list[str]] = {}
     overflow: list[dict[str, Any]] = []
     for event in run_events:
@@ -181,6 +200,7 @@ def build_task(
         id=task_id,
         context_id=context_id,
         status=pb.TaskStatus(state=state_for_run_status(run_status)),
+        history=history_of(thread_messages or [], context_id, limit=history_length),
         artifacts=[
             pb.Artifact(artifact_id=artifact_id, parts=[pb.Part(text="".join(chunks))])
             for artifact_id, chunks in merged.items()
