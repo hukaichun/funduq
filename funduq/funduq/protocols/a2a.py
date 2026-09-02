@@ -2,15 +2,25 @@ from __future__ import annotations
 
 import contextlib
 import logging
-from collections.abc import AsyncIterator
+from collections.abc import AsyncGenerator, AsyncIterator, Callable
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
+from a2a.server.context import ServerCallContext
 from a2a.server.events import Event
+from a2a.server.request_handlers.request_handler import (
+    RequestHandler,
+    validate_request_params,
+)
 from a2a.types import a2a_pb2 as pb
 from a2a.utils.constants import PROTOCOL_VERSION_CURRENT, TransportProtocol
-from a2a.utils.errors import InvalidParamsError, TaskNotCancelableError, TaskNotFoundError
-from google.protobuf.json_format import ParseDict, ParseError
+from a2a.utils.errors import (
+    InvalidParamsError,
+    TaskNotCancelableError,
+    TaskNotFoundError,
+    UnsupportedOperationError,
+)
+from google.protobuf.json_format import MessageToDict, ParseDict, ParseError
 
 from funduq import repo
 from funduq.doors import InboundRun, dispatch, relayed_chain, resolve_kyok, verify_caller
@@ -352,6 +362,126 @@ class A2AAdapter:
             )
 
         return run_id, thread_id, live
+
+
+class A2ARequestHandler(RequestHandler):
+    """The A2A door as `a2a.server`'s own `RequestHandler`, bound to one agent.
+
+    How far to support the protocol is the transport's decision, not funduq's:
+    it mounts the package's dispatchers for whichever bindings and spec
+    versions it chooses to serve, and method names, envelopes, error codes and
+    version negotiation all come from the package that defines them. Every
+    choice arrives here as the same protobuf-typed calls, forwarded to
+    `A2AAdapter`. What funduq decides is which operations are offered — the
+    six that are not answer `UnsupportedOperationError`.
+    """
+
+    def __init__(
+        self,
+        funduq: "Funduq",
+        agent: AgentRef,
+        *,
+        presenter_key_of: Callable[[ServerCallContext], str | None] | None = None,
+    ) -> None:
+        self._adapter = A2AAdapter(funduq)
+        self._agent = agent
+        # The transport is the party that authenticates whoever presents a
+        # request; this hook is where it hands that identity down.
+        self._presenter_key_of = presenter_key_of
+
+    def _presenter_key(self, context: ServerCallContext) -> str | None:
+        return self._presenter_key_of(context) if self._presenter_key_of else None
+
+    @validate_request_params
+    async def on_message_send(
+        self, params: pb.SendMessageRequest, context: ServerCallContext
+    ) -> pb.Task:
+        wire = MessageToDict(params)
+        return await self._adapter.send_task(
+            self._agent,
+            wire.get("message", {}),
+            metadata=wire.get("metadata"),
+            presenter_key=self._presenter_key(context),
+        )
+
+    @validate_request_params
+    async def on_message_send_stream(
+        self, params: pb.SendMessageRequest, context: ServerCallContext
+    ) -> AsyncGenerator[Event]:
+        wire = MessageToDict(params)
+        stream = await self._adapter.send_task_streaming(
+            self._agent,
+            wire.get("message", {}),
+            metadata=wire.get("metadata"),
+            presenter_key=self._presenter_key(context),
+        )
+        async for event in stream:
+            yield event
+
+    @validate_request_params
+    async def on_get_task(
+        self, params: pb.GetTaskRequest, context: ServerCallContext
+    ) -> pb.Task | None:
+        return await self._adapter.get_task(self._agent, params.id)
+
+    @validate_request_params
+    async def on_cancel_task(
+        self, params: pb.CancelTaskRequest, context: ServerCallContext
+    ) -> pb.Task | None:
+        wire = MessageToDict(params)
+        return await self._adapter.cancel_task(
+            self._agent, params.id, metadata=wire.get("metadata")
+        )
+
+    @validate_request_params
+    async def on_subscribe_to_task(
+        self, params: pb.SubscribeToTaskRequest, context: ServerCallContext
+    ) -> AsyncGenerator[Event]:
+        stream = await self._adapter.resubscribe_task(self._agent, params.id)
+        async for event in stream:
+            yield event
+
+    # Push notifications: funduq pushes nothing outward on a caller's behalf.
+
+    async def on_create_task_push_notification_config(
+        self, params: pb.TaskPushNotificationConfig, context: ServerCallContext
+    ) -> pb.TaskPushNotificationConfig:
+        raise UnsupportedOperationError(_PUSHES_NOTHING)
+
+    async def on_get_task_push_notification_config(
+        self, params: pb.GetTaskPushNotificationConfigRequest, context: ServerCallContext
+    ) -> pb.TaskPushNotificationConfig:
+        raise UnsupportedOperationError(_PUSHES_NOTHING)
+
+    async def on_list_task_push_notification_configs(
+        self,
+        params: pb.ListTaskPushNotificationConfigsRequest,
+        context: ServerCallContext,
+    ) -> pb.ListTaskPushNotificationConfigsResponse:
+        raise UnsupportedOperationError(_PUSHES_NOTHING)
+
+    async def on_delete_task_push_notification_config(
+        self,
+        params: pb.DeleteTaskPushNotificationConfigRequest,
+        context: ServerCallContext,
+    ) -> None:
+        raise UnsupportedOperationError(_PUSHES_NOTHING)
+
+    # Listing tasks and the extended card are the transport's to answer if it
+    # wants them; core exposes the roster its own way.
+
+    async def on_list_tasks(
+        self, params: pb.ListTasksRequest, context: ServerCallContext
+    ) -> pb.ListTasksResponse:
+        raise UnsupportedOperationError("listing tasks is not offered through the A2A door")
+
+    async def on_get_extended_agent_card(
+        self, params: pb.GetExtendedAgentCardRequest, context: ServerCallContext
+    ) -> pb.AgentCard:
+        raise UnsupportedOperationError("funduq has no extended agent card")
+
+
+_PUSHES_NOTHING = "funduq pushes nothing outward on a caller's behalf"
 
 
 def _skills(raw_skills: list[dict[str, Any]]) -> list[pb.AgentSkill]:
