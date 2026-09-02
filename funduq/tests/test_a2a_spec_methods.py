@@ -389,3 +389,19 @@ async def test_history_length_keeps_the_last_messages(funduq, callee):
 
     assert len(trimmed.history) == 1
     assert trimmed.history[0].role == pb.Role.ROLE_AGENT
+
+
+async def test_an_unknown_context_id_is_a2as_own_error_not_a_new_thread(funduq, callee):
+    """Thread ids are funduq-minted on both doors; a caller's own string
+    never addresses state. The doors differ only in what an unknown id can
+    mean: A2A's contextId is optional, so omitting it already says "new
+    conversation" and a present-but-unknown id can only be a mistake. AG-UI's
+    thread_id is required — an unseen id is the only way that protocol can
+    say "new" — so its door mints a fresh thread instead (see
+    test_agui_adapter.py)."""
+    from a2a.utils.errors import InvalidParamsError
+
+    with pytest.raises(InvalidParamsError):
+        await A2AAdapter(funduq).send_task(
+            callee, {**_message("hi"), "contextId": "ctx-invented"}
+        )
