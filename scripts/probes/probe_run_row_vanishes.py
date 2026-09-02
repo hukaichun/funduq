@@ -83,6 +83,9 @@ class _Taker:
 
     async def cancel(self, run_id: str) -> bool:
         return True
+
+    def takes_interjections(self, agent_name: str) -> bool:
+        return False
     def sign_connect(
         self, funduq_public_key: str, funduq_nonce: str, provider_nonce: str
     ) -> str:

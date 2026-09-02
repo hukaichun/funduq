@@ -24,6 +24,9 @@ class _Stub:
 
     async def cancel(self, run_id: str) -> bool:
         return True
+
+    def takes_interjections(self, agent_name: str) -> bool:
+        return False
 class _Forged(_Stub):
     """Claims one identity's public key while holding a different private key."""
 

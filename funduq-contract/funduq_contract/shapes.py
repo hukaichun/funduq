@@ -32,8 +32,10 @@ class Registration(Shape):
     description: str = ""
     agent_card_extra: dict[str, Any] = Field(default_factory=dict, alias="agentCardExtra")
     metadata: dict[str, Any] = Field(default_factory=dict)
-    # Derived from the runtime's interjection hook, never typed by an author,
+    # Derived from the agent's own interjection hook — funduq reads it off
+    # the link at registration and overwrites whatever an author typed here —
     # so the agent card can say it without anyone being able to lie in it.
+    # On the wire it carries what the remote SDK derived.
     takes_interjections: bool = Field(default=False, alias="takesInterjections")
 
 

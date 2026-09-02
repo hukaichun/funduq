@@ -88,14 +88,17 @@ leaving the envelope to them standardizes nothing away.
   run settles before delivery, the run degrades into the thread's ordinary
   next turn — queued and offered like any other, its declaration carried
   verbatim but no longer naming anything live.
-- **Taking interjections is an opt-in.** A run whose declaration names the
-  thread's currently active run goes to the runtime's interjection hook; a
-  provider without the hook refuses it, so the caller learns the agent
-  cannot be interrupted. A declaration naming anything else is handled as an
-  ordinary run, hook or no hook. The capability is discoverable: the runtime
-  derives it from the hook's presence, the registration carries it, and the
-  agent card announces it in A2A's own extension slot — a declaration of
-  understanding, never a promise to accept.
+- **Taking interjections is an opt-in, per agent.** A run whose declaration
+  names the thread's currently active run goes to that agent's interjection
+  hook; an agent without one refuses it, so the caller learns it cannot be
+  interrupted. A declaration naming anything else is handled as an ordinary
+  run, hook or no hook. The capability is discoverable and never the
+  author's word: funduq asks the link at registration, the link answers
+  from the hook itself, and the agent card announces it in A2A's own
+  extension slot — a declaration of understanding, never a promise to
+  accept. The answer is a snapshot: changing hooks after registering
+  changes nothing until a re-registration re-declares, the same rule
+  capacity follows.
 - **Events flow up as report/finish keyed by run id**: ordered within a run,
   unordered across runs.
 - **Cancel is a request, not a command.** The run ends when the provider

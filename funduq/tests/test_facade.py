@@ -145,6 +145,9 @@ class StubbornProvider:
     async def cancel(self, run_id: str) -> bool:
         self.asked_to_stop.append(run_id)
         return True
+
+    def takes_interjections(self, agent_name: str) -> bool:
+        return False
 async def test_a_worker_that_ignores_the_cancel_still_completes(funduq, new_identity):
     identity = new_identity()
     registration = await _register_with_token(funduq, "stubborn", identity)

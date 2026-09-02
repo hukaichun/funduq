@@ -46,6 +46,10 @@ class InProcessLink(FunduqLink):
     def max_concurrent_runs(self) -> int | None:
         return self._runtime.max_concurrent_runs
 
+    def takes_interjections(self, agent_name: str) -> bool:
+        """Answered from the agent's hook itself; funduq reads this at registration so the card's declaration is derived, never the author's word."""
+        return self._runtime.takes_interjections(agent_name)
+
     def sign_connect(
         self, funduq_public_key: str, funduq_nonce: str, provider_nonce: str
     ) -> str:

@@ -101,7 +101,10 @@ async def test_re_registering_replaces_what_the_handle_now_says(funduq, new_iden
     assert stored["skills"] == SKILLS[:1]
 
 
-async def test_a_provider_with_the_hook_declares_interjections_on_its_card(funduq, serve):
+async def test_an_agent_with_the_hook_declares_interjections_on_its_card(funduq, serve):
+    """Nobody types the declaration anywhere in this test: the hook sits on
+    the agent, the link answers for it at registration, and the card carries
+    the answer."""
     from funduq.props import INTERJECTION_EXTENSION_URI
     from funduq.protocols.a2a import A2AAdapter
 
@@ -111,31 +114,42 @@ async def test_a_provider_with_the_hook_declares_interjections_on_its_card(fundu
             yield {"type": "RUN_STARTED", **ids}
             yield {"type": "RUN_FINISHED", **ids}
 
-        async def interject_stream(self, agent_name, run_input, active_run_id):
-            ids = {"threadId": run_input.thread_id, "runId": run_input.run_id}
-            yield {"type": "RUN_STARTED", **ids}
-            yield {"type": "RUN_FINISHED", **ids}
+        def interjection_hook(self, agent_name):
+            async def hook(run_input, active_run_id):
+                ids = {"threadId": run_input.thread_id, "runId": run_input.run_id}
+                yield {"type": "RUN_STARTED", **ids}
+                yield {"type": "RUN_FINISHED", **ids}
 
-    provider = Interjecting()
-    served = await serve(provider, "interruptible")
-    assert served.runtime.takes_interjections is True
+            return hook
 
-    # Re-publish with the declaration the runtime derives, as a serving layer would.
-    await funduq.register_agents(
-        served.link,
-        [Registration(name="interruptible", takes_interjections=served.runtime.takes_interjections)],
-    )
+    served = await serve(Interjecting(), "interruptible")
+    assert served.runtime.takes_interjections("interruptible") is True
 
     card = await A2AAdapter(funduq).agent_card(served.agents["interruptible"])
     assert INTERJECTION_EXTENSION_URI in [e.uri for e in card.capabilities.extensions]
 
 
-async def test_a_provider_without_the_hook_declares_nothing(funduq, serve):
+async def test_an_authors_claim_in_the_registration_is_overwritten(funduq, serve):
+    """The field exists on the wire shape, but funduq answers it from the
+    link — an author typing True for a hookless agent gets a truthful card."""
+    from funduq.props import INTERJECTION_EXTENSION_URI
+    from funduq.protocols.a2a import A2AAdapter
+
+    served = await serve(None, "boaster")
+    await funduq.register_agents(
+        served.link, [Registration(name="boaster", takes_interjections=True)]
+    )
+
+    card = await A2AAdapter(funduq).agent_card(served.agents["boaster"])
+    assert INTERJECTION_EXTENSION_URI not in [e.uri for e in card.capabilities.extensions]
+
+
+async def test_an_agent_without_the_hook_declares_nothing(funduq, serve):
     from funduq.props import INTERJECTION_EXTENSION_URI
     from funduq.protocols.a2a import A2AAdapter
 
     served = await serve(None, "plain-speaker")
-    assert served.runtime.takes_interjections is False
+    assert served.runtime.takes_interjections("plain-speaker") is False
 
     card = await A2AAdapter(funduq).agent_card(served.agents["plain-speaker"])
     assert INTERJECTION_EXTENSION_URI not in [e.uri for e in card.capabilities.extensions]

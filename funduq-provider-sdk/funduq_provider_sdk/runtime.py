@@ -37,7 +37,7 @@ class _Lane:
 
 
 class ProviderRuntime:
-    """Runs a `Provider`'s agents locally, one active run per thread by construction: accepted runs queue on their thread's lane, execute one at a time, and stream events back through `link`. An interjection — a run addressed to the lane's active run — goes to the provider's `interject_stream` hook instead, or is refused if the provider has none."""
+    """Runs a `Provider`'s agents locally, one active run per thread by construction: accepted runs queue on their thread's lane, execute one at a time, and stream events back through `link`. An interjection — a run addressed to the lane's active run — goes to the agent's interjection hook instead, or is refused if the agent has none."""
 
     def __init__(
         self,
@@ -66,10 +66,14 @@ class ProviderRuntime:
     def public_key(self) -> str:
         return self.identity.public_key
 
-    @property
-    def takes_interjections(self) -> bool:
-        """Whether this provider implements the interjection hook — read off the hook itself, which is what makes the agent card's declaration honest."""
-        return callable(getattr(self.provider, "interject_stream", None))
+    def _interjection_hook(self, agent_name: str):
+        """The named agent's interjection hook, asked of the provider — the one lookup both routing and the card's declaration read, so they cannot disagree."""
+        hook_of = getattr(self.provider, "interjection_hook", None)
+        return hook_of(agent_name) if callable(hook_of) else None
+
+    def takes_interjections(self, agent_name: str) -> bool:
+        """Whether the named agent has an interjection hook — read off the hook itself, which is what makes the agent card's declaration honest."""
+        return callable(self._interjection_hook(agent_name))
 
     async def deliver(self, run: DeliveredRun) -> bool | Refusal:
         """The intake decision, answered from state already held — never gated on running anything."""
@@ -79,7 +83,7 @@ class ProviderRuntime:
         lane = self._lanes.get(key)
         addressed = _addressed_run_id(run)
         if addressed is not None and lane is not None and lane.active_run_id == addressed:
-            hook = getattr(self.provider, "interject_stream", None)
+            hook = self._interjection_hook(run.agent_name)
             if hook is None:
                 return Refusal(
                     reason=f"agent '{run.agent_name}' takes no interjections"
@@ -87,7 +91,7 @@ class ProviderRuntime:
             if not self._has_room():
                 return False
             self._start_run(
-                run, stream=hook(run.agent_name, run.run_input, addressed), lane_key=None
+                run, stream=hook(run.run_input, addressed), lane_key=None
             )
             return True
         if not self._has_room():

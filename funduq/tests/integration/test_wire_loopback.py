@@ -61,6 +61,11 @@ class WireLink:
     async def cancel(self, run_id: str) -> bool:
         self._runtime.cancel(json.loads(json.dumps(run_id)))
         return True
+
+    def takes_interjections(self, agent_name: str) -> bool:
+        # A wire connection answers from what the remote link declared; this
+        # loopback's remote is the runtime itself.
+        return json.loads(json.dumps(self._runtime.takes_interjections(agent_name)))
     async def report_event(self, run_id: str, event) -> None:
         frame = json.dumps({"runId": run_id, "event": event}).encode()
         decoded = json.loads(frame)
