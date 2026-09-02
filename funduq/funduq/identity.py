@@ -3,13 +3,9 @@ from __future__ import annotations
 from collections.abc import Callable
 from typing import TYPE_CHECKING
 
-import hashlib
 import time
-from dataclasses import dataclass
 
-import jwt
-from cryptography.exceptions import InvalidSignature
-from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey, Ed25519PublicKey
+from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
 if TYPE_CHECKING:
     from funduq.models import AgentRef
@@ -23,7 +19,6 @@ from funduq_contract import (
     DispatchTarget as DispatchTarget,
     InvalidChain as InvalidChain,
     cancel_payload as cancel_payload,
-    delegation_payload as delegation_payload,
     dispatch_hop as _dispatch_hop,
     extend_chain as extend_chain,
     funduq_connect_payload as funduq_connect_payload,
@@ -39,35 +34,11 @@ from funduq_contract import (
 )
 
 
-SESSION_TOKEN_TTL_SECONDS = 3600
-
 SIGNATURE_FRESHNESS_WINDOW_SECONDS = 60
 
 
 def is_timestamp_fresh(timestamp: int) -> bool:
     return abs(time.time() - timestamp) <= SIGNATURE_FRESHNESS_WINDOW_SECONDS
-
-
-class InvalidDelegation(ValueError):
-    pass
-
-
-def verify_delegation(certificate: dict) -> str:
-    """Verifies a session delegation certificate and returns the authority's public key."""
-    try:
-        authority = certificate["authorityPublicKey"]
-        delegate = certificate["delegatePublicKey"]
-        expires_at = int(certificate["expiresAt"])
-        signature = certificate["signature"]
-    except (KeyError, TypeError, ValueError) as e:
-        raise InvalidDelegation(f"malformed delegation certificate: {e}") from e
-    if time.time() > expires_at:
-        raise InvalidDelegation("delegation certificate has expired")
-    if not verify_signature(
-        authority, signature, delegation_payload(delegate, expires_at)
-    ):
-        raise InvalidDelegation("delegation certificate signature does not verify")
-    return authority
 
 
 class InvalidResolution(ValueError):
@@ -87,23 +58,17 @@ def _verify_signed_act(
     run_id: str,
     payload_for: Callable[[str, int], bytes],
     allowed_keys: set[str],
-    delegation: dict | None,
     invalid: type[ValueError],
     act: str,
 ) -> str:
-    """Verifies one singular signed act against an authority set and returns the effective authority."""
+    """Verifies one singular signed act against an authority set and returns the signer."""
     try:
         signer = proof["publicKey"]
         timestamp = int(proof["timestamp"])
         signature = proof["signature"]
     except (KeyError, TypeError, ValueError) as e:
         raise invalid(f"malformed {act} proof: {e}") from e
-    effective = signer
-    if delegation is not None:
-        authority = verify_delegation(delegation)
-        if delegation.get("delegatePublicKey") == signer:
-            effective = authority
-    if effective not in allowed_keys:
+    if signer not in allowed_keys:
         raise invalid(
             f"the signer is not an authority for this run — neither its "
             f"segment head nor its provider (cannot {act} it)"
@@ -112,45 +77,27 @@ def _verify_signed_act(
         raise invalid(f"{act} timestamp outside the freshness window")
     if not verify_signature(signer, signature, payload_for(run_id, timestamp)):
         raise invalid(f"{act} signature does not verify")
-    return effective
+    return signer
 
 
-def verify_resolution(
-    resolution: dict,
-    run_id: str,
-    allowed_keys: set[str],
-    delegation: dict | None = None,
-) -> str:
-    """Verifies a resolution proof for a paused run and returns the effective authority."""
+def verify_resolution(resolution: dict, run_id: str, allowed_keys: set[str]) -> str:
+    """Verifies a resolution proof for a paused run and returns the signer."""
     return _verify_signed_act(
-        resolution, run_id, resolve_payload,
-        allowed_keys, delegation, InvalidResolution, "resolve",
+        resolution, run_id, resolve_payload, allowed_keys, InvalidResolution, "resolve",
     )
 
 
-def verify_cancel(
-    cancel: dict,
-    run_id: str,
-    allowed_keys: set[str],
-    delegation: dict | None = None,
-) -> str:
-    """Verifies a cancel proof for a run and returns the effective authority."""
+def verify_cancel(cancel: dict, run_id: str, allowed_keys: set[str]) -> str:
+    """Verifies a cancel proof for a run and returns the signer."""
     return _verify_signed_act(
-        cancel, run_id, cancel_payload,
-        allowed_keys, delegation, InvalidCancel, "cancel",
+        cancel, run_id, cancel_payload, allowed_keys, InvalidCancel, "cancel",
     )
 
 
-def verify_view(
-    view: dict,
-    run_id: str,
-    allowed_keys: set[str],
-    delegation: dict | None = None,
-) -> str:
-    """Verifies a view proof for a run and returns the effective authority."""
+def verify_view(view: dict, run_id: str, allowed_keys: set[str]) -> str:
+    """Verifies a view proof for a run and returns the signer."""
     return _verify_signed_act(
-        view, run_id, view_payload,
-        allowed_keys, delegation, InvalidView, "view",
+        view, run_id, view_payload, allowed_keys, InvalidView, "view",
     )
 
 

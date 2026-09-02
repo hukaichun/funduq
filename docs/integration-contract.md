@@ -41,9 +41,7 @@ signature from those keys (`metadata.resolution`, the
 its runs takes the same authority** (`metadata.cancel`, the
 `funduq-cancel:{run_id}:{timestamp}` payload — A2A's `CancelTaskRequest`
 carries `metadata` even though it carries no message, so a standard
-client has the slot). A session delegation certificate under
-`metadata.delegation` lets an ephemeral session key act for a durable
-one. A thread opened without a chain keeps the open
+client has the slot). A thread opened without a chain keeps the open
 behavior on this page forever — a later chained writer cannot lock it.
 The mechanics are in
 Responsibility chains.
@@ -68,8 +66,7 @@ built on this passthrough is building on the contract.
 
 What funduq adds to `forwardedProps` it adds *beside* the caller's own
 values, never over them: a KYOK grant when the run opted in, the actor
-chain, a relayed delegation certificate, and `addressedRunId` when the
-caller declared an interjection. The reserved list above is the whole of
+chain, and `addressedRunId` when the caller declared an interjection. The reserved list above is the whole of
 what is ever taken away; if that list grows, it is a contract change and
 belongs in the changelog.
 

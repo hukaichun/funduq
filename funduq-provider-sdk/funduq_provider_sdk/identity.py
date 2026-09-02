@@ -12,7 +12,6 @@ from funduq_contract import (
     Hop,
     InvalidChain,
     cancel_payload,
-    delegation_payload,
     extend_chain as _extend_chain,
     funduq_connect_payload,
     kyok_call_payload,
@@ -66,16 +65,6 @@ class ProviderIdentity:
             provider_connect_payload(funduq_public_key, funduq_nonce, provider_nonce)
         )
 
-
-    def sign_delegation(self, delegate_public_key: str, ttl_seconds: int = 8 * 3600) -> dict:
-        """Issues a session delegation certificate: this identity (the durable authority) names `delegate_public_key` to act for it until now+`ttl_seconds`."""
-        expires_at = int(time.time()) + ttl_seconds
-        return {
-            "authorityPublicKey": self.public_key,
-            "delegatePublicKey": delegate_public_key,
-            "expiresAt": expires_at,
-            "signature": self.sign(delegation_payload(delegate_public_key, expires_at)),
-        }
 
     def sign_resolution(self, run_id: str, timestamp: int | None = None) -> tuple[str, int]:
         """Signs the resolution of a paused run: `(signature, timestamp)` over `resolve_payload(run_id, timestamp)`."""

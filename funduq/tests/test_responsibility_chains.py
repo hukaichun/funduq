@@ -3,9 +3,8 @@
 The design (docs/mechanisms/responsibility-chains.md): a thread whose first
 run carries an actor chain binds {segment head, serving provider} at birth;
 writing is membership; a chained ask is resolved only by a signature from
-its authority set; a session delegation certificate resolves a session
-key's signatures to the durable authority. Unbound threads keep the old
-open behavior — the whole mechanism is opt-in by carrying a chain.
+its authority set. Unbound threads keep the old open behavior — the whole
+mechanism is opt-in by carrying a chain.
 """
 
 from __future__ import annotations
@@ -188,47 +187,6 @@ async def test_a_chained_ask_is_resolved_only_by_its_authority(funduq, serve, ne
         },
     )
     assert answered.id == task_id
-    assert answered.status.state == COMPLETED
-
-
-async def test_a_session_key_resolves_to_its_durable_authority(funduq, serve, new_identity):
-    """The delegation certificate: the durable key D signs once, naming the
-    session key SK; SK signs everything after, and funduq resolves SK's
-    signatures to D — rights attach to D, SK is a glove."""
-    provider = AskingAgent()
-    agent = (await serve(provider, "delegated")).agents["delegated"]
-    durable, session_key = new_identity(), new_identity()
-    certificate = durable.sign_delegation(session_key.public_key)
-
-    first = await A2AAdapter(funduq).send_task(
-        agent,
-        _message("go"),
-        actor_chain=[session_key.sign_chain_hop()],
-        metadata={"delegation": certificate},
-    )
-    task_id = first.id
-
-    async with funduq.session() as session:
-        run = await repo.get_run(session, task_id)
-    assert run.head_key == durable.public_key, "the head resolves through the certificate"
-
-    # A later session: new session key, new certificate, same durable rights.
-    session_key_2 = new_identity()
-    certificate_2 = durable.sign_delegation(session_key_2.public_key)
-    signature, timestamp = session_key_2.sign_resolution(task_id)
-    answered = await A2AAdapter(funduq).send_task(
-        agent,
-        _message("the answer", task_id=task_id),
-        actor_chain=[session_key_2.sign_chain_hop()],
-        metadata={
-            "delegation": certificate_2,
-            "resolution": {
-                "publicKey": session_key_2.public_key,
-                "timestamp": timestamp,
-                "signature": signature,
-            },
-        },
-    )
     assert answered.status.state == COMPLETED
 
 

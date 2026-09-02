@@ -19,7 +19,6 @@ from funduq_contract import (
     DispatchTarget,
     InvalidChain,
     cancel_payload,
-    delegation_payload,
     dispatch_hop,
     extend_chain,
     funduq_connect_payload,
@@ -60,7 +59,6 @@ def test_no_two_acts_produce_the_same_bytes():
         provider_connect_payload("fk", "n1", "n2"),
         funduq_connect_payload("n1", "n2"),
         kyok_call_payload("bearer", 1, "hash"),
-        delegation_payload("delegate", 1),
         resolve_payload("run", 1),
         cancel_payload("run", 1),
     ]

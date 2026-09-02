@@ -13,7 +13,6 @@ from funduq.identity import (
     InvalidChain,
     verify_chain,
     verify_cancel,
-    verify_delegation,
     verify_resolution,
     verify_view,
 )
@@ -60,13 +59,7 @@ async def verify_caller(
             f"{verified.presenter[:16]}…, but the caller authenticated as "
             f"{presenter_key[:16]}… — extend the chain with your own key to present it"
         )
-    head = verified.head
-    delegation = metadata.get("delegation")
-    if delegation is not None:
-        authority = verify_delegation(delegation)
-        if delegation.get("delegatePublicKey") == head:
-            head = authority
-    return metadata, head, actor_chain
+    return metadata, verified.head, actor_chain
 
 
 async def resolve_kyok(
@@ -147,7 +140,6 @@ async def dispatch(
                 inbound.forwarded_props,
                 relayed_chain,
                 addressed_run_id=inbound.addressed_run_id,
-                delegation=inbound.metadata.get("delegation"),
             ),
             resume=inbound.resume,
             parent_run_id=inbound.parent_run_id,
@@ -212,7 +204,6 @@ def authorize_cancel(run: Any, metadata: dict[str, Any]) -> str | None:
         metadata.get("cancel") or {},
         run.run_id,
         {run.head_key, run.provider_key},
-        metadata.get("delegation"),
     )
 
 
@@ -233,7 +224,6 @@ def authorize_view(run: Any, metadata: dict[str, Any]) -> str | None:
         metadata.get("view") or {},
         run.run_id,
         allowed,
-        metadata.get("delegation"),
     )
 
 
@@ -259,7 +249,6 @@ async def open_run(
                 metadata.get("resolution") or {},
                 ask.run_id,
                 {ask.head_key, agent.provider_key},
-                metadata.get("delegation"),
             )
         if await repo.reopen_run(
             session,

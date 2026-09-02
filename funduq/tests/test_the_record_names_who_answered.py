@@ -2,9 +2,7 @@
 
 funduq's whole product is the record. It already checked that a resolution
 came from an authority the run answers to — and then discarded the answer,
-keeping only the proof as presented. That is not the same fact: with a
-delegation certificate the signer is a session key standing for a durable
-one, so the stored proof names the glove and nothing named the hand.
+keeping only the proof as presented.
 
 The case that makes it matter is the provider resolving its own agent's ask.
 Nothing stops it and nothing should — it could have taken the step without
@@ -112,32 +110,6 @@ async def test_a_provider_answering_its_own_ask_is_visible_as_that(funduq, serve
     assert observed["answeredBy"] != [head.public_key], (
         "the run's head never answered this, and the record must not read as if it had"
     )
-
-
-async def test_the_record_names_the_durable_key_not_the_session_key(funduq, serve, new_identity):
-    """A session key presented with a delegation certificate stands for the
-    durable key behind it. The stored proof carries the session key, so a
-    reader recomputing from the proof alone would name the glove."""
-    agent = (await serve(AskingAgent(), "gloved")).agents["gloved"]
-    durable, session_key = new_identity(), new_identity()
-    certificate = durable.sign_delegation(session_key.public_key)
-
-    first = await A2AAdapter(funduq).send_task(
-        agent,
-        _message("go"),
-        actor_chain=[session_key.sign_chain_hop()],
-        metadata={"delegation": certificate},
-    )
-    await A2AAdapter(funduq).send_task(
-        agent,
-        _message("the answer", task_id=first.id),
-        actor_chain=[session_key.sign_chain_hop()],
-        metadata={"delegation": certificate, **_answer(session_key, first.id)},
-    )
-
-    observed = await _observed(funduq, first.id)
-    assert observed["answeredBy"] == [durable.public_key]
-    assert session_key.public_key not in observed["answeredBy"]
 
 
 async def test_two_answers_are_two_entries_in_order(funduq, serve, new_identity):
