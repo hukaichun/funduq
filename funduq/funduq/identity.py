@@ -35,6 +35,7 @@ from funduq_contract import (
     resolve_payload as resolve_payload,
     verify_chain as verify_chain,
     verify_signature,
+    view_payload as view_payload,
 )
 
 
@@ -74,6 +75,10 @@ class InvalidResolution(ValueError):
 
 
 class InvalidCancel(ValueError):
+    pass
+
+
+class InvalidView(ValueError):
     pass
 
 
@@ -133,6 +138,19 @@ def verify_cancel(
     return _verify_signed_act(
         cancel, run_id, cancel_payload,
         allowed_keys, delegation, InvalidCancel, "cancel",
+    )
+
+
+def verify_view(
+    view: dict,
+    run_id: str,
+    allowed_keys: set[str],
+    delegation: dict | None = None,
+) -> str:
+    """Verifies a view proof for a run and returns the effective authority."""
+    return _verify_signed_act(
+        view, run_id, view_payload,
+        allowed_keys, delegation, InvalidView, "view",
     )
 
 

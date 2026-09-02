@@ -23,7 +23,14 @@ from a2a.utils.errors import (
 from google.protobuf.json_format import MessageToDict, ParseDict, ParseError
 
 from funduq import repo
-from funduq.doors import InboundRun, dispatch, relayed_chain, resolve_kyok, verify_caller
+from funduq.doors import (
+    InboundRun,
+    authorize_view,
+    dispatch,
+    relayed_chain,
+    resolve_kyok,
+    verify_caller,
+)
 from funduq.errors import (
     AgentNotFound,
     InvalidRunInput,
@@ -32,7 +39,7 @@ from funduq.errors import (
     ThreadNotFound,
     ThreadOwnershipMismatch,
 )
-from funduq.identity import verify_resolution
+from funduq.identity import InvalidView, verify_resolution
 from funduq.props import ADDRESSED_RUN_METADATA_KEY
 from funduq.models import AgentRef
 from funduq.protocols.a2a_translate import (
@@ -192,10 +199,16 @@ class A2AAdapter:
 
         return results()
 
-    async def resubscribe_task(self, agent: AgentRef, task_id: str) -> AsyncIterator[Event]:
-        """Reattaches to an existing task's event stream."""
+    async def resubscribe_task(
+        self,
+        agent: AgentRef,
+        task_id: str,
+        *,
+        view_metadata: dict[str, Any] | None = None,
+    ) -> AsyncIterator[Event]:
+        """Reattaches to an existing task's event stream. A bound run demands a view proof, exactly as `get_task` does, and answers its absence the same way."""
         run = await self._run_of(agent, task_id)
-        if run is None:
+        if run is None or not self._may_view(run, view_metadata):
             raise TaskNotFoundError(f"no task '{task_id}' for agent '{agent}'")
         thread_id = run.thread_id
         events = self._funduq.broker.subscribe(task_id) if self._funduq.broker.get(task_id) else None
@@ -224,11 +237,16 @@ class A2AAdapter:
         return results()
 
     async def get_task(
-        self, agent: AgentRef, task_id: str, *, history_length: int | None = None
+        self,
+        agent: AgentRef,
+        task_id: str,
+        *,
+        history_length: int | None = None,
+        view_metadata: dict[str, Any] | None = None,
     ) -> pb.Task | None:
-        """Returns the current `Task` for `task_id`, or None if it doesn't belong to `agent`."""
+        """Returns the current `Task` for `task_id`, or None if it doesn't belong to `agent` — or if the run is bound to a chain and `view_metadata` carries no valid view proof from one of its parties. An unauthorized read looks like absence: existence is part of what is guarded."""
         run = await self._run_of(agent, task_id)
-        if run is None:
+        if run is None or not self._may_view(run, view_metadata):
             return None
         return build_task(
             task_id,
@@ -273,6 +291,15 @@ class A2AAdapter:
         if run is None or AgentRef(provider_key=run.provider_key, name=run.agent_name) != agent:
             return None
         return run
+
+    @staticmethod
+    def _may_view(run: Any, view_metadata: dict[str, Any] | None) -> bool:
+        """Whether this read carries the authority a bound run demands; always true for an unbound one."""
+        try:
+            authorize_view(run, view_metadata or {})
+        except InvalidView:
+            return False
+        return True
 
     async def _display_name(self, agent: AgentRef) -> str:
         record = await self._funduq.get_agent(agent)
@@ -393,15 +420,23 @@ class A2ARequestHandler(RequestHandler):
         agent: AgentRef,
         *,
         presenter_key_of: Callable[[ServerCallContext], str | None] | None = None,
+        view_metadata_of: Callable[[ServerCallContext], dict | None] | None = None,
     ) -> None:
         self._adapter = A2AAdapter(funduq)
         self._agent = agent
         # The transport is the party that authenticates whoever presents a
         # request; this hook is where it hands that identity down.
         self._presenter_key_of = presenter_key_of
+        # A2A's read requests carry no caller data, so a view proof for a
+        # bound run rides the transport (a header, typically); this hook is
+        # where the transport hands it down as `{"view": …, "delegation": …}`.
+        self._view_metadata_of = view_metadata_of
 
     def _presenter_key(self, context: ServerCallContext) -> str | None:
         return self._presenter_key_of(context) if self._presenter_key_of else None
+
+    def _view_metadata(self, context: ServerCallContext) -> dict | None:
+        return self._view_metadata_of(context) if self._view_metadata_of else None
 
     @validate_request_params
     async def on_message_send(
@@ -439,7 +474,10 @@ class A2ARequestHandler(RequestHandler):
         self, params: pb.GetTaskRequest, context: ServerCallContext
     ) -> pb.Task | None:
         return await self._adapter.get_task(
-            self._agent, params.id, history_length=params.history_length or None
+            self._agent,
+            params.id,
+            history_length=params.history_length or None,
+            view_metadata=self._view_metadata(context),
         )
 
     @validate_request_params
@@ -455,7 +493,9 @@ class A2ARequestHandler(RequestHandler):
     async def on_subscribe_to_task(
         self, params: pb.SubscribeToTaskRequest, context: ServerCallContext
     ) -> AsyncGenerator[Event]:
-        stream = await self._adapter.resubscribe_task(self._agent, params.id)
+        stream = await self._adapter.resubscribe_task(
+            self._agent, params.id, view_metadata=self._view_metadata(context)
+        )
         async for event in stream:
             yield event
 

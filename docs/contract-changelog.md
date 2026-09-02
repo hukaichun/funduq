@@ -28,6 +28,24 @@ entries below say what to change and not only what moved.
 
 ---
 
+## Revision 13 — 2026-09-04
+
+**Reading a bound run requires a view proof** (closes #148's exposure).
+`view_payload(run_id, timestamp)` joins the singular-act family under its
+own tag, `funduq-view` — same shape as a cancel or resolve proof:
+`{publicKey, timestamp, signature}`, the 60s freshness window, delegation
+honoured. The A2A door's `get_task` and `resubscribe_task` demand one for
+any run whose thread is bound to a chain, and answer its absence as "not
+found" — existence is part of what is guarded. Unbound runs stay as public
+as their funduq-minted ids.
+
+The read circle is wider than the act circle: every actor on the run's
+chain may sign a view — the parties responsibility flowed through may look
+— while cancel and resolve stay with the head and the serving provider.
+A2A's read requests carry no caller data, so the proof rides the transport
+(a header, typically); `A2ARequestHandler` accepts it through the
+`view_metadata_of` hook.
+
 ## Revision 12 — 2026-09-02
 
 **A provider's interjection capability is discoverable** (closes #146, unblocked

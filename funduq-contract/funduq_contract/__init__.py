@@ -1,6 +1,6 @@
 """What both sides of funduq agree the bytes are."""
 
-CONTRACT_REVISION = 12
+CONTRACT_REVISION = 13
 """Which revision of funduq's contract this package implements."""
 
 from funduq_contract.chain import (
@@ -17,6 +17,7 @@ from funduq_contract.chain import (
 )
 from funduq_contract.payloads import (
     cancel_payload,
+    view_payload,
     delegation_payload,
     funduq_connect_payload,
     kyok_call_payload,
@@ -75,6 +76,7 @@ __all__ = [
     "Hop",
     "InvalidChain",
     "cancel_payload",
+    "view_payload",
     "delegation_payload",
     "dispatch_hop",
     "extend_chain",
