@@ -1,7 +1,7 @@
 {
  "contract": {
-  "revision": 16,
-  "fingerprint": "sha256:402bb1c08175daf84f21be1e2af97bd4fc64db805dba6c8c8f41e5df55ebc004",
+  "revision": 17,
+  "fingerprint": "sha256:b2feb93b0014d4caa7ba3accf9876810446755966263d7a8dd45e027f346062f",
   "note": "The revision an external implementation is written against, and a hash of the surface it depends on — the vectors below, plus what the contract_surface helper reads live from the code (CoreSettings fields and whether each is required, the provider link's verbs, every crossing shape funduq-contract defines, the A2A protocol's frames and every machine's verbs on both link kinds, the A2A protocol version and transport bindings, whether each package ships its PEP 561 marker, and every public name funduq_contract exports with the shape it exports it as). Prose (`note` and `comment` at any depth) is excluded, so rewording an explanation is not a contract change. A test recomputes the hash and fails when it differs from this one, so a contract change cannot land without bumping `revision` and adding a line to docs/contract-changelog.md. The fingerprint is not itself a compatibility statement: read the changelog to learn what moved."
  },
  "comment": "Authoritative byte-level vectors for the payloads funduq verifies signatures over. funduq's own test suites consume this file, so it cannot drift from the implementation; an external implementation in any language replays it: build each payload from `inputs`, assert the exact `payload_utf8` bytes, and check `signature_hex` verifies (or, since Ed25519 is deterministic, reproduce it) under the published test key. The test key is for vectors only — never accept it in a real deployment.",

@@ -78,12 +78,13 @@ class _Decliner:
     public_key = "pk_decliner"
     max_concurrent_runs = None
 
-    def __init__(self) -> None:
+    def __init__(self, funduq: Funduq) -> None:
+        self.funduq = funduq
         self.offered: list[str] = []
 
-    async def deliver(self, run) -> bool:
+    async def deliver(self, run) -> None:
         self.offered.append(run.run_id)
-        return False
+        self.funduq.answer_offer(run.run_id, False, provider_key=self.public_key)
 
     async def cancel(self, run_id: str) -> bool:
         return True
@@ -96,7 +97,7 @@ async def test_a_declined_run_is_reported_back_where_it_came_from(funduq: Funduq
     funduq.on_change(lambda e: seen.append(e.status) if isinstance(e, RunStatusChanged) else None)
 
     agent, _identity = await _register(funduq, "declined")
-    provider = _Decliner()
+    provider = _Decliner(funduq)
     funduq.broker.register_provider({agent: provider})
     handle = await funduq.start_run(agent, {"messages": []})
 

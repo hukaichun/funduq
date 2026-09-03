@@ -51,12 +51,16 @@ class WireLink:
         relayed = funduq_nonce.encode().decode()
         return self._runtime.identity.sign_connect(relayed_key, relayed, provider_nonce)
 
-    async def deliver(self, run: DeliveredRun) -> bool | Refusal:
+    async def deliver(self, run: DeliveredRun) -> None:
         frame = run.model_dump_json(by_alias=True).encode()
         delivered = DeliveredRun.model_validate_json(frame)
         accepted = await self._runtime.deliver(delivered)
+        # The verdict crosses back as bytes too, and enters through the door —
+        # the same road every later report takes, so it cannot be outrun.
         answer = json.dumps({"accepted": bool(accepted)}).encode()
-        return json.loads(answer)["accepted"]
+        self._funduq.answer_offer(
+            run.run_id, json.loads(answer)["accepted"], provider_key=self.public_key
+        )
 
     async def cancel(self, run_id: str) -> bool:
         self._runtime.cancel(json.loads(json.dumps(run_id)))

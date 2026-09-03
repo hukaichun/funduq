@@ -17,8 +17,6 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_asyn
 from funduq import repo
 from funduq.broker import (
     ConnectedProvider,
-    FinishStream,
-    RelayEvent,
     RunBroker,
     RunSnapshot,
 )
@@ -499,42 +497,22 @@ class Funduq:
             await repo.delete_llm_provider(session, ref)
         self._notify_change(LlmRosterChanged())
 
+    def answer_offer(self, run_id: str, accepted: Any, *, provider_key: str) -> bool:
+        """Post a provider's verdict on an offered run; False for an unknown run.
+
+        The door attributes; the run's owner judges, in arrival order — so
+        everything the same connection reports after answering lands behind
+        the verdict and cannot outrun it.
+        """
+        return self.broker.answer_offer(run_id, accepted, provider_key=provider_key)
+
     def report_event(self, run_id: str, event: Any, *, claimed_by: str) -> bool:
-        """Relay `event` into the run's stream if `claimed_by` holds the run (or can late-claim it)."""
-        run = self.broker.get(run_id)
-        if run is None:
-            return False
-        if run.claimed_by is None:
-            logger.warning(
-                "report_event: '%s' reported for run %s, which nobody holds",
-                claimed_by,
-                run_id,
-            )
-            return False
-        if run.claimed_by != claimed_by:
-            logger.warning(
-                "report_event: '%s' reported for run %s, which is held by '%s'",
-                claimed_by,
-                run_id,
-                run.claimed_by,
-            )
-            return False
-        return self.broker.push(run_id, RelayEvent(event))
+        """Post `event` into the run's stream, attributed to `claimed_by`; False for an unknown run. Whether that key holds the run is judged by the run's owner, not at this door."""
+        return self.broker.report_event(run_id, event, origin=claimed_by)
 
     def finish_run(self, run_id: str, *, claimed_by: str) -> bool:
-        """End the run's stream if `claimed_by` currently holds it; False for an unknown or mismatched run."""
-        run = self.broker.get(run_id)
-        if run is None:
-            return False
-        if run.claimed_by != claimed_by:
-            logger.warning(
-                "finish_run: '%s' tried to end run %s, which is held by '%s'",
-                claimed_by,
-                run_id,
-                run.claimed_by,
-            )
-            return False
-        return self.broker.push(run_id, FinishStream())
+        """Post the end of the run's stream, attributed to `claimed_by`; False for an unknown run. Judged by the run's owner like any other report."""
+        return self.broker.finish_stream(run_id, origin=claimed_by)
 
     async def attach_provider(
         self,

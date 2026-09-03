@@ -63,8 +63,12 @@ class InProcessLink(FunduqLink):
             funduq_public_key, funduq_nonce, provider_nonce
         )
 
-    async def deliver(self, run: "DeliveredRun") -> bool:
-        return await self._runtime.deliver(run)
+    async def deliver(self, run: "DeliveredRun") -> None:
+        # The runtime's verdict goes back through the door, in the same call
+        # path that learned it — never as this method's return value, so
+        # nothing funduq-side has to win a scheduling race to hear it.
+        answer = await self._runtime.deliver(run)
+        self._funduq.answer_offer(run.run_id, answer, provider_key=self.public_key)
 
     async def cancel(self, run_id: str) -> bool:
         self._runtime.cancel(run_id)

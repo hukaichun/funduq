@@ -138,9 +138,9 @@ class StubbornProvider:
         self.taken: list[str] = []
         self.asked_to_stop: list[str] = []
 
-    async def deliver(self, run) -> bool:
+    async def deliver(self, run) -> None:
         self.taken.append(run.run_id)
-        return True
+        self.funduq.answer_offer(run.run_id, True, provider_key=self.public_key)
 
     async def cancel(self, run_id: str) -> bool:
         self.asked_to_stop.append(run_id)
@@ -153,6 +153,7 @@ async def test_a_worker_that_ignores_the_cancel_still_completes(funduq, new_iden
     registration = await _register_with_token(funduq, "stubborn", identity)
     agent_id = registration["stubborn"]
     provider = StubbornProvider(identity)
+    provider.funduq = funduq
     await publish_agents(funduq, provider, ["stubborn"])
 
     handle = await funduq.start_run(agent_id, {"messages": []})

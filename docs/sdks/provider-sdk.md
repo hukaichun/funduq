@@ -26,7 +26,10 @@ included.
 ## The port and the worker
 
 `FunduqLink` is the abstract port a transport implements: `deliver` a
-run (answering accepted / declined / `Refusal`), `cancel` (acknowledged),
+run (handing it over — the verdict, accepted / declined / `Refusal`,
+answers through funduq's `answer_offer` door on the same road reports
+take, so a provider that accepts and streams in the same breath loses
+nothing), `cancel` (acknowledged),
 `report_event`, `finish_run`, `thread_messages`. `InProcessLink` is the
 in-process transport (in-process is a transport, not a special case);
 `ProviderRuntime` is the worker loop — one handler per thread, one active

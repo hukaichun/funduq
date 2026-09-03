@@ -28,12 +28,13 @@ class Taker:
 
     public_key = "pk_1"
 
-    def __init__(self, max_concurrent_runs: int | None = None) -> None:
+    def __init__(self, broker: RunBroker | None = None, max_concurrent_runs: int | None = None) -> None:
+        self.broker = broker
         self.max_concurrent_runs = max_concurrent_runs
         self.asked_to_stop: list[str] = []
 
-    async def deliver(self, run) -> bool:
-        return True
+    async def deliver(self, run) -> None:
+        self.broker.answer_offer(run.run_id, True, provider_key=self.public_key)
 
     async def cancel(self, run_id: str) -> bool:
         self.asked_to_stop.append(run_id)
@@ -55,7 +56,7 @@ async def _until(predicate, timeout: float = 1.0) -> None:
 
 
 async def _delivered(broker: RunBroker, handlers: dict, run_id: str = "run_1"):
-    broker.register_provider({AGENT: Taker()})
+    broker.register_provider({AGENT: Taker(broker)})
     run = broker.enqueue_run(run_id, AGENT, "thread_1", _valid_input(run_id, "thread_1"), "ag-ui", handlers)
     await _until(lambda: run.claimed_by is not None)
     return run
@@ -87,8 +88,8 @@ async def test_the_pipeline_dispatches_commands_to_the_right_handler_in_order(br
         FinishStream: await record("finish"),
     }
     run = await _delivered(broker, handlers)
-    run.in_queue.put_nowait(RelayEvent({}))
-    run.in_queue.put_nowait(FinishStream())
+    broker.push("run_1", RelayEvent({}))
+    broker.push("run_1", FinishStream())
 
     await _until(lambda: calls == ["claim", "relay", "finish"])
 
@@ -98,7 +99,7 @@ async def test_the_pipeline_forgets_the_run_once_finish_stream_is_processed(brok
         pass
 
     run = await _delivered(broker, {FinishStream: on_finish})
-    run.in_queue.put_nowait(FinishStream())
+    broker.push("run_1", FinishStream())
 
     await _until(lambda: broker.get("run_1") is None)
 
@@ -117,12 +118,12 @@ async def test_the_pipeline_stays_alive_after_a_cancel_and_waits_for_the_finish(
 
     handlers = {Claim: on_claim, RequestCancel: on_cancel, FinishStream: on_finish}
     run = await _delivered(broker, handlers)
-    run.in_queue.put_nowait(RequestCancel())
+    broker.push("run_1", RequestCancel())
 
     await _until(lambda: seen == ["cancel"])
     assert broker.get("run_1") is not None
 
-    run.in_queue.put_nowait(FinishStream())
+    broker.push("run_1", FinishStream())
     await _until(lambda: broker.get("run_1") is None)
     assert seen == ["cancel", "finish"]
 
@@ -132,7 +133,7 @@ async def test_the_pipeline_forgets_the_run_when_a_sweep_gives_up_on_it(broker):
         pass
 
     run = await _delivered(broker, {Fail: on_fail})
-    run.in_queue.put_nowait(Fail("stalled"))
+    broker.push("run_1", Fail("stalled"))
 
     await _until(lambda: broker.get("run_1") is None)
 

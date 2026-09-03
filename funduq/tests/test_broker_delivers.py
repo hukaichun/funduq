@@ -32,6 +32,20 @@ async def _until(predicate, timeout: float = 1.0) -> None:
             await asyncio.sleep(0)
 
 
+# The broker a Recording answers through. The seam carries no back-channel on
+# purpose (a verdict goes through the door, not the object), so the test
+# fixtures reach the door via this module-level current broker.
+_CURRENT_BROKER: RunBroker | None = None
+
+
+def _own_broker(**kwargs) -> RunBroker:
+    global _CURRENT_BROKER
+    b = RunBroker(**kwargs)
+    _CURRENT_BROKER = b
+    b.start()
+    return b
+
+
 class Recording:
 
     def __init__(
@@ -39,7 +53,7 @@ class Recording:
         key: str = "pk_provider",
         *,
         max_concurrent_runs: int | None = None,
-        answers: list[bool] | None = None,
+        answers: list | None = None,
         default: bool = True,
         hang: bool = False,
         hold: asyncio.Event | None = None,
@@ -56,21 +70,21 @@ class Recording:
         self.offered: list[str] = []
         self.cancelled: list[str] = []
 
-    async def deliver(self, run) -> bool:
+    async def deliver(self, run) -> None:
         self.offered.append(run.run_id)
         if self._hang:
             await asyncio.Event().wait()
         if self._hold is not None:
             await self._hold.wait()
-        return self._answers.pop(0) if self._answers else self._default
+        answer = self._answers.pop(0) if self._answers else self._default
+        _CURRENT_BROKER.answer_offer(run.run_id, answer, provider_key=self.public_key)
 
     async def cancel(self, run_id: str) -> bool:
         self.cancelled.append(run_id)
         return True
 @pytest.fixture
 async def broker():
-    b = RunBroker(deliver_timeout_seconds=0.05, unserved_timeout_seconds=30)
-    b.start()
+    b = _own_broker(deliver_timeout_seconds=0.05, unserved_timeout_seconds=30)
     try:
         yield b
     finally:
@@ -82,8 +96,7 @@ async def patient_broker():
     """A broker that will wait for an answer. The tests about the dispatch
     window hold an offer open on purpose, and the default fixture's 0.05s
     delivery timeout would call that silence a timeout instead."""
-    b = RunBroker(deliver_timeout_seconds=5.0, unserved_timeout_seconds=30)
-    b.start()
+    b = _own_broker(deliver_timeout_seconds=5.0, unserved_timeout_seconds=30)
     try:
         yield b
     finally:
@@ -156,9 +169,8 @@ async def test_a_provider_past_its_abnormality_allowance_is_withdrawn():
     they say how much abnormality any provider is permitted, and one that
     reaches it is withdrawn from service, the same judgment for every event
     type and every provider. The way back is the front door."""
-    b = RunBroker(deliver_timeout_seconds=0.05, unserved_timeout_seconds=0.1,
+    b = _own_broker(deliver_timeout_seconds=0.05, unserved_timeout_seconds=0.1,
                   quality_tolerance=2)
-    b.start()
     try:
         provider = Recording(answers=[False, False], default=True)
         b.register_provider({AGENT: provider})
@@ -185,9 +197,8 @@ async def test_a_provider_past_its_abnormality_allowance_is_withdrawn():
 async def test_below_the_allowance_an_abnormal_event_is_tolerated():
     """One discourtesy is counted, not ejected: the tolerance exists so a
     provider may be somewhat abnormal before funduq stops serving it."""
-    b = RunBroker(deliver_timeout_seconds=0.05, unserved_timeout_seconds=0.1,
+    b = _own_broker(deliver_timeout_seconds=0.05, unserved_timeout_seconds=0.1,
                   quality_tolerance=2)
-    b.start()
     try:
         provider = Recording(answers=[False], default=True)
         b.register_provider({AGENT: provider})
@@ -207,9 +218,8 @@ async def test_runs_of_a_withdrawn_provider_expire_on_the_ordinary_road():
     """With its provider withdrawn, the agent is simply unserved: queued runs
     travel the existing no-provider expiry road and fail loudly, instead of
     waiting on an abnormal provider's change of heart."""
-    b = RunBroker(deliver_timeout_seconds=0.05, unserved_timeout_seconds=0.2,
+    b = _own_broker(deliver_timeout_seconds=0.05, unserved_timeout_seconds=0.2,
                   quality_tolerance=1)
-    b.start()
     try:
         provider = Recording(default=False)
         b.register_provider({AGENT: provider})
@@ -254,13 +264,14 @@ async def test_one_decline_does_not_cost_a_provider_its_declared_room(broker):
             self.declined = False
             self.holding: set[str] = set()
 
-        async def deliver(self, run) -> bool:
+        async def deliver(self, run) -> None:
             self.offered.append(run.run_id)
             if not self.declined:
                 self.declined = True
-                return False
+                _CURRENT_BROKER.answer_offer(run.run_id, False, provider_key=self.public_key)
+                return
             self.holding.add(run.run_id)
-            return True
+            _CURRENT_BROKER.answer_offer(run.run_id, True, provider_key=self.public_key)
 
     provider = DeclinesOnce()
     broker.register_provider({AGENT: provider})
@@ -334,17 +345,16 @@ async def test_missing_the_window_is_breakage_answered_by_a_fresh_offer(broker):
             super().__init__()
             self.calls = 0
 
-        async def deliver(self, run) -> bool:
+        async def deliver(self, run) -> None:
             self.calls += 1
             self.offered.append(run.run_id)
             if self.calls == 1:
                 await asyncio.Event().wait()
-            return True
+            _CURRENT_BROKER.answer_offer(run.run_id, True, provider_key=self.public_key)
 
     provider = LostFirstAnswer()
     # Its own broker: the retry rides the sweep, so the sweep must cycle fast.
-    b = RunBroker(deliver_timeout_seconds=0.05, unserved_timeout_seconds=0.1)
-    b.start()
+    b = _own_broker(deliver_timeout_seconds=0.05, unserved_timeout_seconds=0.1)
     try:
         b.register_provider({AGENT: provider})
         b.enqueue_run("run_1", AGENT, "thread_run_1", _valid_input("run_1", "thread_run_1"), "ag-ui", {})
@@ -366,7 +376,9 @@ async def test_taking_a_run_and_never_ending_it_is_recorded(broker):
 
     broker.push("run_1", Fail("stalled"))
 
-    assert broker.quality()["pk_provider"].abandoned == 1
+    # The count lands when the run's owner processes the failure — the door
+    # attributes, the owner judges, and counting is a judgment.
+    await _until(lambda: broker.quality()["pk_provider"].abandoned == 1)
 
 
 async def test_a_run_nobody_ever_takes_is_given_up_on(broker):
@@ -444,7 +456,9 @@ async def test_the_place_comes_back_when_a_delivered_run_is_cancelled(broker):
 
 
 def test_a_broker_can_be_built_outside_a_loop_and_started_in_two(caplog):
+    global _CURRENT_BROKER
     broker = RunBroker(deliver_timeout_seconds=0.05)
+    _CURRENT_BROKER = broker
 
     async def place_one(run_id: str) -> list[str]:
         provider = Recording()
@@ -467,8 +481,7 @@ def test_a_broker_can_be_built_outside_a_loop_and_started_in_two(caplog):
 
 
 async def test_a_queued_run_waits_as_long_as_its_agent_is_served():
-    b = RunBroker(deliver_timeout_seconds=0.02, unserved_timeout_seconds=0.05)
-    b.start()
+    b = _own_broker(deliver_timeout_seconds=0.02, unserved_timeout_seconds=0.05)
     try:
         b.register_provider({AGENT: Recording(max_concurrent_runs=1, default=False)})
         _enqueue(b, "run_1")
@@ -480,8 +493,7 @@ async def test_a_queued_run_waits_as_long_as_its_agent_is_served():
 
 
 async def test_losing_the_provider_starts_the_clock_that_fails_the_run():
-    b = RunBroker(deliver_timeout_seconds=0.02, unserved_timeout_seconds=0.05)
-    b.start()
+    b = _own_broker(deliver_timeout_seconds=0.02, unserved_timeout_seconds=0.05)
     try:
         b.register_provider({AGENT: Recording(max_concurrent_runs=1, default=False)})
         _enqueue(b, "run_1")
@@ -495,8 +507,7 @@ async def test_losing_the_provider_starts_the_clock_that_fails_the_run():
 
 
 async def test_a_provider_returning_within_the_window_keeps_the_run():
-    b = RunBroker(deliver_timeout_seconds=0.02, unserved_timeout_seconds=0.3)
-    b.start()
+    b = _own_broker(deliver_timeout_seconds=0.02, unserved_timeout_seconds=0.3)
     try:
         b.register_provider({AGENT: Recording(max_concurrent_runs=1, default=False)})
         _enqueue(b, "run_1")
@@ -741,11 +752,11 @@ async def test_two_conversations_with_one_agent_do_not_wait_for_each_other(patie
     held = asyncio.Event()
 
     class SlowAboutAlice(Recording):
-        async def deliver(self, run) -> bool:
+        async def deliver(self, run) -> None:
             self.offered.append(run.thread_id)
             if run.thread_id == "chat_alice":
                 await held.wait()
-            return True
+            _CURRENT_BROKER.answer_offer(run.run_id, True, provider_key=self.public_key)
 
     provider = SlowAboutAlice()
     patient_broker.register_provider({AGENT: provider})
@@ -767,11 +778,11 @@ async def test_one_conversation_is_handed_over_one_utterance_at_a_time(patient_b
     held = asyncio.Event()
 
     class SlowAboutTheFirst(Recording):
-        async def deliver(self, run) -> bool:
+        async def deliver(self, run) -> None:
             self.offered.append(run.run_id)
             if run.run_id == "run_1":
                 await held.wait()
-            return True
+            _CURRENT_BROKER.answer_offer(run.run_id, True, provider_key=self.public_key)
 
     provider = SlowAboutTheFirst()
     patient_broker.register_provider({AGENT: provider})

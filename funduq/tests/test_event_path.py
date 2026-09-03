@@ -27,8 +27,11 @@ class _Taker:
     public_key = "sdk_1"
     max_concurrent_runs = None
 
-    async def deliver(self, run) -> bool:
-        return True
+    def __init__(self, broker: RunBroker) -> None:
+        self.broker = broker
+
+    async def deliver(self, run) -> None:
+        self.broker.answer_offer(run.run_id, True, provider_key=self.public_key)
 
     async def cancel(self, run_id: str) -> bool:
         return True
@@ -37,7 +40,7 @@ async def _delivered(broker: RunBroker, key: str = "sdk_1"):
     through a handler rather than by reading `run.in_queue`: the run has its
     own lane from the moment it is queued, and reading its queue from a test
     is racing that lane for it."""
-    provider = _Taker()
+    provider = _Taker(broker)
     provider.public_key = key
     broker.register_provider({AGENT: provider})
     relayed: list = []
@@ -79,10 +82,15 @@ async def test_an_event_for_someone_elses_run_is_refused(funduq):
     try:
         _run, relayed = await _delivered(broker, key="sdk_owner")
 
-        assert funduq.report_event("run_1", {"type": "CUSTOM"}, claimed_by="sdk_impostor") is False
-        assert funduq.finish_run("run_1", claimed_by="sdk_impostor") is False
+        # The door attributes and accepts the report for judgment (True =
+        # the run is known); whether the reporter holds the run is judged
+        # by the run's owner — and the impostor's words never reach the
+        # record. The run also does not end on an impostor's say-so.
+        assert funduq.report_event("run_1", {"type": "CUSTOM"}, claimed_by="sdk_impostor") is True
+        assert funduq.finish_run("run_1", claimed_by="sdk_impostor") is True
         await asyncio.sleep(0.02)
         assert relayed == []
+        assert broker.get("run_1") is not None, "an impostor's finish ends nothing"
 
         assert funduq.report_event("run_1", {"type": "CUSTOM"}, claimed_by="sdk_owner") is True
         async with asyncio.timeout(1):
