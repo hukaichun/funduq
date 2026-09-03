@@ -4,9 +4,13 @@
 [![License: Apache 2.0](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE)
 [![Protocol: AG-UI & A2A](https://img.shields.io/badge/Protocols-AG--UI%20%7C%20A2A-blue.svg)](docs/integration-contract.md)
 
-**funduq is not an agent framework.** It does not write your agent, choose your model, or run your prompts. There is no chain, no graph, and no opinion about how an agent thinks.
+**funduq is the seat between a caller and an agent provider.** The agent stays where its owner runs it, under its owner's key — a laptop, a private VPC, an office behind NAT — and connects *outbound*; funduq makes it reachable over standard [AG-UI](https://docs.ag-ui.com/) or [A2A](https://a2a-protocol.org/), holds each run, and records who asked and through whose hands the work passed. No public IP, no open ingress port, no tunnel service, and no transport of funduq's own.
 
-**It is the seat between a caller and an agent provider.** It holds the run, records who asked and through whose hands the work passed, and hands the work to whoever is serving — over standard [AG-UI](https://docs.ag-ui.com/) or [A2A](https://a2a-protocol.org/), while implementing neither transport itself. An agent on a laptop, behind NAT, or in a private VPC connects *outbound* and becomes reachable; no public IP, no open ingress port, no tunnel service.
+**It is not an agent framework.** It does not write your agent, choose your model, or run your prompts. There is no chain, no graph, and no opinion about how an agent thinks.
+
+## Why it exists
+
+Agents are built and run by different owners in different places, and the moment one is called across an owner's boundary two things go missing. *Reachability*: the agent has to be hosted somewhere the caller can reach, which is exactly what a laptop, a private subnet or a NAT'd office does not offer. *The record*: who asked, and through whose hands the work passed before it landed, exists only in whichever party's logs happened to keep it — and each party keeps its own. funduq is a third seat that supplies both without taking a side: it never speaks in a guest's name and never decides what an agent may do, so a caller and a provider that share nothing but the two standard protocols can still do business, and one register says what happened.
 
 That seat is not a category anyone invented for this. A 2026 survey of agentic-web infrastructure ([arXiv 2606.20570](https://arxiv.org/pdf/2606.20570)) lists as still-unsolved exactly three things: an intermediary between callers and agent providers, responsibility tracked across delegation hops, and a run's lifecycle held by someone other than the two parties.
 
