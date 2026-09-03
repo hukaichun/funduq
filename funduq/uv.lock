@@ -404,7 +404,7 @@ wheels = [
 
 [[package]]
 name = "funduq"
-version = "0.0.6"
+version = "0.0.7"
 source = { editable = "." }
 dependencies = [
     { name = "a2a-sdk" },
@@ -456,7 +456,7 @@ dev = [
 
 [[package]]
 name = "funduq-contract"
-version = "0.0.9"
+version = "0.0.10"
 source = { editable = "../funduq-contract" }
 dependencies = [
     { name = "ag-ui-protocol" },
@@ -480,7 +480,7 @@ dev = [{ name = "pytest", specifier = ">=8.0" }]
 
 [[package]]
 name = "funduq-provider-sdk"
-version = "0.0.7"
+version = "0.0.8"
 source = { editable = "../funduq-provider-sdk" }
 dependencies = [
     { name = "ag-ui-protocol" },
