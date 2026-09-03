@@ -162,16 +162,22 @@ root ──extend──> A ──extend──> B ──break──> C
 
 ### 3.2 它已經在 funduq 的設計記錄裡了
 
-`docs/design-records.md`「One question per delegation edge decides the whole
-tree」：
+design-records「One question per delegation edge decides the whole
+tree」（頁面已隨 `5503c91` 刪除，引文釘在
+[歷史](https://github.com/hukaichun/funduq/blob/c3bbc5c65fa0ced3520d2858c94fd9fed70a81ab/docs/design-records.md)）：
 
 > *if the sub agent gets stuck or fails, can I carry on without it?*
 > **Yes breaks the chain**（且為預設）… **No extends the chain**.
 
-**break ＝ resource owner，extend ＝ agency。** 而
-`docs/mechanisms/responsibility-chains.md` 的開場問題**逐字就是這個問題**：
-「the sub-agent pauses for a human answer (`input-required`). Now: **who may
-answer?**」
+**break ＝ resource owner，extend ＝ agency。** 而機制頁（已隨 `5503c91`
+刪除，釘在
+[歷史](https://github.com/hukaichun/funduq/blob/c3bbc5c65fa0ced3520d2858c94fd9fed70a81ab/docs/mechanisms/responsibility-chains.md)；
+機制本身已實作：`identity.verify_resolution`、
+`test_responsibility_chains.py`）的開場問題**逐字就是這個問題**（2026-09-03 對釘住的原文校正——原引文多了
+一個原文沒有的 "Now:"）：
+「the sub-agent pauses for a human answer (`input-required`). **Who may
+answer**, what proves they were entitled to, and what records that it was
+them?」
 
 被獨立重新導出一次，是這個設計自然的證據。
 
