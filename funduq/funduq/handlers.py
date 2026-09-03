@@ -70,9 +70,9 @@ async def _handle_relay(funduq: "Funduq", run: Run, cmd: RelayEvent) -> None:
                 run.run_id,
                 e,
             )
-            while not run.in_queue.empty():
-                run.in_queue.get_nowait()
-            funduq.broker.push(run.run_id, Fail("provider sent a malformed AG-UI event"))
+            # The owner ends the run with this the moment the handler returns;
+            # anything else the provider already reported is dropped unread.
+            run.poison = "provider sent a malformed AG-UI event"
             return
     if event.get("type") == EventType.RUN_FINISHED:
         run.saw_run_finished = True

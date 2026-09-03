@@ -22,8 +22,8 @@ class FunduqLink(ABC):
         pass
 
     @abstractmethod
-    async def deliver(self, run: DeliveredRun) -> bool | Refusal:
-        """Accept (`True`), decline transiently (`False` — full right now), or refuse permanently (`Refusal`)."""
+    async def deliver(self, run: DeliveredRun) -> None:
+        """Hand the offered run over. The verdict (accept `True` / decline `False` / `Refusal`) does not ride the return — it goes back to funduq through the same road reports take (`answer_offer`), in the call path that learned it, so nothing funduq-side has to win a scheduling race to hear it."""
         pass
 
     @abstractmethod

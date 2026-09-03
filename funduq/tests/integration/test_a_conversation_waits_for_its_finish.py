@@ -52,12 +52,15 @@ class _SlowLink(InProcessLink):
         self.verdict: bool | None = None
         self.offered: list[str] = []
 
-    async def deliver(self, run) -> bool:
+    async def deliver(self, run) -> None:
         self.offered.append(run.run_id)
         if self.verdict is not None:
-            return self.verdict
+            self._funduq.answer_offer(
+                run.run_id, self.verdict, provider_key=self.public_key
+            )
+            return
         await self.gate.wait()
-        return await super().deliver(run)
+        await super().deliver(run)
 
 
 async def _settle() -> None:

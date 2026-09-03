@@ -28,6 +28,40 @@ entries below say what to change and not only what moved.
 
 ---
 
+## Revision 17 — 2026-09-03
+
+**A verdict cannot be outrun** (#249). A provider that accepted an offer
+and streamed its first events in the same breath had those events refused
+by funduq's own door: the verdict rode `deliver`'s return value while the
+events walked in through `report_event`, and nothing ordered the two
+roads — core released its "yes" to the provider before recording it for
+itself. Revision 11's rationale for withdrawing the protocol machines
+("over a wire the provider-initiated calls are plain request/response,
+so there is nothing left for a machine to order") missed exactly this
+happens-before, which lives in no frame.
+
+The fix removes the second road instead of patching the race: everything
+a connection says about a run — the verdict included — enters through a
+door and is judged by the run's one owner in arrival order.
+
+- **`FunduqLink.deliver` (and core's `ConnectedProvider.deliver`) narrows
+  to handing the offer over**: its return no longer carries the verdict.
+- **The verdict goes through a new door, `answer_offer(run_id, answer,
+  provider_key=...)`** — `True` / `False` / a `Refusal`, the unchanged
+  vocabulary — called in the same handler that learned it, before the
+  frames behind it are processed. A transport never waits, retries, or
+  knows when funduq's bookkeeping lands.
+- **`report_event` / `finish_run` now mean "attributed and posted"**:
+  they return `False` only for an unknown run. Whether the reporting key
+  holds the run is judged by the run's owner; a misattributed report is
+  dropped and logged, not answered synchronously.
+
+The wire frames are untouched — `Offer` and `Verdict` cross exactly as
+before; what moved is where the verdict enters core. Migration for a
+transport: in the handler that reads the verdict frame, call
+`answer_offer` instead of resolving `deliver`'s return, and delete any
+retry you carried for the "nobody holds" window — the window is gone.
+
 ## Revision 16 — 2026-09-03
 
 **A resolve proof signs the ask it answers** (#236). `resolve_payload`

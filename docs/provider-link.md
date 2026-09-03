@@ -55,6 +55,16 @@ false, which is a guard, not a path. A provider that had actually taken the
 run and lost its answer sees the same run offered again and simply accepts
 again.
 
+**A verdict cannot be outrun.** A provider may accept and start streaming
+in the same breath — write the verdict and its first events in one burst —
+and none of it is lost: everything a connection says about a run, the
+verdict included, enters core through the same road and is judged in
+arrival order by the run's one owner. The single obligation this puts on a
+transport is to hand the verdict to core (`answer_offer`) in the same
+handler that reads the verdict frame, before it processes the frames
+behind it; it never needs to wait, retry, or know when funduq's own
+bookkeeping lands.
+
 ## Up the link: plain requests
 
 Every provider→funduq operation is a plain request with a response — no ack

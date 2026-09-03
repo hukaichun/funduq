@@ -109,7 +109,11 @@ async def test_a_permanent_refusal_fails_the_run_with_the_providers_reason(brisk
 
         async def deliver(self, run):
             self.offers += 1
-            return Refusal(reason="this agent was retired, run something newer")
+            brisk.answer_offer(
+                run.run_id,
+                Refusal(reason="this agent was retired, run something newer"),
+                provider_key=self.public_key,
+            )
 
         async def cancel(self, run_id: str) -> bool:
             return True

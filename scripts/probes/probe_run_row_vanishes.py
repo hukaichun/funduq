@@ -78,8 +78,8 @@ class _Taker:
         self.public_key = public_key
         self.max_concurrent_runs = None
 
-    async def deliver(self, run) -> bool:
-        return True
+    async def deliver(self, run) -> None:
+        self.funduq.answer_offer(run.run_id, True, provider_key=self.public_key)
 
     async def cancel(self, run_id: str) -> bool:
         return True
@@ -105,6 +105,7 @@ async def main() -> int:
     key = Ed25519PrivateKey.generate()
     public_key = key.public_key().public_bytes_raw().hex()
     link = _Taker(key, public_key)
+    link.funduq = funduq
     await funduq.attach_provider(link)
     registration = await funduq.register_agents(link, [Registration(name="a")])
     agent = registration["a"]
