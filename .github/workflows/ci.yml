@@ -131,6 +131,28 @@ jobs:
       - name: what would be published
         run: ls -la dist
 
+  # `mkdocs build --strict` only covers docs/ — 5503c91 removed pages and
+  # passed strict while README.md kept linking to them (#244). The front
+  # page gets the same guarantee here: every relative link resolves.
+  readme-links:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: relative links in README resolve
+        run: |
+          set -euo pipefail
+          fail=0
+          while IFS= read -r target; do
+            if [ ! -e "$target" ]; then
+              echo "::error::README.md links to missing $target"
+              fail=1
+            fi
+          done < <(grep -o '](\([^)]*\))' README.md \
+            | sed 's/^](//; s/)$//' \
+            | grep -v '^http' | grep -v '^#' | grep -v '^mailto' \
+            | sed 's/#.*//' | sort -u)
+          exit $fail
+
   # Everything else — the gateway, both SDKs, the reference providers and
   # the directory UI — lives in funduq-server, which carries its own CI,
   # including the app-builds probe only it can run.
