@@ -1,6 +1,6 @@
 [project]
 name = "funduq"
-version = "0.0.6"
+version = "0.0.7"
 description = "funduq core — the network-free library: agents, threads, runs, and the protocol adapters"
 requires-python = ">=3.12"
 license = "Apache-2.0"
