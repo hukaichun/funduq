@@ -20,7 +20,6 @@ from funduq.doors import (
     verify_caller,
 )
 from funduq.errors import AgentNotFound
-from funduq.kyok import strip_kyok_context
 from funduq.pause import answered_asks, outstanding_asks
 
 if TYPE_CHECKING:
@@ -90,41 +89,17 @@ class AGUIAdapter:
             )
             is_result = bool(resume) or completes_the_ask
 
-            input_dump = body.model_dump(mode="json", by_alias=True)
-            if isinstance(input_dump.get("metadata"), dict):
-                input_dump["metadata"] = strip_kyok_context(input_dump["metadata"])
-
             # Signed before the run is created, so the record keeps exactly what the agent receives.
             chain = relayed_chain(funduq, actor_chain, agent)
-
-            opened = await open_run(
-                funduq, session,
-                agent=agent,
-                thread_id=thread_id,
-                entrance="result" if is_result else "utterance",
-                ask=(
-                    PendingAsk(
-                        run_id=paused["run_id"],
-                        head_key=paused.get("head_key"),
-                        ask_ids=frozenset(outstanding),
-                    )
-                    if paused is not None and is_result
-                    else None
-                ),
-                run_input=input_dump,
-                metadata=metadata,
-                head_key=head_key,
-                actor_chain=chain,
-                protocol="ag-ui",
-            )
-            if opened is None:
-                # A result with no ask to land on: there was none, or another caller answered first.
-                return ThreadSnapshot(await repo.get_thread_snapshot(session, thread_id))
-            run_id, starting_seq = opened.run_id, opened.starting_seq
-            if opened.landed_on_ask:
+            ask = None
+            if paused is not None and is_result:
+                ask = PendingAsk(
+                    run_id=paused["run_id"],
+                    head_key=paused.get("head_key"),
+                    ask_ids=frozenset(outstanding),
+                )
                 # The run's own chain and head, never the answering party's.
-                landed = await repo.get_run(session, run_id)
-                chain, head_key = landed.actor_chain, landed.head_key
+                chain, head_key = paused.get("actor_chain"), paused.get("head_key")
 
             inbound = InboundRun(
                 agent=agent,
@@ -142,10 +117,17 @@ class AGUIAdapter:
                 forwarded_props=body.forwarded_props,
                 protocol="ag-ui",
             )
-            live = await dispatch(
+            opened = await open_run(
                 funduq, session, inbound,
-                thread_id=thread_id, run_id=run_id, starting_seq=starting_seq,
+                thread_id=thread_id,
+                entrance="result" if is_result else "utterance",
+                ask=ask,
             )
+            if opened is None:
+                # A result with no ask to land on: there was none, or another caller answered first.
+                return ThreadSnapshot(await repo.get_thread_snapshot(session, thread_id))
+            run_id = opened.run_id
+            live = await dispatch(funduq, session, inbound, opened)
 
         if not live:
             return EventStream(thread_id, run_id, offline_events(thread_id, run_id))

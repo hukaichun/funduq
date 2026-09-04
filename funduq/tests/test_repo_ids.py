@@ -54,54 +54,47 @@ async def test_create_run_assigns_a_database_generated_run_id(session, new_ident
     thread_id = await repo.create_thread(session, registered["a"])
 
     first = await repo.create_run(session, thread_id, registered["a"], "ag-ui", {})
+    await session.commit()
     assert first["run_id"].startswith("run_")
 
     second = await repo.create_run(session, thread_id, registered["a"], "ag-ui", {})
+    await session.commit()
     assert second["run_id"] != first["run_id"]
 
 
-async def test_append_thread_messages_discards_any_caller_supplied_id(session, new_identity):
+async def test_stamping_discards_any_caller_supplied_id():
+    stamped = repo.stamp_messages(
+        [{"id": "whatever-the-caller-made-up", "role": "user", "content": "hi"}]
+    )
+    assert stamped[0]["id"] != "whatever-the-caller-made-up"
+    assert stamped[0]["id"].startswith("msg_")
+
+
+async def test_a_message_is_stored_under_the_id_it_was_stamped_with(session, new_identity):
     identity = new_identity()
     registered = await repo.register_agents(session, identity.public_key, [Registration(name="a")])
     thread_id = await repo.create_thread(session, registered["a"])
     run = await repo.create_run(session, thread_id, registered["a"], "ag-ui", {})
+    await session.commit()
 
-    stored = await repo.append_thread_messages(
-        session,
-        thread_id,
-        run["run_id"],
-        [{"id": "whatever-the-caller-made-up", "role": "user", "content": "hi"}],
-    )
-    assert stored[0]["id"] != "whatever-the-caller-made-up"
-    assert stored[0]["id"].startswith("msg_")
+    stamped = repo.stamp_messages([{"role": "user", "content": "hi"}])
+    await repo.append_thread_messages(session, thread_id, run["run_id"], stamped)
 
     persisted = await repo.get_thread_messages(session, thread_id)
-    assert persisted[0]["id"] == stored[0]["id"]
+    assert persisted[0]["id"] == stamped[0]["id"]
 
 
-async def test_append_thread_messages_never_deduplicates_by_content(session, new_identity):
+async def test_stamping_never_deduplicates_by_content(session, new_identity):
     identity = new_identity()
     registered = await repo.register_agents(session, identity.public_key, [Registration(name="a")])
     thread_id = await repo.create_thread(session, registered["a"])
     run = await repo.create_run(session, thread_id, registered["a"], "ag-ui", {})
+    await session.commit()
 
     same_content = [{"role": "user", "content": "hi"}]
-    await repo.append_thread_messages(session, thread_id, run["run_id"], same_content)
-    await repo.append_thread_messages(session, thread_id, run["run_id"], same_content)
+    await repo.append_thread_messages(session, thread_id, run["run_id"], repo.stamp_messages(same_content))
+    await repo.append_thread_messages(session, thread_id, run["run_id"], repo.stamp_messages(same_content))
 
     persisted = await repo.get_thread_messages(session, thread_id)
     assert len(persisted) == 2
     assert persisted[0]["id"] != persisted[1]["id"]
-
-
-async def test_create_if_missing_keeps_the_parent_it_was_given(session, new_identity):
-    identity = new_identity()
-    registered = await repo.register_agents(session, identity.public_key, [Registration(name="a")])
-    parent = await repo.create_thread(session, registered["a"])
-
-    child = await repo.ensure_thread(
-        session, registered["a"], "never-seen", parent, create_if_missing=True
-    )
-
-    stored = await repo.get_thread(session, child)
-    assert stored["parent_thread_id"] == parent

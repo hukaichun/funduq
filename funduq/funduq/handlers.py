@@ -121,7 +121,9 @@ async def _handle_finish(funduq: "Funduq", run: Run, cmd: FinishStream) -> None:
         if settled and status in ("completed", "input-required"):
             reply_messages = reduce_events_to_messages(round_events)
             if reply_messages:
-                await repo.append_thread_messages(session, run.thread_id, run.run_id, reply_messages)
+                await repo.append_thread_messages(
+                    session, run.thread_id, run.run_id, repo.stamp_messages(reply_messages)
+                )
         if failure_event is not None:
             run.seq += 1
             await repo.append_run_event(session, run.run_id, run.seq, failure_event)

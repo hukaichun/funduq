@@ -499,24 +499,25 @@ async def get_thread_children(session: AsyncSession, thread_id: str) -> list[dic
     return [dict(row) for row in rows]
 
 
+def stamp_messages(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """The messages as funduq will store and deliver them: each under an id funduq minted, whatever the caller sent. Pure, so the ids can be named in a run's input before any row exists."""
+    return [{**message, "id": new_id("msg")} for message in messages]
+
+
 async def append_thread_messages(
     session: AsyncSession, thread_id: str, run_id: str, messages: list[dict[str, Any]]
-) -> list[dict[str, Any]]:
-    stored: list[dict[str, Any]] = []
+) -> None:
+    """Writes `messages` — already stamped — to the thread under `run_id`. Not committed."""
     for message in messages:
-        message_id = new_id("msg")
-        final_message = {**message, "id": message_id}
         await session.execute(
             insert(thread_messages).values(
                 thread_id=thread_id,
                 run_id=run_id,
-                message_id=message_id,
-                message_json=final_message,
+                message_id=message["id"],
+                message_json=message,
                 metadata=message.get("metadata", {}),
             )
         )
-        stored.append(final_message)
-    return stored
 
 
 async def get_thread_messages(session: AsyncSession, thread_id: str) -> list[dict[str, Any]]:
@@ -539,8 +540,11 @@ async def create_run(
     metadata: dict[str, Any] | None = None,
     head_key: str | None = None,
     actor_chain: list[str] | None = None,
+    *,
+    run_id: str | None = None,
 ) -> dict[str, str]:
-    run_id = new_id("run")
+    """Writes a new queued run; `input_json` is the `RunAgentInput` its provider will receive. A door mints `run_id` first so the input can name it; None mints one here. Not committed."""
+    run_id = run_id or new_id("run")
     await session.execute(
         insert(runs).values(
             run_id=run_id,
@@ -556,7 +560,6 @@ async def create_run(
             last_activity_at=_utcnow(),
         )
     )
-    await session.commit()
     return {"run_id": run_id}
 
 
@@ -600,17 +603,25 @@ async def record_cancel_request(
     await session.commit()
 
 
+async def claim_ask(session: AsyncSession, run_id: str) -> bool:
+    """Takes an `input-required` run back to "queued" — the compare-and-set that decides which answer lands on the ask. Not committed: the claim stands only once `reopen_run` has stored what the run continues with."""
+    result = await session.execute(
+        update(runs)
+        .where(runs.c.run_id == run_id, runs.c.status == "input-required")
+        .values(status="queued", last_activity_at=_utcnow())
+    )
+    return result.rowcount > 0
+
+
 async def reopen_run(
     session: AsyncSession,
     run_id: str,
     input_json: dict[str, Any],
     metadata: dict[str, Any] | None = None,
-    expected_status: str | None = None,
     answered_by: str | None = None,
-) -> bool:
-    """Puts `run_id` back to "queued" with fresh input, returning whether a row changed."""
+) -> None:
+    """Stores the `RunAgentInput` a claimed ask continues with, and who answered it. Not committed."""
     values: dict[str, Any] = {
-        "status": "queued",
         "input_json": input_json,
         "last_activity_at": _utcnow(),
     }
@@ -618,18 +629,13 @@ async def reopen_run(
         values["metadata"] = await _merge_run_metadata(
             session, run_id, metadata or {}, appending={"answeredBy": answered_by}
         )
-    where = [runs.c.run_id == run_id]
-    if expected_status is not None:
-        where.append(runs.c.status == expected_status)
-    result = await session.execute(update(runs).where(*where).values(**values))
-    await session.commit()
-    return result.rowcount > 0
+    await session.execute(update(runs).where(runs.c.run_id == run_id).values(**values))
 
 
 # The run-status state machine: which statuses each `mark_run_status` write may legally come from.
 LEGAL_STATUS_TRANSITIONS: dict[str, tuple[str, ...]] = {
     "offering": ("queued",),
-    # "queued" as well as "offering": a provider that answers after funduq gave up waiting has had its run put back in the queue (`RunBroker.accept_late_ack`).
+    # "queued" as well as "offering": an offer that was declined, went unanswered, or failed puts the run back in the queue (`Requeue`).
     "running": ("queued", "offering"),
     "input-required": ("running", "cancelling"),
     "cancelling": ("running",),

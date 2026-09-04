@@ -739,40 +739,29 @@ class Funduq:
                 session, agent, thread_id, metadata=caller_metadata,
                 create_if_missing=True, head_key=head_key,
             )
-            opened = await open_run(
-                self, session,
+            inbound = InboundRun(
                 agent=agent,
+                messages=run_input.get("messages", []),
+                metadata=caller_metadata,
+                head_key=head_key,
+                actor_chain=chain,
+                kyok=kyok,
+                state=run_input.get("state"),
+                tools=run_input.get("tools"),
+                context=run_input.get("context"),
+                resume=run_input.get("resume"),
+                parent_run_id=run_input.get("parentRunId"),
+                forwarded_props=run_input.get("forwardedProps"),
+                protocol="ag-ui",
+            )
+            opened = await open_run(
+                self, session, inbound,
                 thread_id=resolved_thread_id,
                 # An embedder speaks; it does not answer a pending ask.
                 entrance="utterance",
                 ask=None,
-                run_input=run_input,
-                metadata=caller_metadata,
-                head_key=head_key,
-                actor_chain=chain,
-                protocol="ag-ui",
             )
-            live = await dispatch(
-                self, session,
-                InboundRun(
-                    agent=agent,
-                    messages=run_input.get("messages", []),
-                    metadata=caller_metadata,
-                    head_key=head_key,
-                    actor_chain=chain,
-                    kyok=kyok,
-                    state=run_input.get("state"),
-                    tools=run_input.get("tools"),
-                    context=run_input.get("context"),
-                    resume=run_input.get("resume"),
-                    parent_run_id=run_input.get("parentRunId"),
-                    forwarded_props=run_input.get("forwardedProps"),
-                    protocol="ag-ui",
-                ),
-                thread_id=resolved_thread_id,
-                run_id=opened.run_id,
-                starting_seq=opened.starting_seq,
-            )
+            live = await dispatch(self, session, inbound, opened)
 
         return RunHandle(
             run_id=opened.run_id,
@@ -806,9 +795,24 @@ class Funduq:
             caller_metadata, head_key, actor_chain = await verify_caller(session, metadata or {}, presenter_key=presenter_key)
             caller_metadata, kyok = await resolve_kyok(session, caller_metadata)
 
-            opened = await open_run(
-                self, session,
+            inbound = InboundRun(
                 agent=agent,
+                messages=run_input.get("messages", []),
+                metadata=caller_metadata,
+                # The run's own, not the answering party's: this is the same run continuing, and what the agent verifies must not change because somebody else answered its pause.
+                head_key=stored.head_key,
+                actor_chain=stored.actor_chain,
+                kyok=kyok,
+                state=run_input.get("state"),
+                tools=run_input.get("tools"),
+                context=run_input.get("context"),
+                resume=run_input.get("resume"),
+                parent_run_id=run_input.get("parentRunId"),
+                forwarded_props=run_input.get("forwardedProps"),
+                protocol=stored.protocol or "ag-ui",
+            )
+            opened = await open_run(
+                self, session, inbound,
                 thread_id=stored.thread_id,
                 entrance="result",
                 ask=PendingAsk(
@@ -816,38 +820,11 @@ class Funduq:
                     head_key=stored.head_key,
                     ask_ids=frozenset(outstanding_asks(stored.metadata or {})),
                 ),
-                run_input=run_input,
-                metadata=caller_metadata,
-                head_key=head_key,
-                actor_chain=actor_chain,
-                protocol=stored.protocol or "ag-ui",
             )
             if opened is None:
                 # Another result reached the same ask first.
                 raise NoPendingAsk(f"run '{run_id}' is no longer waiting for a result")
-
-            live = await dispatch(
-                self, session,
-                InboundRun(
-                    agent=agent,
-                    messages=run_input.get("messages", []),
-                    metadata=caller_metadata,
-                    # The run's own, not the answering party's: this is the same run continuing, and what the agent verifies must not change because somebody else answered its pause.
-                    head_key=stored.head_key,
-                    actor_chain=stored.actor_chain,
-                    kyok=kyok,
-                    state=run_input.get("state"),
-                    tools=run_input.get("tools"),
-                    context=run_input.get("context"),
-                    resume=run_input.get("resume"),
-                    parent_run_id=run_input.get("parentRunId"),
-                    forwarded_props=run_input.get("forwardedProps"),
-                    protocol=stored.protocol or "ag-ui",
-                ),
-                thread_id=stored.thread_id,
-                run_id=run_id,
-                starting_seq=opened.starting_seq,
-            )
+            live = await dispatch(self, session, inbound, opened)
 
         return RunHandle(
             run_id=run_id,
