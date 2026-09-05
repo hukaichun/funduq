@@ -122,6 +122,8 @@ async def test_orphans_reaped_at_start_get_terminal_events(settings, session, ne
     created = await repo.create_run(session, thread_id, agent, "ag-ui", {})
     await session.commit()
     run_id = created["run_id"]
+    # Held by the previous process: only a run somebody had in hand is an orphan.
+    await repo.mark_run_status(session, run_id, "running")
 
     reborn = Funduq(settings)
     try:

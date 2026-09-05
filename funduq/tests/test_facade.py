@@ -318,16 +318,21 @@ async def own_funduq(settings):
 
 
 async def test_start_reconciles_what_the_last_process_left_behind(own_funduq, new_identity):
+    """A run the last process *held* is failed; one that was only *waiting* is taken back (#122)."""
     agent_id = await _register(own_funduq, "echo", new_identity())
     async with own_funduq.session() as session:
         thread_id = await repo.create_thread(session, agent_id)
-        stale = (await repo.create_run(session, thread_id, agent_id, "ag-ui", {"messages": []}))["run_id"]
+        held = (await repo.create_run(session, thread_id, agent_id, "ag-ui", {"messages": []}))["run_id"]
+        await repo.mark_run_status(session, held, "running")
+        waiting = (await repo.create_run(session, thread_id, agent_id, "ag-ui", {"messages": []}))["run_id"]
         await session.commit()
 
     orphaned = await own_funduq.start()
 
-    assert orphaned == [stale]
-    assert (await own_funduq.get_run(stale)).status == "failed"
+    assert orphaned == [held]
+    assert (await own_funduq.get_run(held)).status == "failed"
+    assert (await own_funduq.get_run(waiting)).status == "queued"
+    assert waiting in own_funduq.active_runs()
 
 
 async def test_start_runs_once_so_a_second_call_cannot_reap_live_work(own_funduq, new_identity):

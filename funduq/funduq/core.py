@@ -54,7 +54,7 @@ from funduq.identity import (
     funduq_connect_payload,
     verify_signature,
 )
-from funduq.kyok import ConnectedLLMProvider, KyokRelay
+from funduq.kyok import ConnectedLLMProvider, KyokBinding, KyokRelay, parse_kyok_opt_in
 from funduq.pause import outstanding_asks
 from funduq.models import AgentRecord, AgentRef, AgentSummary, LlmRef, LlmSummary, RunRecord
 
@@ -371,7 +371,7 @@ class Funduq:
 
 
     async def start(self) -> list[str]:
-        """Run once: fail any run left queued/running from a prior process and start dispatch."""
+        """Run once: fail every run the previous process was holding, start dispatch, and take back every run that was only ever waiting."""
         if self._started:
             return []
         self._started = True
@@ -381,13 +381,56 @@ class Funduq:
             await close_with_terminal_event(self, run_id, "orphaned_by_funduq_restart")
         if orphaned:
             logger.warning(
-                "start: marked %d run(s) failed — still queued/running from before this "
-                "process, and funduq's dispatch state does not survive a restart: %s",
+                "start: marked %d run(s) failed — offered or running under the previous "
+                "process, whose claims and connections did not survive it: %s",
                 len(orphaned),
                 orphaned,
             )
         self.broker.start()
+        await self._recover_queued()
         return orphaned
+
+    async def _recover_queued(self) -> None:
+        """Re-enqueues every `queued` row, oldest first. Its row is the delivered input, so nothing is rebuilt; a KYOK binding is read back from the opt-in the row carries. Nobody serves anything this early — providers connect after start — so each waits on the unserved clock like any run whose provider stepped away."""
+        lost: list[str] = []
+        async with self.session() as session:
+            waiting = await repo.queued_runs(session)
+            for stored in waiting:
+                agent = AgentRef(provider_key=stored.provider_key, name=stored.agent_name)
+                props = stored.input_json.get("forwardedProps")
+                addressed = props.get("addressedRunId") if isinstance(props, dict) else None
+                if addressed is not None and self.broker.get(addressed) is None:
+                    # An interjection names the run it changes; that run died with the process, so the words have nowhere to go.
+                    await self.mark_run_status(
+                        session, stored.run_id, "failed",
+                        metadata={"failureReason": "interjection_target_lost"},
+                    )
+                    lost.append(stored.run_id)
+                    continue
+                opt_in = parse_kyok_opt_in(stored.metadata or {})
+                if opt_in is not None and opt_in.llm_provider is not None:
+                    self.kyok_relay.bind_run(
+                        stored.run_id,
+                        KyokBinding(
+                            llm_provider=opt_in.llm_provider,
+                            context=opt_in.context,
+                            actor_chain=stored.actor_chain,
+                        ),
+                    )
+                self.broker.enqueue_run(
+                    stored.run_id, agent, stored.thread_id, stored.input_json, stored.protocol,
+                    make_handlers(self),
+                    seq=await repo.get_last_event_seq(session, stored.run_id),
+                    addressed_run_id=addressed,
+                )
+            await session.commit()
+        for run_id in lost:
+            await close_with_terminal_event(self, run_id, "interjection_target_lost")
+        if waiting:
+            logger.info(
+                "start: took back %d queued run(s) from the previous process (%d interjection(s) whose target was lost)",
+                len(waiting), len(lost),
+            )
 
     async def health(self, timeout: float = 2.0) -> Health:
         """Probe the database within `timeout` and report reachability, schema, and dispatch state."""
@@ -709,7 +752,9 @@ class Funduq:
         seq: int = 0,
         addressed_run_id: str | None = None,
     ) -> RunSnapshot | None:
-        """Hands the run to the broker; None if nobody is serving its agent."""
+        """Hands the run to the broker; None if nobody is serving its agent. This is the door's one reading of the roster, taken in the same synchronous breath as the enqueue it guards: a run accepted at the door for an agent nobody serves is one nothing could ever finish, and the caller is told so now (`agent_offline`) rather than after a wait."""
+        if self.broker.serving(agent) is None:
+            return None
         return self.broker.enqueue_run(
             run_id,
             agent,

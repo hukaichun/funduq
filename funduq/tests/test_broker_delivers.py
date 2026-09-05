@@ -181,7 +181,7 @@ async def test_a_provider_past_its_abnormality_allowance_is_withdrawn():
         assert b.quality()["pk_provider"].misdeclared == 2
         offered_when_withdrawn = list(provider.offered)
 
-        assert _enqueue(b, "run_2") is None, "withdrawn means not serving"
+        _enqueue(b, "run_2")  # queued, but withdrawn means not serving: it waits
         await asyncio.sleep(0.2)
         assert provider.offered == offered_when_withdrawn, (
             "withdrawn means withdrawn — no more offers"
@@ -804,23 +804,21 @@ async def test_one_conversation_is_handed_over_one_utterance_at_a_time(patient_b
     await _until(lambda: provider.offered == ["run_1", "run_2"])
 
 
-async def test_a_run_is_not_accepted_for_an_agent_nobody_is_serving(broker):
-    """A run is only ever born with a provider online, and the lane is written
-    to open by offering rather than by waiting for somebody to appear. Losing a
-    provider later is an ordinary thing that happens to a live run; never
-    having had one is not, and taking such a run would mean holding something
-    nothing could ever finish.
-
-    The refusal is a **value**, because the door cannot ask this first and
-    then act on the answer: `await session.commit()` sits between, and a
-    provider leaving inside it made the two readings disagree. One party
-    reads the roster, with the insert it guards; the door acts on what it
-    gets back — see `tests/test_a_provider_leaving_during_dispatch.py`."""
-    assert _enqueue(broker, "run_1") is None
+async def test_a_run_for_an_agent_nobody_is_serving_waits_for_one(broker):
+    """The broker does not ask whether anyone serves the agent: a run it is
+    handed is queued, and waits — on the unserved clock — for a provider to
+    register. Whether to *accept* a run for an unserved agent at all is the
+    door's question (`Funduq.enqueue_run` answers `None`, and the caller
+    gets `agent_offline`); a run read back after a restart is the one that
+    must be allowed to wait, because at start nobody serves anything yet
+    (#122)."""
+    _enqueue(broker, "run_1")
+    await asyncio.sleep(0.05)
+    assert broker.get("run_1") is not None
+    assert broker.get("run_1").claimed_by is None, "held, not offered — nobody to offer it to"
 
     broker.register_provider({AGENT: Recording()})
-    _enqueue(broker, "run_2")
-    await _until(lambda: broker.get("run_2").is_claimed)
+    await _until(lambda: broker.get("run_1").is_claimed)
 
 
 async def test_an_interjection_is_offered_while_the_run_it_names_is_running(broker):

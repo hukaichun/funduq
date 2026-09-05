@@ -147,7 +147,6 @@ Several names circulate and they are different packages: **`funduq-contract`, `f
 Directions, not commitments. If one of these matters to you, open an issue rather than assuming it is underway.
 
 - **Provider reconnection with pending runs held, not failed** — blocked on a prerequisite the code now names ([funduq#220](https://github.com/hukaichun/funduq/issues/220)).
-- **Queued runs surviving a restart** ([funduq#122](https://github.com/hukaichun/funduq/issues/122)).
 - **Cross-funduq discovery**: `agent@funduq.example.com` addressing with client-side resolution — no inter-funduq proxying. A design note [kept in history](https://github.com/hukaichun/funduq/blob/d78d0638c0ec2126167240c62471651b5468d35b/design/federation-and-anti-abuse.md).
 - **Horizontal gateway scaling.** The measured baseline — 0 of 8 scenarios, two real processes, SQLite and Postgres alike — and what each scenario was are in [operational limits](https://hukaichun.github.io/funduq/operational-limits/).
 
