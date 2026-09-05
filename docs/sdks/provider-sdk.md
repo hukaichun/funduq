@@ -54,3 +54,14 @@ Both halves: `sign_hop` / `new_chain` / `extend_chain` to participate in
 an actor chain, and `verify_chain` to police one — the twin of funduq's
 verifier, same rules, no roster resolution, so an LLM provider or any
 consumer can verify a delegation path without importing funduq.
+
+**A chain reached you through funduq only if its last hop says so.** funduq
+signs one hop of its own onto every chain it relays, naming the agent it
+dispatched to under `dispatchedTo`. Nobody else can sign that hop. So an
+agent reading `forwardedProps.actorChain` checks two things before treating
+it as relayed: the tail hop's key is the funduq key its link proved at the
+handshake, and `dispatchedTo` is itself. A chain that fails either is
+something the caller typed into its own `forwardedProps`, or a real chain
+carried to the wrong agent — a caller's words, not funduq's. The SDK does not
+make this check for you; whether to accept a chain at all is your policy, and
+the check is the first line of it.
