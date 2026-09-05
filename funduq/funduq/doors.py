@@ -8,6 +8,7 @@ from funduq import repo
 from ag_ui.core import RunErrorEvent, RunStartedEvent
 
 from funduq.agui import build_run_agent_input
+from funduq.ids import new_id
 from funduq.errors import InvalidRunInput, LlmProviderNotFound
 from funduq.identity import (
     InvalidChain,
@@ -101,57 +102,13 @@ async def dispatch(
     funduq: "Funduq",
     session: "AsyncSession",
     inbound: InboundRun,
-    *,
-    thread_id: str,
-    run_id: str,
-    starting_seq: int,
+    opened: Opened,
 ) -> bool:
-    """Appends the inbound messages to the thread, builds the provider's AG-UI input, commits, and hands the run to the broker."""
-    if inbound.addressed_run_id is not None:
-        target = funduq.broker.get(inbound.addressed_run_id)
-        if target is None or target.thread_id != thread_id:
-            raise InvalidRunInput(
-                f"interjection names '{inbound.addressed_run_id}', which is not a "
-                "live run on this thread"
-            )
-
-    messages = await repo.append_thread_messages(
-        session, thread_id, run_id, inbound.messages
-    )
-
+    """Hands an opened run to the broker with the input its row holds; False if nobody serves its agent, in which case the row is failed `agent_offline`."""
     kyok_ref = inbound.kyok_ref
-
-    # Relayed exactly as handed in.
-    relayed_chain = inbound.actor_chain
-
-    try:
-        input_json = build_run_agent_input(
-            thread_id,
-            run_id,
-            messages,
-            state=inbound.state,
-            tools=inbound.tools,
-            context=inbound.context,
-            forwarded_props=build_forwarded_props(
-                funduq.settings.token_signing_secret,
-                run_id,
-                inbound.agent,
-                kyok_ref is not None,
-                inbound.forwarded_props,
-                relayed_chain,
-                addressed_run_id=inbound.addressed_run_id,
-            ),
-            resume=inbound.resume,
-            parent_run_id=inbound.parent_run_id,
-        )
-    except ValueError as e:
-        raise InvalidRunInput(str(e)) from e
-
-    await session.commit()
-
     if kyok_ref is not None:
         funduq.kyok_relay.bind_run(
-            run_id,
+            opened.run_id,
             KyokBinding(
                 llm_provider=kyok_ref,
                 context=inbound.kyok.context,
@@ -160,19 +117,19 @@ async def dispatch(
         )
     if (
         funduq.enqueue_run(
-            run_id,
+            opened.run_id,
             inbound.agent,
-            thread_id,
-            input_json,
+            opened.thread_id,
+            opened.input_json,
             inbound.protocol,
-            seq=starting_seq,
+            seq=opened.starting_seq,
             addressed_run_id=inbound.addressed_run_id,
         )
         is None
     ):
-        funduq.kyok_relay.discard(run_id)
+        funduq.kyok_relay.discard(opened.run_id)
         await funduq.mark_run_status(
-            session, run_id, "failed", metadata={"failureReason": "agent_offline"}
+            session, opened.run_id, "failed", metadata={"failureReason": "agent_offline"}
         )
         await session.commit()
         return False
@@ -191,11 +148,12 @@ class PendingAsk:
 
 @dataclass(frozen=True)
 class Opened:
-    """The run a request resolved to: a reopened ask, or a fresh one on the thread."""
+    """The run a request resolved to — a reopened ask, or a fresh one on the thread — and the input its row now holds, which is exactly what the provider will receive."""
 
     run_id: str
+    thread_id: str
     starting_seq: int
-    landed_on_ask: bool
+    input_json: dict[str, Any]
 
 
 def authorize_cancel(run: Any, metadata: dict[str, Any]) -> str | None:
@@ -232,50 +190,87 @@ def authorize_view(run: Any, metadata: dict[str, Any]) -> str | None:
 async def open_run(
     funduq: "Funduq",
     session: "AsyncSession",
+    inbound: InboundRun,
     *,
-    agent: AgentRef,
     thread_id: str,
     entrance: Literal["utterance", "result"],
     ask: PendingAsk | None,
-    run_input: dict[str, Any],
-    metadata: dict[str, Any],
-    head_key: str | None,
-    protocol: str,
-    actor_chain: Any = None,
 ) -> Opened | None:
-    """Resolves a request to the run it belongs on: the pending ask it answers, or a new run queued on the thread."""
+    """Resolves a request to the run it belongs on — the pending ask it answers, or a new run queued on the thread — and writes that run's row with the `RunAgentInput` its provider will receive.
+
+    One form in the database: the row holds the delivered input, from either
+    door. So the ids are taken first (the ask claimed or a fresh run id
+    minted, the turn's messages stamped), the input is built naming them,
+    and only then are the row and the messages written — in one commit.
+    """
+    if inbound.addressed_run_id is not None:
+        target = funduq.broker.get(inbound.addressed_run_id)
+        if target is None or target.thread_id != thread_id:
+            raise InvalidRunInput(
+                f"interjection names '{inbound.addressed_run_id}', which is not a "
+                "live run on this thread"
+            )
+
+    answered_by = None
+    landed_on_ask = False
     if ask is not None:
-        answered_by = None
         if ask.head_key is not None:
+            # A chained ask names its authorities; the resolution must be signed by one of them, over exactly the asks still open.
             answered_by = verify_resolution(
-                metadata.get("resolution") or {},
+                inbound.metadata.get("resolution") or {},
                 ask.run_id,
                 set(ask.ask_ids),
-                {ask.head_key, agent.provider_key},
+                {ask.head_key, inbound.agent.provider_key},
             )
-        if await repo.reopen_run(
-            session,
-            ask.run_id,
-            run_input,
-            metadata=metadata,
-            expected_status="input-required",
-            answered_by=answered_by,
-        ):
-            return Opened(
-                run_id=ask.run_id,
-                starting_seq=await repo.get_last_event_seq(session, ask.run_id),
-                landed_on_ask=True,
-            )
-
-    if entrance == "result":
+        landed_on_ask = await repo.claim_ask(session, ask.run_id)
+    if landed_on_ask:
+        run_id = ask.run_id
+        starting_seq = await repo.get_last_event_seq(session, run_id)
+    elif entrance == "result":
         return None
+    else:
+        await repo.ensure_queue_room(session, thread_id, funduq.settings.thread_queue_limit)
+        run_id = new_id("run")
+        starting_seq = 0
 
-    await repo.ensure_queue_room(session, thread_id, funduq.settings.thread_queue_limit)
-    created = await repo.create_run(
-        session, thread_id, agent, protocol, run_input,
-        metadata=metadata, head_key=head_key, actor_chain=actor_chain,
-    )
-    return Opened(run_id=created["run_id"], starting_seq=0, landed_on_ask=False)
+    messages = repo.stamp_messages(inbound.messages)
+    try:
+        input_json = build_run_agent_input(
+            thread_id,
+            run_id,
+            messages,
+            state=inbound.state,
+            tools=inbound.tools,
+            context=inbound.context,
+            forwarded_props=build_forwarded_props(
+                funduq.settings.token_signing_secret,
+                run_id,
+                inbound.agent,
+                inbound.kyok_ref is not None,
+                inbound.forwarded_props,
+                # Relayed exactly as handed in.
+                inbound.actor_chain,
+                addressed_run_id=inbound.addressed_run_id,
+            ),
+            resume=inbound.resume,
+            parent_run_id=inbound.parent_run_id,
+        )
+    except ValueError as e:
+        raise InvalidRunInput(str(e)) from e
+
+    if landed_on_ask:
+        await repo.reopen_run(
+            session, run_id, input_json, metadata=inbound.metadata, answered_by=answered_by
+        )
+    else:
+        await repo.create_run(
+            session, thread_id, inbound.agent, inbound.protocol, input_json,
+            metadata=inbound.metadata, head_key=inbound.head_key,
+            actor_chain=inbound.actor_chain, run_id=run_id,
+        )
+    await repo.append_thread_messages(session, thread_id, run_id, messages)
+    await session.commit()
+    return Opened(run_id=run_id, thread_id=thread_id, starting_seq=starting_seq, input_json=input_json)
 
 
 async def offline_events(thread_id: str, run_id: str) -> AsyncIterator[dict[str, Any]]:

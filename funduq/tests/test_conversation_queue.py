@@ -205,7 +205,7 @@ async def test_an_unaddressed_message_does_not_resume_the_paused_task(funduq, se
     assert len(provider.rounds) == 3
 
 
-async def test_reopen_run_refuses_a_run_that_is_not_in_the_expected_status(session, new_identity):
+async def test_claiming_an_ask_a_run_is_not_waiting_on_changes_nothing(session, new_identity):
     identity = new_identity()
     registered = await repo.register_agents(session, identity.public_key, [Registration(name="r")])
     agent = registered["r"]
@@ -213,11 +213,7 @@ async def test_reopen_run_refuses_a_run_that_is_not_in_the_expected_status(sessi
     created = await repo.create_run(session, thread_id, agent, "ag-ui", {})
     await session.commit()
 
-    reopened = await repo.reopen_run(
-        session, created["run_id"], {}, expected_status="input-required"
-    )
-
-    assert reopened is False
+    assert await repo.claim_ask(session, created["run_id"]) is False
     stored = await repo.get_run(session, created["run_id"])
     assert stored.status == "queued"
 

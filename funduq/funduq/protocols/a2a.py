@@ -25,8 +25,10 @@ from google.protobuf.json_format import MessageToDict, ParseDict, ParseError
 from funduq import repo
 from funduq.doors import (
     InboundRun,
+    PendingAsk,
     authorize_view,
     dispatch,
+    open_run,
     relayed_chain,
     resolve_kyok,
     verify_caller,
@@ -39,7 +41,7 @@ from funduq.errors import (
     ThreadNotFound,
     ThreadOwnershipMismatch,
 )
-from funduq.identity import InvalidView, verify_resolution
+from funduq.identity import InvalidView
 from funduq.pause import outstanding_asks
 from funduq.props import ADDRESSED_RUN_METADATA_KEY
 from funduq.models import AgentRef
@@ -328,78 +330,55 @@ class A2AAdapter:
             )
 
             messages = a2a_message_to_agui_messages(params.get("message", {}))
-            run_input = {"thread_id": thread_id, "messages": messages}
 
-            # Two lanes.
+            addressed_run_id = (
+                # The extension convention puts the key in the Message's own metadata map; the request-level map is accepted too.
+                (params.get("message", {}).get("metadata") or {}).get(ADDRESSED_RUN_METADATA_KEY)
+                or metadata.get(ADDRESSED_RUN_METADATA_KEY)
+            )
+
+            def _inbound(chain: Any, head: str | None) -> InboundRun:
+                return InboundRun(
+                    agent=agent,
+                    messages=messages,
+                    metadata=metadata,
+                    head_key=head,
+                    actor_chain=chain,
+                    kyok=kyok,
+                    addressed_run_id=addressed_run_id,
+                    protocol="a2a",
+                )
+
+            # Two lanes: a message naming a task that is waiting answers it; anything else is a new run on the context.
             task_id = params.get("taskId")
             addressed = await repo.get_run(session, task_id) if task_id else None
-            # None all the way through for an unbound run: there is no authority set to check against, so there is none to record.
-            answered_by = None
+            opened = None
             if (
                 addressed is not None
                 and addressed.thread_id == thread_id
                 and addressed.status == "input-required"
-                and addressed.head_key is not None
             ):
-                # A chained ask names its authorities; the resolution must be
-                # signed by one of them, over exactly the asks still open.
-                answered_by = verify_resolution(
-                    metadata.get("resolution") or {},
-                    task_id,
-                    outstanding_asks(addressed.metadata or {}),
-                    {addressed.head_key, agent.provider_key},
-                )
-            reopened = (
-                addressed is not None
-                and addressed.thread_id == thread_id
-                and addressed.status == "input-required"
-                and await repo.reopen_run(
-                    session,
-                    task_id,
-                    run_input,
-                    metadata=metadata,
-                    expected_status="input-required",
-                    answered_by=answered_by,
-                )
-            )
-            if reopened:
-                run_id = task_id
-                starting_seq = await repo.get_last_event_seq(session, run_id)
                 # A resume is the same run continuing: relay the chain and head it was opened under, not the answering party's.
-                chain, head_key = addressed.actor_chain, addressed.head_key
-            else:
+                inbound = _inbound(addressed.actor_chain, addressed.head_key)
+                opened = await open_run(
+                    funduq, session, inbound,
+                    thread_id=thread_id,
+                    entrance="result",
+                    ask=PendingAsk(
+                        run_id=task_id,
+                        head_key=addressed.head_key,
+                        ask_ids=frozenset(outstanding_asks(addressed.metadata or {})),
+                    ),
+                )
+            if opened is None:
+                # No task waiting — or another answer landed on it first. A2A does not refuse the message: it opens a new run on the context.
                 # Signed before the run is created, so the record keeps exactly what the agent receives.
-                chain = relayed_chain(funduq, actor_chain, agent)
-                await repo.ensure_queue_room(
-                    session, thread_id, funduq.settings.thread_queue_limit
+                inbound = _inbound(relayed_chain(funduq, actor_chain, agent), head_key)
+                opened = await open_run(
+                    funduq, session, inbound, thread_id=thread_id, entrance="utterance", ask=None
                 )
-                created = await repo.create_run(
-                    session, thread_id, agent, "a2a", run_input,
-                    metadata=metadata, head_key=head_key, actor_chain=chain,
-                )
-                run_id = created["run_id"]
-                starting_seq = 0
-
-            inbound = InboundRun(
-                agent=agent,
-                messages=messages,
-                metadata=metadata,
-                head_key=head_key,
-                actor_chain=chain,
-                kyok=kyok,
-                # The extension convention puts the key in the Message's own metadata map; the request-level map is accepted too.
-                addressed_run_id=(
-                    (params.get("message", {}).get("metadata") or {}).get(
-                        ADDRESSED_RUN_METADATA_KEY
-                    )
-                    or metadata.get(ADDRESSED_RUN_METADATA_KEY)
-                ),
-                protocol="a2a",
-            )
-            live = await dispatch(
-                funduq, session, inbound,
-                thread_id=thread_id, run_id=run_id, starting_seq=starting_seq,
-            )
+            run_id = opened.run_id
+            live = await dispatch(funduq, session, inbound, opened)
 
         return run_id, thread_id, live
 

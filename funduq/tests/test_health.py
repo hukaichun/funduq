@@ -12,6 +12,7 @@ from funduq_contract import Registration
 
 async def _make_paused_run(session, agent, thread_id, seconds_stale: int) -> str:
     created = await repo.create_run(session, thread_id, agent, "ag-ui", {"messages": []})
+    await session.commit()
     run_id = created["run_id"]
     # The legal road to a pause: a run is claimed (running) before it can ask.
     await repo.mark_run_status(session, run_id, "running")
@@ -61,7 +62,7 @@ async def test_a_pause_has_no_deadline_of_funduqs(session, funduq, new_identity)
         await reborn.aclose()
 
     assert (await repo.get_run(session, run_id)).status == "input-required"
-    assert await repo.reopen_run(session, run_id, {}, expected_status="input-required")
+    assert await repo.claim_ask(session, run_id)
 
 
 async def test_a_run_the_broker_has_forgotten_still_gets_its_terminal_event(
@@ -100,6 +101,7 @@ async def test_a_run_that_reported_its_own_error_is_left_alone(session, funduq, 
     agent = registered["spoke"]
     thread_id = await repo.create_thread(session, agent)
     created = await repo.create_run(session, thread_id, agent, "ag-ui", {})
+    await session.commit()
     run_id = created["run_id"]
     await repo.append_run_event(session, run_id, 1, {"type": "RUN_ERROR", "message": "my own"})
     await repo.mark_run_status(session, run_id, "failed", metadata={"failureReason": "x"})
@@ -118,6 +120,7 @@ async def test_orphans_reaped_at_start_get_terminal_events(settings, session, ne
     agent = registered["orphan"]
     thread_id = await repo.create_thread(session, agent)
     created = await repo.create_run(session, thread_id, agent, "ag-ui", {})
+    await session.commit()
     run_id = created["run_id"]
 
     reborn = Funduq(settings)

@@ -140,6 +140,7 @@ async def test_the_database_accepts_every_status_the_code_can_write(funduq) -> N
     async with funduq.session() as session:
         thread_id = await repo.create_thread(session, agent)
         run_id = (await repo.create_run(session, thread_id, agent, "ag-ui", {}))["run_id"]
+        await session.commit()
         for status in RUN_STATUSES:
             await session.execute(
                 update(runs).where(runs.c.run_id == run_id).values(status=status)

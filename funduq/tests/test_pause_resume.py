@@ -14,6 +14,7 @@ async def test_native_ag_ui_interrupt_outcome_pauses_a_run(session, funduq, new_
     agent_b = registered["b"]
     thread_b = await repo.create_thread(session, agent_b)
     created = await repo.create_run(session, thread_b, agent_b, "ag-ui", {})
+    await session.commit()
     await repo.mark_run_status(session, created["run_id"], "running")
     run_id = created["run_id"]
     await session.commit()
@@ -45,6 +46,7 @@ async def test_native_ag_ui_success_outcome_completes_a_run_normally(session, fu
     agent_b = registered["b"]
     thread_b = await repo.create_thread(session, agent_b)
     created = await repo.create_run(session, thread_b, agent_b, "ag-ui", {})
+    await session.commit()
     await repo.mark_run_status(session, created["run_id"], "running")
     run_id = created["run_id"]
     await session.commit()
@@ -75,7 +77,9 @@ async def test_finalize_delegated_call_reports_honestly_without_registering_any_
     thread_c = await repo.ensure_thread(session, agent_c, None, parent_thread_id=thread_b)
 
     run_b = await repo.create_run(session, thread_b, agent_b, "a2a", {})
+    await session.commit()
     run_c = await repo.create_run(session, thread_c, agent_c, "a2a", {})
+    await session.commit()
     await repo.mark_run_status(session, run_c["run_id"], "running")
     await repo.mark_run_status(
         session, run_c["run_id"], "input-required", metadata={"reason": "hitl_approval"}
@@ -96,6 +100,7 @@ async def test_a_delegating_agent_gets_an_honest_answer_by_just_asking_again(ses
     thread_c = await repo.create_thread(session, agent_c)
 
     run_c = await repo.create_run(session, thread_c, agent_c, "a2a", {})
+    await session.commit()
     await repo.mark_run_status(session, run_c["run_id"], "running")
     await repo.mark_run_status(session, run_c["run_id"], "input-required")
 
@@ -105,9 +110,8 @@ async def test_a_delegating_agent_gets_an_honest_answer_by_just_asking_again(ses
 
     # The answer arrives: the reply lane reopens the run, it runs again, and
     # completes — the legal road out of a pause.
-    assert await repo.reopen_run(
-        session, run_c["run_id"], {}, expected_status="input-required"
-    )
+    assert await repo.claim_ask(session, run_c["run_id"])
+    await repo.reopen_run(session, run_c["run_id"], {})
     await repo.mark_run_status(session, run_c["run_id"], "running")
     await repo.mark_run_status(session, run_c["run_id"], "completed")
 
@@ -165,6 +169,7 @@ async def test_an_unanswered_tool_call_pauses_a_run_that_reported_success(
     agent_b = registered["b"]
     thread_b = await repo.create_thread(session, agent_b)
     created = await repo.create_run(session, thread_b, agent_b, "ag-ui", {})
+    await session.commit()
     await repo.mark_run_status(session, created["run_id"], "running")
     run_id = created["run_id"]
     await session.commit()
@@ -201,6 +206,7 @@ async def test_a_run_whose_every_tool_call_was_answered_still_completes(
     agent_b = registered["b"]
     thread_b = await repo.create_thread(session, agent_b)
     created = await repo.create_run(session, thread_b, agent_b, "ag-ui", {})
+    await session.commit()
     await repo.mark_run_status(session, created["run_id"], "running")
     run_id = created["run_id"]
     await session.commit()
@@ -233,6 +239,7 @@ async def test_an_interrupt_and_an_unanswered_call_are_recorded_in_one_pause(
     agent_b = registered["b"]
     thread_b = await repo.create_thread(session, agent_b)
     created = await repo.create_run(session, thread_b, agent_b, "ag-ui", {})
+    await session.commit()
     await repo.mark_run_status(session, created["run_id"], "running")
     run_id = created["run_id"]
     await session.commit()
