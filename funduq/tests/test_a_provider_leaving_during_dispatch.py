@@ -14,8 +14,8 @@ the record forever; and the broker never heard of it, which is precisely the
 to refuse.
 
 The fix is not to narrow the window. It is that **one party decides**: the
-door stopped asking, and the broker's answer to `enqueue_run` — taken in the
-same synchronous breath as the insert it guards — is the only reading of the
+door stopped asking, and `Funduq.enqueue_run`'s answer — taken in the same
+synchronous breath as the enqueue it guards — is the only reading of the
 roster on this path.
 """
 
@@ -77,18 +77,17 @@ async def test_a_provider_leaving_mid_dispatch_reaches_the_caller_as_agent_offli
     assert handle.run_id not in funduq.active_runs(), "and the broker never took it"
 
 
-async def test_the_broker_answers_rather_than_raising_when_nobody_is_serving(
+async def test_funduq_answers_rather_than_raising_when_nobody_is_serving(
     funduq, new_identity
 ):
-    """The broker's refusal is a value now, not an exception.
+    """The refusal is a value, not an exception.
 
-    It refuses for the reason it always did — a run whose agent nobody serves
-    is one nothing could ever finish, and the lane is written to open by
-    offering rather than by waiting for somebody to appear. What changed is
-    that "nobody is serving" is an answer a caller can act on, because it is
-    an ordinary thing to find out and the door has a path for it. Being asked
-    to enqueue while the broker is stopped stays an exception: that is a
-    programming error, not a race.
+    A run arriving at a door for an agent nobody serves is refused there —
+    "nobody is serving" is an answer a caller can act on, and the door has a
+    path for it. The broker itself no longer asks: a run it is handed waits
+    on the unserved clock, which is what a run read back after a restart
+    needs (#122). Being asked to enqueue while the broker is stopped stays
+    an exception: that is a programming error, not a race.
     """
     identity = new_identity()
     agent = AgentRef(provider_key=identity.public_key, name="assistant")

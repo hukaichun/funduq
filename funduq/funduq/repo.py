@@ -806,11 +806,22 @@ async def _fail_runs(
 
 
 async def fail_orphaned_runs(session: AsyncSession) -> list[str]:
+    """Fails every run the previous process was holding — offered, running or cancelling — because the claim and the connection died with it. A `queued` run was never in any process and is not touched: `queued_runs` reads it back."""
     return await _fail_runs(
         session,
-        runs.c.status.in_([*PENDING_RUN_STATUSES, "running", "cancelling"]),
+        runs.c.status.in_(["offering", "running", "cancelling"]),
         "orphaned_by_funduq_restart",
     )
+
+
+async def queued_runs(session: AsyncSession) -> list[RunRecord]:
+    """Every run still waiting for a provider, oldest first — the order each thread's turns were taken in."""
+    rows = (
+        await session.execute(
+            select(runs).where(runs.c.status == "queued").order_by(runs.c.created_at, runs.c.run_id)
+        )
+    ).mappings().all()
+    return [RunRecord(**row) for row in rows]
 
 
 async def get_run(session: AsyncSession, run_id: str) -> RunRecord | None:
