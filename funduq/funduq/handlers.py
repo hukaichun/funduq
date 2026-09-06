@@ -9,6 +9,7 @@ from ag_ui.core import Event, EventType, RunErrorEvent
 from pydantic import TypeAdapter, ValidationError
 
 from funduq import repo
+from funduq.props import observed
 from funduq.agui_reduce import reduce_events_to_messages
 from funduq.broker import (
     Claim,
@@ -99,16 +100,16 @@ async def _handle_finish(funduq: "Funduq", run: Run, cmd: FinishStream) -> None:
 
         if run.pause_payload is not None or (run.saw_run_finished and pending_tool_calls):
             status = "input-required"
-            metadata = {
-                "interrupts": (run.pause_payload or {}).get("interrupts", []),
-                "pendingToolCalls": pending_tool_calls,
-            }
+            metadata = observed(
+                interrupts=(run.pause_payload or {}).get("interrupts", []),
+                pendingToolCalls=pending_tool_calls,
+            )
         elif run.saw_run_finished:
             status, metadata = "completed", None
         elif run.cancel_requested:
             status, metadata = "cancelled", None
         else:
-            status, metadata = "failed", {"failureReason": "provider_stream_ended_without_finishing"}
+            status, metadata = "failed", observed(failureReason="provider_stream_ended_without_finishing")
 
         failure_event = (
             run_error("the agent's stream ended without finishing",
@@ -161,7 +162,7 @@ async def _handle_fail(funduq: "Funduq", run: Run, cmd: Fail) -> None:
     run.seq += 1
     async with funduq.session() as session:
         await repo.append_run_event(session, run.run_id, run.seq, event)
-        await funduq.mark_run_status(session, run.run_id, "failed", metadata={"failureReason": cmd.reason})
+        await funduq.mark_run_status(session, run.run_id, "failed", metadata=observed(failureReason=cmd.reason))
     await run.out_queue.put(event)
 
 

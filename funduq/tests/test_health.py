@@ -5,6 +5,7 @@ from datetime import datetime, timedelta, timezone
 from sqlalchemy import update
 
 from funduq import repo
+from funduq.props import observed
 from funduq.core import Funduq
 from funduq.schema import runs
 from funduq_contract import Registration
@@ -16,7 +17,7 @@ async def _make_paused_run(session, agent, thread_id, seconds_stale: int) -> str
     run_id = created["run_id"]
     # The legal road to a pause: a run is claimed (running) before it can ask.
     await repo.mark_run_status(session, run_id, "running")
-    await repo.mark_run_status(session, run_id, "input-required", metadata={"interrupts": []})
+    await repo.mark_run_status(session, run_id, "input-required", metadata=observed(interrupts=[]))
     await session.execute(
         update(runs)
         .where(runs.c.run_id == run_id)
@@ -84,7 +85,7 @@ async def test_a_run_the_broker_has_forgotten_still_gets_its_terminal_event(
         session, run_id, 1, {"type": "RUN_FINISHED", "threadId": thread_id, "runId": run_id}
     )
 
-    await repo.mark_run_status(session, run_id, "failed", metadata={"failureReason": "x"})
+    await repo.mark_run_status(session, run_id, "failed", metadata=observed(failureReason="x"))
     await close_with_terminal_event(funduq, run_id, "x")
 
     events = await repo.get_run_events(session, run_id)
@@ -104,7 +105,7 @@ async def test_a_run_that_reported_its_own_error_is_left_alone(session, funduq, 
     await session.commit()
     run_id = created["run_id"]
     await repo.append_run_event(session, run_id, 1, {"type": "RUN_ERROR", "message": "my own"})
-    await repo.mark_run_status(session, run_id, "failed", metadata={"failureReason": "x"})
+    await repo.mark_run_status(session, run_id, "failed", metadata=observed(failureReason="x"))
 
     await close_with_terminal_event(funduq, run_id, "x")
 

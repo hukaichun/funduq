@@ -276,7 +276,7 @@ funduq 拿著。上面那四題不是 funduq 多做的功能，是站在這個�
 | funduq 的東西 | 落點 |
 | --- | --- |
 | 遞給 provider 的 `RunAgentInput` | ①——**兩扇門都翻譯成這一個形狀**，協定差異在抵達 provider 之前就已經消失 |
-| `forwardedProps`（`caller`／`kyok`／`actorChain`） | ① 不透明夾帶 |
+| `forwardedProps`（caller 的原樣；funduq 加的都在 `forwardedProps.funduq` 下：`kyok`／`actorChain`／`addressedRunId`） | ① 不透明夾帶 |
 | thread queue（`thread_queue_limit`，預設 8） | **入向空隙的持有者** |
 | `addressedRunId`（插話擴充） | 入向空隙，帶宣告的意圖——funduq 只轉，判斷在 agent 自己的迴圈裡 |
 | `parentRunId`（AG-UI 自己的欄位） | 接在後面，下一輪 |
@@ -303,7 +303,7 @@ funduq 拿著。上面那四題不是 funduq 多做的功能，是站在這個�
 「雙出口」因此不是兩個等價的 API，是同一份事實的兩個投影，各自在自己的方向
 有損：AG-UI 有 tools 與私有 state、沒有中止；A2A 有中止、沒有 tools 與私有
 state。A2A 講不出來的那些有一個具名的去處
-（`agui_event`／`agui_events`），
+（`metadata.funduq.agui_event`／`agui_events`），
 而不是被「補齊」成一個兩邊都不是的東西。
 
 ### 為什麼空隙不能交給 SDK

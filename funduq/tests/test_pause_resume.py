@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 
 from funduq import repo
+from funduq.props import observed_of
 from funduq.broker import FinishStream, RelayEvent, Run
 from funduq.handlers import _handle_finish, _handle_relay
 from funduq_contract import Registration
@@ -37,7 +38,7 @@ async def test_native_ag_ui_interrupt_outcome_pauses_a_run(session, funduq, new_
 
     reread = await repo.get_run(session, run_id)
     assert reread.status == "input-required"
-    assert reread.metadata["interrupts"] == [interrupt]
+    assert observed_of(reread.metadata)["interrupts"] == [interrupt]
 
 
 async def test_native_ag_ui_success_outcome_completes_a_run_normally(session, funduq, new_identity):
@@ -194,8 +195,8 @@ async def test_an_unanswered_tool_call_pauses_a_run_that_reported_success(
 
     reread = await repo.get_run(session, run_id)
     assert reread.status == "input-required"
-    assert reread.metadata["pendingToolCalls"] == ["c2"]
-    assert reread.metadata["interrupts"] == []
+    assert observed_of(reread.metadata)["pendingToolCalls"] == ["c2"]
+    assert observed_of(reread.metadata)["interrupts"] == []
 
 
 async def test_a_run_whose_every_tool_call_was_answered_still_completes(
@@ -262,5 +263,5 @@ async def test_an_interrupt_and_an_unanswered_call_are_recorded_in_one_pause(
 
     reread = await repo.get_run(session, run_id)
     assert reread.status == "input-required"
-    assert reread.metadata["interrupts"] == [interrupt]
-    assert reread.metadata["pendingToolCalls"] == ["c2", "c3"]
+    assert observed_of(reread.metadata)["interrupts"] == [interrupt]
+    assert observed_of(reread.metadata)["pendingToolCalls"] == ["c2", "c3"]

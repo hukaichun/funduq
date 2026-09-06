@@ -117,7 +117,7 @@ def test_both_sides_props_twins_validate_the_same_frame():
     from funduq.kyok import KyokForwardedProps
 
     (frame,) = [w["frame"] for w in VECTORS["wire"] if w["kind"] == "delivered-run"]
-    props = frame["runInput"]["forwardedProps"]
+    props = frame["runInput"]["forwardedProps"]["funduq"]
 
     ours = KyokForwardedProps.model_validate(props["kyok"]).model_dump(mode="json", by_alias=True)
     theirs = SdkKyok.model_validate(props["kyok"]).model_dump(mode="json", by_alias=True)

@@ -25,6 +25,7 @@ import pytest
 
 from funduq import doors
 from funduq.models import AgentRef
+from funduq.props import observed_of
 
 from tests.conftest import EchoAgent
 
@@ -73,7 +74,7 @@ async def test_a_provider_leaving_mid_dispatch_reaches_the_caller_as_agent_offli
 
     run = await funduq.get_run(handle.run_id)
     assert run.status == "failed", "a run nothing will dispatch must not read as queued forever"
-    assert run.metadata.get("failureReason") == "agent_offline"
+    assert observed_of(run.metadata).get("failureReason") == "agent_offline"
     assert handle.run_id not in funduq.active_runs(), "and the broker never took it"
 
 

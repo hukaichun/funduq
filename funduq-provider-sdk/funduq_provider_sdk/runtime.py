@@ -18,12 +18,11 @@ logger = logging.getLogger("funduq_provider_sdk.runtime")
 
 
 def _addressed_run_id(run: DeliveredRun) -> str | None:
-    """The run this one declared it wants to join, read off the caller's forwarded props."""
+    """The run this one declared it wants to join, read off what funduq wrote under `forwardedProps.funduq` — the one key of funduq's own, never the caller's."""
     props = run.run_input.forwarded_props
-    if isinstance(props, dict):
-        value = props.get("addressedRunId")
-        return value if isinstance(value, str) else None
-    return None
+    ours = props.get("funduq") if isinstance(props, dict) else None
+    value = ours.get("addressedRunId") if isinstance(ours, dict) else None
+    return value if isinstance(value, str) else None
 
 
 @dataclass

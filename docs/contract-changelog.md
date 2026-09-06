@@ -28,6 +28,44 @@ entries below say what to change and not only what moved.
 
 ---
 
+## Revision 18 — 2026-09-07
+
+**One key for what funduq adds.** funduq used to scatter its own
+additions across the namespaces it writes into: `kyok`, `actorChain` and
+`addressedRunId` at the top of `forwardedProps`, beside the caller's
+keys; `interrupts`, `pendingToolCalls` and `failureReason` at the top of
+a run's metadata, with `answeredBy` / `cancelRequestedBy` already under
+`funduq`; `agui_event`, `agui_events`, `interrupts` and
+`funduq/cancelRequested` at the top of an A2A task's or status update's
+metadata. Three surfaces, three conventions, and a reserved-key list
+that had to be maintained by hand — and a caller who typed
+`forwardedProps.addressedRunId` themselves was indistinguishable from
+funduq having verified one (found on #256).
+
+Now there is one key, `funduq`, on every surface, and it is funduq's
+unconditionally: written when funduq has something to say, absent when
+it does not, never the caller's value.
+
+- **`forwardedProps.funduq`** carries `kyok`, `actorChain`,
+  `addressedRunId`. A caller's own `forwardedProps.funduq` is never
+  relayed; every other key reaches the agent untouched.
+- **Run metadata `funduq`** carries `interrupts`, `pendingToolCalls`,
+  `failureReason`, `answeredBy`, `cancelRequestedBy`. It is the only
+  caller-supplied key the doors strip (`RESERVED_METADATA_KEYS` shrank
+  to it); `failureReason` outside it is the caller's own word and stays.
+- **A2A `metadata.funduq`** on tasks and status updates carries
+  `agui_event`, `agui_events`, `interrupts`, `cancelRequested`
+  (previously `funduq/cancelRequested`).
+
+Migration for an agent: read the grant at
+`forwardedProps.funduq.kyok`, the chain at `forwardedProps.funduq.actorChain`,
+the declared interjection target at `forwardedProps.funduq.addressedRunId`
+(`funduq_provider_sdk.KyokForwardedProps` is unchanged; the SDK runtime
+reads the new location). For an A2A client reading funduq's metadata:
+one level down, under `funduq`. The `delivered-run` wire frame in the
+vectors shows the new layout; `DeliveredRun` and every other shape are
+unchanged.
+
 ## Revision 17 — 2026-09-03
 
 **A verdict cannot be outrun** (#249). A provider that accepted an offer

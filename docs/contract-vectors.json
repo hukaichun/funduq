@@ -1,160 +1,165 @@
 {
- "contract": {
-  "revision": 17,
-  "fingerprint": "sha256:b2feb93b0014d4caa7ba3accf9876810446755966263d7a8dd45e027f346062f",
-  "note": "The revision an external implementation is written against, and a hash of the surface it depends on — the vectors below, plus what the contract_surface helper reads live from the code (CoreSettings fields and whether each is required, the provider link's verbs, every crossing shape funduq-contract defines, the A2A protocol's frames and every machine's verbs on both link kinds, the A2A protocol version and transport bindings, whether each package ships its PEP 561 marker, and every public name funduq_contract exports with the shape it exports it as). Prose (`note` and `comment` at any depth) is excluded, so rewording an explanation is not a contract change. A test recomputes the hash and fails when it differs from this one, so a contract change cannot land without bumping `revision` and adding a line to docs/contract-changelog.md. The fingerprint is not itself a compatibility statement: read the changelog to learn what moved."
- },
- "comment": "Authoritative byte-level vectors for the payloads funduq verifies signatures over. funduq's own test suites consume this file, so it cannot drift from the implementation; an external implementation in any language replays it: build each payload from `inputs`, assert the exact `payload_utf8` bytes, and check `signature_hex` verifies (or, since Ed25519 is deterministic, reproduce it) under the published test key. The test key is for vectors only — never accept it in a real deployment.",
- "test_key": {
-  "algorithm": "Ed25519",
-  "private_key_hex": "a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5",
-  "public_key_hex": "29e5833a915a6429a4e3a7948475c338ef436eb82be89c92f059704403db9d55"
- },
- "vectors": [
-  {
-   "kind": "kyok-call",
-   "inputs": {
-    "bearer": "bearer-token-abc",
-    "timestamp": 1755500000,
-    "body_utf8": "{\"model\":\"gpt-4\",\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}]}",
-    "body_sha256_hex": "aafe81911c246dac10c95e15f6e50babce5f562d691953e0185c372e973940e1"
-   },
-   "payload_utf8": "funduq-kyok-call:bearer-token-abc:1755500000:aafe81911c246dac10c95e15f6e50babce5f562d691953e0185c372e973940e1",
-   "signature_hex": "99d08f65fde307d001beb3ffdae7a24df033d70324e29cfabf0d177ea98e118abe6e50182223968ae733dc95fb293885f9a5639e230190ea03a42f469dcd4f05"
+  "contract": {
+    "revision": 18,
+    "fingerprint": "sha256:340403b38240c0ee7d3e3ed6f58fde046d636441e63864521e1c8a9af53f8ed3",
+    "note": "The revision an external implementation is written against, and a hash of the surface it depends on — the vectors below, plus what the contract_surface helper reads live from the code (CoreSettings fields and whether each is required, the provider link's verbs, every crossing shape funduq-contract defines, the A2A protocol's frames and every machine's verbs on both link kinds, the A2A protocol version and transport bindings, whether each package ships its PEP 561 marker, and every public name funduq_contract exports with the shape it exports it as). Prose (`note` and `comment` at any depth) is excluded, so rewording an explanation is not a contract change. A test recomputes the hash and fails when it differs from this one, so a contract change cannot land without bumping `revision` and adding a line to docs/contract-changelog.md. The fingerprint is not itself a compatibility statement: read the changelog to learn what moved."
   },
-  {
-   "kind": "provider-connect",
-   "inputs": {
-    "funduq_public_key": "d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0",
-    "funduq_nonce": "b7b7b7b7b7b7b7b7b7b7b7b7b7b7b7b7",
-    "provider_nonce": "c9c9c9c9c9c9c9c9c9c9c9c9c9c9c9c9",
-    "note": "funduq_public_key is the recipient — the funduq key the provider pinned (empty string for a funduq with no identity), so a proof cannot be relayed to a different funduq; funduq_nonce is chosen by the funduq being connected to; names are sorted before joining"
-   },
-   "payload_utf8": "funduq-connect-provider:d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0:b7b7b7b7b7b7b7b7b7b7b7b7b7b7b7b7:c9c9c9c9c9c9c9c9c9c9c9c9c9c9c9c9",
-   "signature_hex": "65ee172b793324af83ca988249f92d52f4b58ed4e4a80b3090b0985c0012033805af304e7a5252c9b1b7d1c1957e49f8611825d7829e6f3a39886ae0f518cf0f",
-   "note": "the bytes a provider signs to open a link. `funduq_nonce` is a ticket funduq issued to this key and destroys on use, so a recording is worthless and a leaked ticket is useless to anyone else; `funduq_public_key` names the recipient so a proof cannot be relayed to attach elsewhere. What the link will serve is not in here — publishing a name happens on the open link."
+  "comment": "Authoritative byte-level vectors for the payloads funduq verifies signatures over. funduq's own test suites consume this file, so it cannot drift from the implementation; an external implementation in any language replays it: build each payload from `inputs`, assert the exact `payload_utf8` bytes, and check `signature_hex` verifies (or, since Ed25519 is deterministic, reproduce it) under the published test key. The test key is for vectors only — never accept it in a real deployment.",
+  "test_key": {
+    "algorithm": "Ed25519",
+    "private_key_hex": "a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5",
+    "public_key_hex": "29e5833a915a6429a4e3a7948475c338ef436eb82be89c92f059704403db9d55"
   },
-  {
-   "kind": "funduq-connect",
-   "inputs": {
-    "funduq_nonce": "b7b7b7b7b7b7b7b7b7b7b7b7b7b7b7b7",
-    "provider_nonce": "c9c9c9c9c9c9c9c9c9c9c9c9c9c9c9c9",
-    "note": "signed by funduq's own identity key; the test key stands in for it here"
-   },
-   "payload_utf8": "funduq-connect-funduq:b7b7b7b7b7b7b7b7b7b7b7b7b7b7b7b7:c9c9c9c9c9c9c9c9c9c9c9c9c9c9c9c9",
-   "signature_hex": "52eb6a978325e7da8a67844eece4a801f85c0a4eaea0e692830ad277353efe64da3b8dba45e2bc10107ba3a447798144d6af606aa710e0bf15496d5781536d0e"
-  },
-  {
-   "kind": "resolution",
-   "note": "the bytes an authority signs to answer a paused ask (resolve an input-required run). Not the timestamp family: the middle segment is sha256 over the run's outstanding ask ids (its interrupt / tool-call ids), sorted and NUL-joined, so the proof is good for exactly that ask and no other. No time rides in it and no freshness window applies — a later pause has new ids, and replay against the same ask is consumed by the status-guarded reopen. The wire proof is {publicKey, signature}. ask_ids here are deliberately unsorted: sorting is the builder's, not the caller's.",
-   "inputs": {
-    "run_id": "run_2c26b46b68ffc68ff99b453c",
-    "ask_ids": ["tool_b", "int_1"]
-   },
-   "payload_utf8": "funduq-resolve:run_2c26b46b68ffc68ff99b453c:7fe8c2f35c4b4073ddbdade92c50c48641b6e046354de48ebbab73ef638c7c54",
-   "signature_hex": "763e7e2b5090dca7ce4b055895f49ba6174e3ddc4bc420cb614ae1bb582f732b02e28026bb0d2b79014ea584c083bd47c5953e7e1b2c1b5ddd1096ffc02cc203"
-  },
-  {
-   "kind": "cancel",
-   "note": "the bytes an authority signs to ask that a run be stopped. Same family as a resolution — a singular operation, so the timestamp is checked against the 60s freshness window — under its own tag, so neither signature is ever the other. Possession of the run id buys nothing: stopping someone else's run is a rights question, and this signature is the right.",
-   "inputs": {
-    "run_id": "run_2c26b46b68ffc68ff99b453c",
-    "timestamp": 1755500000
-   },
-   "payload_utf8": "funduq-cancel:run_2c26b46b68ffc68ff99b453c:1755500000",
-   "signature_hex": "34bf99fe56bcdf2e831258395302608b72fd3e85e76cdb395e5d71e6b213956396758a7b0f6f8260f7cbc2b6b7fb6570c1dab2c71c093c42f273681273d50504"
-  },
-  {
-   "kind": "view",
-   "note": "the bytes a chain party signs to read a bound run. Same singular-act family as cancel and resolve, under its own tag. The read circle is wider than the act circle: every actor on the run's chain may sign one, plus the serving provider - the parties responsibility flowed through may look, while stopping or resolving stays with the head and the provider.",
-   "inputs": {
-    "run_id": "run_2c26b46b68ffc68ff99b453c",
-    "timestamp": 1755500000
-   },
-   "payload_utf8": "funduq-view:run_2c26b46b68ffc68ff99b453c:1755500000",
-   "signature_hex": "08a8924d7dac66893c2c7338f5cb50daa4468d830197860e8ef4eb5dc5fd8c1eb3d9ad9038488d60c3e46414b0f565e2c7f9a66ecf2b817214442f12fbd9530f"
-  }
- ],
- "wire": [
-  {
-   "kind": "delivered-run",
-   "note": "the frame a transport carries for an offered run: DeliveredRun.model_dump(by_alias=True); rebuild with model_validate. forwardedProps carries funduq's kyok grant (KyokForwardedProps; the token here is a fixed opaque example, real ones are minted per run) and the actorChain: the caller's own hops relayed unmodified, plus one hop funduq signs for the dispatch itself, naming the agent it went to under `dispatchedTo` — no funduq-authored digest exists and no hop is rewritten; the agent verifies the chain itself with funduq_provider_sdk.verify_chain. The two hops here are the caller (the test key) and funduq's own dispatch hop, signed by b6*32 standing in for a funduq identity, naming providerKey 25fc32c4… (the public key of e1*32) and the agent 'translator' — the same agent the frame is for. Hops carry no time; they were regenerated when a hop stopped carrying iat/exp.",
-   "frame": {
-    "runId": "run-1",
-    "agentName": "translator",
-    "runInput": {
-     "threadId": "t-1",
-     "runId": "run-1",
-     "parentRunId": null,
-     "state": {},
-     "messages": [
-      {
-       "id": "m1",
-       "role": "user",
-       "content": "hi",
-       "name": null,
-       "encryptedValue": null
-      }
-     ],
-     "tools": [],
-     "context": [],
-     "forwardedProps": {
-      "kyok": {
-       "token": "a2t0LXZlY3Rvci1ib2R5.0000000000000000000000000000000000000000000000000000000000000000"
+  "vectors": [
+    {
+      "kind": "kyok-call",
+      "inputs": {
+        "bearer": "bearer-token-abc",
+        "timestamp": 1755500000,
+        "body_utf8": "{\"model\":\"gpt-4\",\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}]}",
+        "body_sha256_hex": "aafe81911c246dac10c95e15f6e50babce5f562d691953e0185c372e973940e1"
       },
-      "actorChain": [
-       "eyJhbGciOiJFZERTQSIsInR5cCI6IkpXVCJ9.eyJhY3RvclB1YmxpY0tleSI6IjI5ZTU4MzNhOTE1YTY0MjlhNGUzYTc5NDg0NzVjMzM4ZWY0MzZlYjgyYmU4OWM5MmYwNTk3MDQ0MDNkYjlkNTUiLCJwcmV2SGFzaCI6bnVsbH0.UdDNsBBdWnD09-_qQoH1SYv-APhcYZUCJS6gGml2YakXq-I3pLsHBn4zDmG0MZTFVLfZnEOj5XNiD_dTHPkLBg",
-       "eyJhbGciOiJFZERTQSIsInR5cCI6IkpXVCJ9.eyJhY3RvclB1YmxpY0tleSI6IjgwNTQ0MGVlNDgwNTFmYzgyZWE2NGQ5MDVhY2FiZmYwZDIxNzgwZjdmY2FiYTY5MDBlMGU0MTM4N2IxZDRhNTciLCJwcmV2SGFzaCI6ImUxYTliMmVhNjQ3ZWExNzFjOTNkMjhkMTc0ZmI0MzY0N2Q2ZGU1YmUyZmJiZWI4Y2RhYWNiN2IxY2Y0ZGUwM2QiLCJkaXNwYXRjaGVkVG8iOnsicHJvdmlkZXJLZXkiOiIyNWZjMzJjNDc4YTVhNGY4NGU0NTU3YTAzNDJlMDgyNzhjODgzNjQxYjYxNDliZGIwYjRhOTg2YWI2YzJjYjc4IiwibmFtZSI6InRyYW5zbGF0b3IifX0.diOeTiS2WvTiBEDPr_ZkpUBpfh0D_RFhR7UvHHnkvCROhWVsJEcTW7J1eTM3ZI64HQ8c4SSytmfwLK2USHq-DQ"
-      ]
-     },
-     "resume": null
+      "payload_utf8": "funduq-kyok-call:bearer-token-abc:1755500000:aafe81911c246dac10c95e15f6e50babce5f562d691953e0185c372e973940e1",
+      "signature_hex": "99d08f65fde307d001beb3ffdae7a24df033d70324e29cfabf0d177ea98e118abe6e50182223968ae733dc95fb293885f9a5639e230190ea03a42f469dcd4f05"
     },
-    "threadId": "t-1",
-    "metadata": {}
-   }
-  },
-  {
-   "kind": "delivered-completion",
-   "note": "the frame a transport carries for a KYOK completion: DeliveredCompletion.model_dump(by_alias=True); rebuild with model_validate",
-   "frame": {
-    "runId": "run-1",
-    "providerKey": "abababababababababababababababababababababababababababababababab",
-    "agentName": "translator",
-    "body": {
-     "model": "gpt-4",
-     "messages": [
-      {
-       "role": "user",
-       "content": "hi"
+    {
+      "kind": "provider-connect",
+      "inputs": {
+        "funduq_public_key": "d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0",
+        "funduq_nonce": "b7b7b7b7b7b7b7b7b7b7b7b7b7b7b7b7",
+        "provider_nonce": "c9c9c9c9c9c9c9c9c9c9c9c9c9c9c9c9",
+        "note": "funduq_public_key is the recipient — the funduq key the provider pinned (empty string for a funduq with no identity), so a proof cannot be relayed to a different funduq; funduq_nonce is chosen by the funduq being connected to; names are sorted before joining"
+      },
+      "payload_utf8": "funduq-connect-provider:d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0:b7b7b7b7b7b7b7b7b7b7b7b7b7b7b7b7:c9c9c9c9c9c9c9c9c9c9c9c9c9c9c9c9",
+      "signature_hex": "65ee172b793324af83ca988249f92d52f4b58ed4e4a80b3090b0985c0012033805af304e7a5252c9b1b7d1c1957e49f8611825d7829e6f3a39886ae0f518cf0f",
+      "note": "the bytes a provider signs to open a link. `funduq_nonce` is a ticket funduq issued to this key and destroys on use, so a recording is worthless and a leaked ticket is useless to anyone else; `funduq_public_key` names the recipient so a proof cannot be relayed to attach elsewhere. What the link will serve is not in here — publishing a name happens on the open link."
+    },
+    {
+      "kind": "funduq-connect",
+      "inputs": {
+        "funduq_nonce": "b7b7b7b7b7b7b7b7b7b7b7b7b7b7b7b7",
+        "provider_nonce": "c9c9c9c9c9c9c9c9c9c9c9c9c9c9c9c9",
+        "note": "signed by funduq's own identity key; the test key stands in for it here"
+      },
+      "payload_utf8": "funduq-connect-funduq:b7b7b7b7b7b7b7b7b7b7b7b7b7b7b7b7:c9c9c9c9c9c9c9c9c9c9c9c9c9c9c9c9",
+      "signature_hex": "52eb6a978325e7da8a67844eece4a801f85c0a4eaea0e692830ad277353efe64da3b8dba45e2bc10107ba3a447798144d6af606aa710e0bf15496d5781536d0e"
+    },
+    {
+      "kind": "resolution",
+      "note": "the bytes an authority signs to answer a paused ask (resolve an input-required run). Not the timestamp family: the middle segment is sha256 over the run's outstanding ask ids (its interrupt / tool-call ids), sorted and NUL-joined, so the proof is good for exactly that ask and no other. No time rides in it and no freshness window applies — a later pause has new ids, and replay against the same ask is consumed by the status-guarded reopen. The wire proof is {publicKey, signature}. ask_ids here are deliberately unsorted: sorting is the builder's, not the caller's.",
+      "inputs": {
+        "run_id": "run_2c26b46b68ffc68ff99b453c",
+        "ask_ids": [
+          "tool_b",
+          "int_1"
+        ]
+      },
+      "payload_utf8": "funduq-resolve:run_2c26b46b68ffc68ff99b453c:7fe8c2f35c4b4073ddbdade92c50c48641b6e046354de48ebbab73ef638c7c54",
+      "signature_hex": "763e7e2b5090dca7ce4b055895f49ba6174e3ddc4bc420cb614ae1bb582f732b02e28026bb0d2b79014ea584c083bd47c5953e7e1b2c1b5ddd1096ffc02cc203"
+    },
+    {
+      "kind": "cancel",
+      "note": "the bytes an authority signs to ask that a run be stopped. Same family as a resolution — a singular operation, so the timestamp is checked against the 60s freshness window — under its own tag, so neither signature is ever the other. Possession of the run id buys nothing: stopping someone else's run is a rights question, and this signature is the right.",
+      "inputs": {
+        "run_id": "run_2c26b46b68ffc68ff99b453c",
+        "timestamp": 1755500000
+      },
+      "payload_utf8": "funduq-cancel:run_2c26b46b68ffc68ff99b453c:1755500000",
+      "signature_hex": "34bf99fe56bcdf2e831258395302608b72fd3e85e76cdb395e5d71e6b213956396758a7b0f6f8260f7cbc2b6b7fb6570c1dab2c71c093c42f273681273d50504"
+    },
+    {
+      "kind": "view",
+      "note": "the bytes a chain party signs to read a bound run. Same singular-act family as cancel and resolve, under its own tag. The read circle is wider than the act circle: every actor on the run's chain may sign one, plus the serving provider - the parties responsibility flowed through may look, while stopping or resolving stays with the head and the provider.",
+      "inputs": {
+        "run_id": "run_2c26b46b68ffc68ff99b453c",
+        "timestamp": 1755500000
+      },
+      "payload_utf8": "funduq-view:run_2c26b46b68ffc68ff99b453c:1755500000",
+      "signature_hex": "08a8924d7dac66893c2c7338f5cb50daa4468d830197860e8ef4eb5dc5fd8c1eb3d9ad9038488d60c3e46414b0f565e2c7f9a66ecf2b817214442f12fbd9530f"
+    }
+  ],
+  "wire": [
+    {
+      "kind": "delivered-run",
+      "note": "the frame a transport carries for an offered run: DeliveredRun.model_dump(by_alias=True); rebuild with model_validate. everything funduq adds to forwardedProps sits under its one key, forwardedProps.funduq: the kyok grant (KyokForwardedProps; the token here is a fixed opaque example, real ones are minted per run) and the actorChain: the caller's own hops relayed unmodified, plus one hop funduq signs for the dispatch itself, naming the agent it went to under `dispatchedTo` — no funduq-authored digest exists and no hop is rewritten; the agent verifies the chain itself with funduq_provider_sdk.verify_chain. The two hops here are the caller (the test key) and funduq's own dispatch hop, signed by b6*32 standing in for a funduq identity, naming providerKey 25fc32c4… (the public key of e1*32) and the agent 'translator' — the same agent the frame is for. Hops carry no time; they were regenerated when a hop stopped carrying iat/exp.",
+      "frame": {
+        "runId": "run-1",
+        "agentName": "translator",
+        "runInput": {
+          "threadId": "t-1",
+          "runId": "run-1",
+          "parentRunId": null,
+          "state": {},
+          "messages": [
+            {
+              "id": "m1",
+              "role": "user",
+              "content": "hi",
+              "name": null,
+              "encryptedValue": null
+            }
+          ],
+          "tools": [],
+          "context": [],
+          "forwardedProps": {
+            "funduq": {
+              "kyok": {
+                "token": "a2t0LXZlY3Rvci1ib2R5.0000000000000000000000000000000000000000000000000000000000000000"
+              },
+              "actorChain": [
+                "eyJhbGciOiJFZERTQSIsInR5cCI6IkpXVCJ9.eyJhY3RvclB1YmxpY0tleSI6IjI5ZTU4MzNhOTE1YTY0MjlhNGUzYTc5NDg0NzVjMzM4ZWY0MzZlYjgyYmU4OWM5MmYwNTk3MDQ0MDNkYjlkNTUiLCJwcmV2SGFzaCI6bnVsbH0.UdDNsBBdWnD09-_qQoH1SYv-APhcYZUCJS6gGml2YakXq-I3pLsHBn4zDmG0MZTFVLfZnEOj5XNiD_dTHPkLBg",
+                "eyJhbGciOiJFZERTQSIsInR5cCI6IkpXVCJ9.eyJhY3RvclB1YmxpY0tleSI6IjgwNTQ0MGVlNDgwNTFmYzgyZWE2NGQ5MDVhY2FiZmYwZDIxNzgwZjdmY2FiYTY5MDBlMGU0MTM4N2IxZDRhNTciLCJwcmV2SGFzaCI6ImUxYTliMmVhNjQ3ZWExNzFjOTNkMjhkMTc0ZmI0MzY0N2Q2ZGU1YmUyZmJiZWI4Y2RhYWNiN2IxY2Y0ZGUwM2QiLCJkaXNwYXRjaGVkVG8iOnsicHJvdmlkZXJLZXkiOiIyNWZjMzJjNDc4YTVhNGY4NGU0NTU3YTAzNDJlMDgyNzhjODgzNjQxYjYxNDliZGIwYjRhOTg2YWI2YzJjYjc4IiwibmFtZSI6InRyYW5zbGF0b3IifX0.diOeTiS2WvTiBEDPr_ZkpUBpfh0D_RFhR7UvHHnkvCROhWVsJEcTW7J1eTM3ZI64HQ8c4SSytmfwLK2USHq-DQ"
+              ]
+            }
+          },
+          "resume": null
+        },
+        "threadId": "t-1",
+        "metadata": {}
       }
-     ]
     },
-    "llmName": "gpt-4",
-    "context": {
-     "voucher": "v-1"
-    },
-    "actorChain": null
-   }
-  }
- ],
- "chains": [
-  {
-   "kind": "actor-chain",
-   "note": "a two-hop actor chain both verifiers (funduq.identity.verify_chain and funduq_provider_sdk.verify_chain) must accept, yielding exactly these actor keys in order — the first is the chain's head, the responsibility segment's authority. A chain carries keys and nothing else: a hop is {actorPublicKey, prevHash} with no iat/exp — freshness is the authenticating seat's job, not the hop's, so a hop carries no time and never expires. EdDSA is deterministic, so an implementation with the keys can reproduce the hops byte-for-byte. Hop keys: a5*32 (the test key) and b6*32.",
-   "inputs": {
-    "hop_private_keys_hex": [
-     "a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5",
-     "b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6"
-    ]
-   },
-   "chain": [
-    "eyJhbGciOiJFZERTQSIsInR5cCI6IkpXVCJ9.eyJhY3RvclB1YmxpY0tleSI6IjI5ZTU4MzNhOTE1YTY0MjlhNGUzYTc5NDg0NzVjMzM4ZWY0MzZlYjgyYmU4OWM5MmYwNTk3MDQ0MDNkYjlkNTUiLCJwcmV2SGFzaCI6bnVsbH0.UdDNsBBdWnD09-_qQoH1SYv-APhcYZUCJS6gGml2YakXq-I3pLsHBn4zDmG0MZTFVLfZnEOj5XNiD_dTHPkLBg",
-    "eyJhbGciOiJFZERTQSIsInR5cCI6IkpXVCJ9.eyJhY3RvclB1YmxpY0tleSI6IjgwNTQ0MGVlNDgwNTFmYzgyZWE2NGQ5MDVhY2FiZmYwZDIxNzgwZjdmY2FiYTY5MDBlMGU0MTM4N2IxZDRhNTciLCJwcmV2SGFzaCI6ImUxYTliMmVhNjQ3ZWExNzFjOTNkMjhkMTc0ZmI0MzY0N2Q2ZGU1YmUyZmJiZWI4Y2RhYWNiN2IxY2Y0ZGUwM2QifQ.BiPx2kQy-o2hQjDuAeUHDrrGbFcVc5O0wLdTlHV9Fbti2QCBsKz7bl4np2RCA78C2Fxoijt_F2BCwhnX6jQRDg"
-   ],
-   "actor_public_keys": [
-    "29e5833a915a6429a4e3a7948475c338ef436eb82be89c92f059704403db9d55",
-    "805440ee48051fc82ea64d905acabff0d21780f7fcaba6900e0e41387b1d4a57"
-   ]
-  }
- ]
+    {
+      "kind": "delivered-completion",
+      "note": "the frame a transport carries for a KYOK completion: DeliveredCompletion.model_dump(by_alias=True); rebuild with model_validate",
+      "frame": {
+        "runId": "run-1",
+        "providerKey": "abababababababababababababababababababababababababababababababab",
+        "agentName": "translator",
+        "body": {
+          "model": "gpt-4",
+          "messages": [
+            {
+              "role": "user",
+              "content": "hi"
+            }
+          ]
+        },
+        "llmName": "gpt-4",
+        "context": {
+          "voucher": "v-1"
+        },
+        "actorChain": null
+      }
+    }
+  ],
+  "chains": [
+    {
+      "kind": "actor-chain",
+      "note": "a two-hop actor chain both verifiers (funduq.identity.verify_chain and funduq_provider_sdk.verify_chain) must accept, yielding exactly these actor keys in order — the first is the chain's head, the responsibility segment's authority. A chain carries keys and nothing else: a hop is {actorPublicKey, prevHash} with no iat/exp — freshness is the authenticating seat's job, not the hop's, so a hop carries no time and never expires. EdDSA is deterministic, so an implementation with the keys can reproduce the hops byte-for-byte. Hop keys: a5*32 (the test key) and b6*32.",
+      "inputs": {
+        "hop_private_keys_hex": [
+          "a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5",
+          "b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6"
+        ]
+      },
+      "chain": [
+        "eyJhbGciOiJFZERTQSIsInR5cCI6IkpXVCJ9.eyJhY3RvclB1YmxpY0tleSI6IjI5ZTU4MzNhOTE1YTY0MjlhNGUzYTc5NDg0NzVjMzM4ZWY0MzZlYjgyYmU4OWM5MmYwNTk3MDQ0MDNkYjlkNTUiLCJwcmV2SGFzaCI6bnVsbH0.UdDNsBBdWnD09-_qQoH1SYv-APhcYZUCJS6gGml2YakXq-I3pLsHBn4zDmG0MZTFVLfZnEOj5XNiD_dTHPkLBg",
+        "eyJhbGciOiJFZERTQSIsInR5cCI6IkpXVCJ9.eyJhY3RvclB1YmxpY0tleSI6IjgwNTQ0MGVlNDgwNTFmYzgyZWE2NGQ5MDVhY2FiZmYwZDIxNzgwZjdmY2FiYTY5MDBlMGU0MTM4N2IxZDRhNTciLCJwcmV2SGFzaCI6ImUxYTliMmVhNjQ3ZWExNzFjOTNkMjhkMTc0ZmI0MzY0N2Q2ZGU1YmUyZmJiZWI4Y2RhYWNiN2IxY2Y0ZGUwM2QifQ.BiPx2kQy-o2hQjDuAeUHDrrGbFcVc5O0wLdTlHV9Fbti2QCBsKz7bl4np2RCA78C2Fxoijt_F2BCwhnX6jQRDg"
+      ],
+      "actor_public_keys": [
+        "29e5833a915a6429a4e3a7948475c338ef436eb82be89c92f059704403db9d55",
+        "805440ee48051fc82ea64d905acabff0d21780f7fcaba6900e0e41387b1d4a57"
+      ]
+    }
+  ]
 }

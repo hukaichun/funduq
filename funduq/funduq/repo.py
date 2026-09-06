@@ -576,7 +576,8 @@ async def _merge_run_metadata(
         )
     ).scalars().first()
     merged = {**(existing or {}), **metadata}
-    ours = dict(merged.get(OBSERVED_METADATA_KEY) or {})
+    # funduq's own key merges field by field: a failure reason written later must not erase who answered earlier.
+    ours = {**((existing or {}).get(OBSERVED_METADATA_KEY) or {}), **(metadata.get(OBSERVED_METADATA_KEY) or {})}
     for key, value in (appending or {}).items():
         if value is not None:
             ours[key] = [*(ours.get(key) or []), value]
@@ -796,7 +797,13 @@ async def _fail_runs(
             .values(
                 status="failed",
                 completed_at=now,
-                metadata={**(row.metadata or {}), "failureReason": failure_reason},
+                metadata={
+                    **(row.metadata or {}),
+                    OBSERVED_METADATA_KEY: {
+                        **((row.metadata or {}).get(OBSERVED_METADATA_KEY) or {}),
+                        "failureReason": failure_reason,
+                    },
+                },
             )
         )
         if result.rowcount > 0:

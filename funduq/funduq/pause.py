@@ -2,6 +2,8 @@ from typing import Any
 
 from ag_ui.core import EventType
 
+from funduq.props import observed_of
+
 
 def interrupt_outcome_of(event: dict) -> list[dict[str, Any]] | None:
     """Returns the list of interrupts (possibly empty) if `event` is a RUN_FINISHED with an interrupt outcome, else None — including for a RUN_FINISHED with a plain success outcome or no outcome at all."""
@@ -27,9 +29,10 @@ def unanswered_tool_calls(events: list[dict[str, Any]]) -> list[str]:
 
 
 def outstanding_asks(run_metadata: dict[str, Any]) -> set[str]:
-    """Everything a paused run is still waiting on, in one id space."""
-    asks = set(run_metadata.get("pendingToolCalls") or [])
-    for interrupt in run_metadata.get("interrupts") or []:
+    """Everything a paused run is still waiting on, in one id space — read from what funduq wrote on the run."""
+    ours = observed_of(run_metadata)
+    asks = set(ours.get("pendingToolCalls") or [])
+    for interrupt in ours.get("interrupts") or []:
         asks.add(interrupt.get("toolCallId") or interrupt.get("id"))
     return {ask for ask in asks if ask}
 
@@ -42,7 +45,7 @@ def answered_asks(
     """The asks an inbound request answers, in the same id space."""
     tool_call_of = {
         interrupt["id"]: interrupt.get("toolCallId") or interrupt["id"]
-        for interrupt in run_metadata.get("interrupts") or []
+        for interrupt in observed_of(run_metadata).get("interrupts") or []
         if interrupt.get("id")
     }
     only_by_resume = set(tool_call_of.values())

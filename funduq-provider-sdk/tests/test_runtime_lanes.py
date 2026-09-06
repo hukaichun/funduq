@@ -13,7 +13,7 @@ from funduq_provider_sdk import ProviderIdentity, ProviderRuntime
 def _delivered(
     run_id: str, thread_id: str, *, addressed: str | None = None, agent: str = "a"
 ) -> DeliveredRun:
-    props = {"addressedRunId": addressed} if addressed else None
+    props = {"funduq": {"addressedRunId": addressed}} if addressed else None
     return DeliveredRun(
         run_id=run_id,
         agent_name=agent,

@@ -97,10 +97,10 @@ def test_every_funduq_invented_wire_structure_validates_with_this_packages_model
     from funduq_provider_sdk import KyokForwardedProps, verify_chain
 
     (frame,) = [w["frame"] for w in VECTORS["wire"] if w["kind"] == "delivered-run"]
-    props = frame["runInput"]["forwardedProps"]
+    props = frame["runInput"]["forwardedProps"]["funduq"]
 
     assert {"kyok", "actorChain"} <= props.keys(), (
-        "the published frame must carry every declared key"
+        "the published frame must carry every declared key, under funduq's one key"
     )
     parsed = KyokForwardedProps.model_validate(props["kyok"])
     assert parsed.model_dump(mode="json", by_alias=True) == props["kyok"]

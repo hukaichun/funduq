@@ -204,7 +204,7 @@ async def test_a_runtime_with_no_link_drops_its_output_rather_than_raising():
 
 async def test_the_runtime_hands_every_run_to_the_agent_as_it_arrives():
     """The runtime imposes no policy of its own: a run declared as an
-    interjection (forwardedProps.addressedRunId) is delivered to the agent
+    interjection (forwardedProps.funduq.addressedRunId) is delivered to the agent
     code exactly like any other — absorbing, deferring, or ignoring it is
     the author's decision, not the runtime's."""
     from funduq_provider_sdk import AgentHandle, HandleProvider, ProviderIdentity, ProviderRuntime
@@ -223,7 +223,7 @@ async def test_the_runtime_hands_every_run_to_the_agent_as_it_arrives():
         declared = DeliveredRun(
             run_id="r2",
             agent_name="a",
-            run_input=RunAgentInput(**{**_run_agent_input(), "forwardedProps": {"addressedRunId": "r1"}}),
+            run_input=RunAgentInput(**{**_run_agent_input(), "forwardedProps": {"funduq": {"addressedRunId": "r1"}}}),
         )
         assert await runtime.deliver(declared) is True, (
             "an interjection is a run like any other; the author judges it"
@@ -235,7 +235,7 @@ async def test_the_runtime_hands_every_run_to_the_agent_as_it_arrives():
         async with asyncio.timeout(2):
             while len(seen) < 2:
                 await asyncio.sleep(0)
-        assert seen[0].forwarded_props == {"addressedRunId": "r1"}, (
+        assert seen[0].forwarded_props == {"funduq": {"addressedRunId": "r1"}}, (
             "the declaration reaches the author's code intact"
         )
     finally:

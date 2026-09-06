@@ -190,7 +190,7 @@ async def test_the_agent_sees_the_same_chain_on_every_round(funduq, serve, new_i
         },
     )
 
-    rounds = [(r.forwarded_props or {}).get("actorChain") for r in provider.rounds]
+    rounds = [((r.forwarded_props or {}).get("funduq") or {}).get("actorChain") for r in provider.rounds]
     assert len(rounds) == 2, "the ask was answered, so the agent ran twice"
     assert rounds[0] == rounds[1], "the same run, so the same chain"
 
@@ -264,7 +264,7 @@ async def test_the_agui_door_relays_the_runs_chain_on_a_resume_too(funduq, serve
     [_ async for _ in answered.events]
     await _until(lambda: first.run_id not in funduq.active_runs())
 
-    rounds = [(r.forwarded_props or {}).get("actorChain") for r in provider.rounds]
+    rounds = [((r.forwarded_props or {}).get("funduq") or {}).get("actorChain") for r in provider.rounds]
     assert len(rounds) == 2, "the ask was answered, so the agent ran twice"
     assert rounds[0] == rounds[1], "the same run, so the same chain"
 

@@ -33,6 +33,7 @@ from sqlalchemy import delete
 from funduq.broker import RunBroker
 from funduq.config import CoreSettings
 from funduq.identity import FunduqIdentity
+from funduq.props import observed_of
 from funduq.core import Funduq
 
 from funduq.models import AgentRef
@@ -166,7 +167,7 @@ async def main() -> int:
         "nobody is serving that agent",
         run.status not in ("failed", "cancelled"),
         f"the run ended {run.status}, reason "
-        f"{(run.metadata or {}).get('failureReason')!r} — the caller is not left "
+        f"{observed_of(run.metadata).get('failureReason')!r} — the caller is not left "
         "watching a stream nothing will ever produce for",
     )
     await quick.aclose()

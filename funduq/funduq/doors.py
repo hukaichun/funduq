@@ -19,7 +19,7 @@ from funduq.identity import (
 )
 from funduq.kyok import KyokBinding, KyokOptIn, parse_kyok_opt_in
 from funduq.models import AgentRef
-from funduq.props import RESERVED_METADATA_KEYS, build_forwarded_props
+from funduq.props import RESERVED_METADATA_KEYS, build_forwarded_props, observed
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
@@ -129,7 +129,7 @@ async def dispatch(
     ):
         funduq.kyok_relay.discard(opened.run_id)
         await funduq.mark_run_status(
-            session, opened.run_id, "failed", metadata={"failureReason": "agent_offline"}
+            session, opened.run_id, "failed", metadata=observed(failureReason="agent_offline")
         )
         await session.commit()
         return False
