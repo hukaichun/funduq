@@ -17,7 +17,7 @@ from funduq.identity import (
     verify_resolution,
     verify_view,
 )
-from funduq.kyok import KyokBinding, KyokOptIn, parse_kyok_opt_in, strip_kyok_context
+from funduq.kyok import KyokBinding, KyokOptIn, parse_kyok_opt_in
 from funduq.models import AgentRef
 from funduq.props import RESERVED_METADATA_KEYS, build_forwarded_props
 
@@ -66,12 +66,12 @@ async def verify_caller(
 async def resolve_kyok(
     session: "AsyncSession", metadata: dict
 ) -> tuple[dict, KyokOptIn | None]:
-    """Reads a KYOK opt-in out of `metadata` and returns `(metadata with the caller's KYOK context removed, the opt-in or None)`."""
+    """Reads a KYOK opt-in out of `metadata` and returns `(metadata, the opt-in or None)`. The opt-in stays in the metadata, context included: it is ordinary content of the run's record, and a restart rebuilds the binding from it."""
     opt_in = parse_kyok_opt_in(metadata)
     if opt_in is not None and opt_in.llm_provider is not None:
         if await repo.get_llm_provider(session, opt_in.llm_provider) is None:
             raise LlmProviderNotFound(f"unknown KYOK LLM provider '{opt_in.llm_provider}'")
-    return strip_kyok_context(metadata), opt_in
+    return metadata, opt_in
 
 
 @dataclass(frozen=True)

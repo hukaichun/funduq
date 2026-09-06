@@ -76,6 +76,24 @@ in that mode, so it cannot decline by accident.
 If an author wants pacing, the way to have it is to declare it —
 `max_concurrent_runs=<n>` — not to decline while claiming to be unlimited.
 
+## What a restart keeps and what it fails
+
+A run is either waiting or held. A **waiting** run — `queued`, or paused
+`input-required` — was never in any process: its row is the input its
+provider will receive, its messages are in the thread, its KYOK opt-in is in
+its metadata. A new process reads every `queued` row back at start, oldest
+first, and queues it again. Providers connect after start, so each of those
+runs waits on the unserved clock (`unserved_timeout_seconds`, from the moment
+of restart) and is failed `no_provider_took_it` if nobody comes back for it.
+A queued interjection whose target died with the process is failed
+`interjection_target_lost`: the run it was to change is gone.
+
+A **held** run — `offering`, `running`, `cancelling` — was in the previous
+process's hands: an offer out, a claim, a cancel in flight. Those did not
+survive it, and funduq never records an outcome it did not observe, so each
+is failed `orphaned_by_funduq_restart` with a terminal `RUN_ERROR`. The
+caller resends.
+
 ## Quality counters are per-process and in memory
 
 They survive a provider reconnecting, which `quality.md` says. They do not
@@ -90,9 +108,11 @@ days later. Nothing in the logs connects the two events.
 ## Topology
 
 **A provider must be connected to the funduq its agents are registered
-on.** `is_serving` reads that process's own roster, so a run for an agent
-whose provider holds no link *here* is recorded `failed` / `agent_offline`
-and is not queued — it does not wait for the provider to appear elsewhere.
+on.** `is_serving` reads that process's own roster, so a run arriving at a
+door for an agent whose provider holds no link *here* is recorded `failed` /
+`agent_offline` and is not queued — it does not wait for the provider to
+appear elsewhere. The one run that does wait is one funduq already accepted:
+see the restart section below.
 
 **One funduq is one trust boundary, and delegation across boundaries works
 today.** An agent served by one funduq delegates to an agent on another by

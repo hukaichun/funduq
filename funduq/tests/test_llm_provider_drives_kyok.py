@@ -185,20 +185,26 @@ async def test_the_policy_seam_is_shown_who_is_asking(funduq, serve, llm):
     await _finish(agent, stream)
 
 
-async def test_the_callers_context_is_never_persisted(funduq, serve, llm):
+async def test_the_callers_context_is_ordinary_content_of_the_record(funduq, serve, llm):
+    """The context is stored on the run like every other field and read back
+    like every other field — a restart rebuilds the binding from it (#122).
+
+    That is safe because of what the context *is*, not where it is kept: an
+    opaque identifier for the LLM provider, which by contract must carry
+    nothing sensitive and grant nothing on its own. Whoever reads it gains
+    nothing; binding it to a run or a chain against replay is the LLM
+    provider's own job. funduq neither interprets nor protects it.
+    """
     _, _, ref = llm
     agent = KyokTokenAgent()
     _, stream = await _run_with_token(
-        funduq, serve, agent, ref, context={"secret": "kyok-ctx-secret"}
+        funduq, serve, agent, ref, context={"voucher": "v1"}
     )
 
     async with funduq.session() as session:
-        snapshot = await repo.get_thread_snapshot(session, stream.thread_id)
         run = await repo.get_run(session, agent.run_id)
-    persisted = json.dumps(snapshot, default=str) + json.dumps(
-        dict(run._asdict()) if hasattr(run, "_asdict") else run.__dict__, default=str
-    )
-    assert "kyok-ctx-secret" not in persisted
+    assert run.metadata["kyok"]["context"] == {"voucher": "v1"}
+    assert funduq.kyok_relay.binding_for(agent.run_id).context == {"voucher": "v1"}
     await _finish(agent, stream)
 
 

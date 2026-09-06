@@ -390,15 +390,13 @@ class RunBroker:
         handlers: HandlerMap,
         seq: int = 0,
         addressed_run_id: str | None = None,
-    ) -> Run | None:
-        """Queues a new run for `agent` on its thread's inbox; None if nobody serves the agent."""
+    ) -> Run:
+        """Queues a new run for `agent` on its thread's inbox. Whether anyone serves the agent is the door's question (`Funduq.enqueue_run`); a run queued while nobody does waits on the unserved clock (`expire_queued`)."""
         if not self.is_running:
             raise RuntimeError(
                 f"run {run_id}: this broker is not running, so nothing would ever be "
                 "dispatched — call Funduq.start() (or RunBroker.start()) first"
             )
-        if self.serving(agent) is None:
-            return None
         run = Run(
             run_id=run_id,
             agent=agent,

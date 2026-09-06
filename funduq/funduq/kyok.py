@@ -90,14 +90,6 @@ def parse_kyok_opt_in(metadata: dict) -> KyokOptIn | None:
         return None
 
 
-def strip_kyok_context(metadata: dict) -> dict:
-    """Return a copy of `metadata` with `kyok.context` removed, leaving everything else untouched."""
-    kyok = metadata.get("kyok")
-    if isinstance(kyok, dict) and "context" in kyok:
-        return {**metadata, "kyok": {k: v for k, v in kyok.items() if k != "context"}}
-    return metadata
-
-
 class KyokForwardedProps(BaseModel):
     """funduq's `forwardedProps.kyok` entry: the grant a KYOK-bound run's agent presents when calling for completions."""
 

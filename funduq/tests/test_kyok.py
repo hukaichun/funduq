@@ -18,7 +18,6 @@ from funduq.kyok import (
     kyok_forwarded_props,
     parse_kyok_opt_in,
     read_kyok_forwarded_props,
-    strip_kyok_context,
     verify_kyok_token,
 )
 
@@ -94,15 +93,6 @@ def test_a_well_formed_opt_in_parses_to_the_pair_and_context():
 def test_anything_else_is_no_opt_in_not_an_error(metadata):
     opt_in = parse_kyok_opt_in(metadata)
     assert opt_in is None or opt_in.llm_provider is None
-
-
-def test_strip_removes_exactly_the_context():
-    metadata = {"kyok": {"llmProvider": {"providerKey": "k", "name": "m"}, "context": "secret"}, "other": 1}
-    stripped = strip_kyok_context(metadata)
-    assert "context" not in stripped["kyok"]
-    assert stripped["kyok"]["llmProvider"] == {"providerKey": "k", "name": "m"}
-    assert stripped["other"] == 1
-    assert metadata["kyok"]["context"] == "secret"
 
 
 def test_forwarded_props_roundtrip_through_the_model():
