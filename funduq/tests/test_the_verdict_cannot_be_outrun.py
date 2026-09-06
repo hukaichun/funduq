@@ -100,7 +100,7 @@ async def test_a_provider_that_answers_and_streams_in_the_same_breath_loses_noth
     record: list = []
     broker.register_provider({AGENT: SameBreath(broker)})
     broker.enqueue_run(
-        "run_1", AGENT, "t1", _valid_input("run_1", "t1"), "ag-ui",
+        "run_1", AGENT, "t1", _valid_input("run_1", "t1"),
         _recording_handlers(record),
     )
 
@@ -128,7 +128,7 @@ async def test_a_declined_offer_buys_no_voice(broker):
     record: list = []
     broker.register_provider({AGENT: DeclinesAndTalks(broker)})
     broker.enqueue_run(
-        "run_1", AGENT, "t1", _valid_input("run_1", "t1"), "ag-ui",
+        "run_1", AGENT, "t1", _valid_input("run_1", "t1"),
         _recording_handlers(record),
     )
 
@@ -151,7 +151,7 @@ async def test_another_connections_words_never_enter_the_record(broker):
     record: list = []
     broker.register_provider({AGENT: Impostor(broker)})
     broker.enqueue_run(
-        "run_1", AGENT, "t1", _valid_input("run_1", "t1"), "ag-ui",
+        "run_1", AGENT, "t1", _valid_input("run_1", "t1"),
         _recording_handlers(record),
     )
 
@@ -175,7 +175,7 @@ async def test_a_verdict_after_funduq_moved_on_lands_nowhere(broker):
     provider = AnswersTooLate(broker)
     broker.register_provider({AGENT: provider})
     broker.enqueue_run(
-        "run_1", AGENT, "t1", _valid_input("run_1", "t1"), "ag-ui",
+        "run_1", AGENT, "t1", _valid_input("run_1", "t1"),
         _recording_handlers(record),
     )
 

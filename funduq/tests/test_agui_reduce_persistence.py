@@ -13,7 +13,7 @@ async def test_a_tool_call_reply_is_persisted_as_real_thread_history_messages(se
     registered = await repo.register_agents(session, identity.public_key, [Registration(name="b")])
     agent_b = registered["b"]
     thread_b = await repo.create_thread(session, agent_b)
-    created = await repo.create_run(session, thread_b, agent_b, "ag-ui", {})
+    created = await repo.create_run(session, thread_b, agent_b, {})
     await session.commit()
     await repo.mark_run_status(session, created["run_id"], "running")
     run_id = created["run_id"]
@@ -23,7 +23,7 @@ async def test_a_tool_call_reply_is_persisted_as_real_thread_history_messages(se
     # what they need, and going through the broker would give the run a lane
     # that races them for its own queue.
     run = Run(
-        run_id=run_id, agent=agent_b, thread_id=thread_b, input_json={}, protocol="ag-ui"
+        run_id=run_id, agent=agent_b, thread_id=thread_b, input_json={}
     )
     events = [
         {"type": "RUN_STARTED", "threadId": thread_b, "runId": run_id},
@@ -64,7 +64,7 @@ async def test_a_plain_text_only_reply_is_still_persisted(session, funduq, new_i
     registered = await repo.register_agents(session, identity.public_key, [Registration(name="b")])
     agent_b = registered["b"]
     thread_b = await repo.create_thread(session, agent_b)
-    created = await repo.create_run(session, thread_b, agent_b, "ag-ui", {})
+    created = await repo.create_run(session, thread_b, agent_b, {})
     await session.commit()
     await repo.mark_run_status(session, created["run_id"], "running")
     run_id = created["run_id"]
@@ -74,7 +74,7 @@ async def test_a_plain_text_only_reply_is_still_persisted(session, funduq, new_i
     # what they need, and going through the broker would give the run a lane
     # that races them for its own queue.
     run = Run(
-        run_id=run_id, agent=agent_b, thread_id=thread_b, input_json={}, protocol="ag-ui"
+        run_id=run_id, agent=agent_b, thread_id=thread_b, input_json={}
     )
     events = [
         {"type": "TEXT_MESSAGE_START", "messageId": "m1", "role": "assistant"},
@@ -100,7 +100,7 @@ async def test_a_failed_run_persists_nothing_to_thread_history(session, funduq, 
     registered = await repo.register_agents(session, identity.public_key, [Registration(name="b")])
     agent_b = registered["b"]
     thread_b = await repo.create_thread(session, agent_b)
-    created = await repo.create_run(session, thread_b, agent_b, "ag-ui", {})
+    created = await repo.create_run(session, thread_b, agent_b, {})
     await session.commit()
     await repo.mark_run_status(session, created["run_id"], "running")
     run_id = created["run_id"]
@@ -110,7 +110,7 @@ async def test_a_failed_run_persists_nothing_to_thread_history(session, funduq, 
     # what they need, and going through the broker would give the run a lane
     # that races them for its own queue.
     run = Run(
-        run_id=run_id, agent=agent_b, thread_id=thread_b, input_json={}, protocol="ag-ui"
+        run_id=run_id, agent=agent_b, thread_id=thread_b, input_json={}
     )
     partial = {"type": "TEXT_MESSAGE_START", "messageId": "m1", "role": "assistant"}
     await _handle_relay(funduq, run, RelayEvent(partial))

@@ -6,7 +6,7 @@ from a2a.types import a2a_pb2 as pb
 from google.protobuf.json_format import MessageToDict
 from ag_ui.core import AssistantMessage, EventType, UserMessage
 
-from funduq.pause import interrupt_outcome_of
+from funduq.pause import interrupt_outcome_of, open_asks
 from funduq.props import OBSERVED_METADATA_KEY
 
 _PLACEHOLDER_MESSAGE_ID = "unset"
@@ -16,7 +16,6 @@ RUN_STATUS_TO_A2A_STATE = {
     # Submitted, not working: funduq has offered the run to a provider and is waiting for an answer, so nothing is being worked on yet.
     "offering": pb.TaskState.TASK_STATE_SUBMITTED,
     "running": pb.TaskState.TASK_STATE_WORKING,
-    "input-required": pb.TaskState.TASK_STATE_INPUT_REQUIRED,
     # Working, plus a metadata marker (`CANCEL_REQUESTED_METADATA_KEY`).
     "cancelling": pb.TaskState.TASK_STATE_WORKING,
     "completed": pb.TaskState.TASK_STATE_COMPLETED,
@@ -54,8 +53,15 @@ def is_mapped(event: dict[str, Any]) -> bool:
 
 
 def state_for_run_status(run_status: str):
-    """Maps a funduq run status to its A2A `TaskState`."""
+    """Maps a funduq run status to its A2A `TaskState`, status alone: use `task_state_of` when the run's events are at hand, because a completed run that left asks open is a task waiting for input."""
     return RUN_STATUS_TO_A2A_STATE.get(run_status, pb.TaskState.TASK_STATE_UNSPECIFIED)
+
+
+def task_state_of(run_status: str, run_events: list[dict[str, Any]], cancel_requested: bool = False):
+    """The A2A state of a task whose tail run is in `run_status` with `run_events`: a completed run with open asks is `INPUT_REQUIRED` — or `CANCELED` once someone closed it — everything else is the status's own state."""
+    if run_status == "completed" and open_asks(run_events):
+        return pb.TaskState.TASK_STATE_CANCELED if cancel_requested else pb.TaskState.TASK_STATE_INPUT_REQUIRED
+    return state_for_run_status(run_status)
 
 
 def status_update_for_run_status(
@@ -193,8 +199,9 @@ def build_task(
     thread_messages: list[dict[str, Any]] | None = None,
     history_length: int | None = None,
     cancel_requested: bool = False,
+    tail_events: list[dict[str, Any]] | None = None,
 ) -> pb.Task:
-    """Builds an A2A `Task` from a run's stored status and event history, merging each message's text-content deltas (in event order) into one artifact per `messageId`, filling `history` from the thread's stored messages, and carrying every unmapped event, in order, under `metadata.funduq.agui_events`."""
+    """Builds an A2A `Task` from a task's tail status and event history (`tail_events`, when the task is a lineage and `run_events` spans it), merging each message's text-content deltas (in event order) into one artifact per `messageId`, filling `history` from the thread's stored messages, and carrying every unmapped event, in order, under `metadata.funduq.agui_events`."""
     merged: dict[str, list[str]] = {}
     overflow: list[dict[str, Any]] = []
     for event in run_events:
@@ -208,7 +215,8 @@ def build_task(
     task = pb.Task(
         id=task_id,
         context_id=context_id,
-        status=pb.TaskStatus(state=state_for_run_status(run_status)),
+        # The task's state is its tail run's; `run_events` may span the whole lineage for the artifacts.
+        status=pb.TaskStatus(state=task_state_of(run_status, run_events if tail_events is None else tail_events, cancel_requested)),
         history=history_of(thread_messages or [], context_id, limit=history_length),
         artifacts=[
             pb.Artifact(artifact_id=artifact_id, parts=[pb.Part(text="".join(chunks))])

@@ -51,6 +51,7 @@ from funduq import repo
 from funduq.config import CoreSettings
 from funduq.identity import FunduqIdentity
 from funduq.core import Funduq
+from funduq.doors import head_key_of
 from funduq.identity import (
     InvalidChain,
     extend_chain,
@@ -171,8 +172,7 @@ async def main() -> int:
         print("[3] the door takes the branch")
         handle = await funduq.start_run(
             agent,
-            {"messages": [{"id": "m1", "role": "user", "content": "act on the caller's behalf"}]},
-            metadata={"actorChain": branched},
+            {"messages": [{"id": "m1", "role": "user", "content": "act on the caller's behalf"}], "forwardedProps": {"actorChain": branched}},
         )
         async for _ in handle.events():
             pass
@@ -194,7 +194,7 @@ async def main() -> int:
             "the record keeps the chain as dispatched",
             kept_what_arrived and witnessed,
             f"run {handle.run_id[:8]}… keeps all {len(branched)} hop(s) it arrived with "
-            f"under head_key {(run.head_key or '')[:16]}…, and funduq's own dispatch hop "
+            f"under head_key {(head_key_of(run) or '')[:16]}…, and funduq's own dispatch hop "
             "after them — so an auditor reads both the path that was claimed and the fact "
             "that this one passed a witness"
             if kept_what_arrived and witnessed

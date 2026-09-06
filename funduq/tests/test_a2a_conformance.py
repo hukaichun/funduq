@@ -23,6 +23,8 @@ static half of that rule scans `funduq/`, not `tests/`.
 
 from __future__ import annotations
 
+import asyncio
+
 import pytest
 from a2a.server.tasks.task_manager import append_artifact_to_task
 from a2a.types import a2a_pb2 as pb
@@ -79,15 +81,38 @@ async def test_a_streamed_run_reassembles_under_a2as_own_rules(funduq, callee):
     assert "".join(p.text for a in task.artifacts for p in a.parts)
 
 
-async def test_resubscribing_reassembles_too(funduq, callee):
-    """The other stream out of the A2A door, held to the same rule."""
-    adapter = A2AAdapter(funduq)
-    sent = await adapter.send_task(callee, _message("hi"))
+class _Holds:
+    """Starts, then waits to be released before finishing, so a second stream can attach mid-run."""
 
-    task = assemble([e async for e in await adapter.resubscribe_task(callee, sent.id)])
+    def __init__(self) -> None:
+        self.release = asyncio.Event()
+
+    async def run_stream(self, agent_name: str, run_input):
+        ids = {"threadId": run_input.thread_id, "runId": run_input.run_id}
+        yield {"type": "RUN_STARTED", **ids}
+        await self.release.wait()
+        yield {"type": "TEXT_MESSAGE_START", "messageId": "m1", "role": "assistant"}
+        yield {"type": "TEXT_MESSAGE_CONTENT", "messageId": "m1", "delta": "done"}
+        yield {"type": "TEXT_MESSAGE_END", "messageId": "m1"}
+        yield {"type": "RUN_FINISHED", **ids}
+
+
+async def test_resubscribing_reassembles_too(funduq, serve):
+    """The other stream out of the A2A door, held to the same rule. A finished
+    task cannot be subscribed to (A2A §3.1.6), so the second stream attaches
+    while the run is still open."""
+    provider = _Holds()
+    agent = (await serve(provider, "holder")).agents["holder"]
+    adapter = A2AAdapter(funduq)
+    sent = await adapter.send_task(agent, _message("hi"), return_immediately=True)
+
+    stream = await adapter.resubscribe_task(agent, sent.id)
+    provider.release.set()
+    task = assemble([e async for e in stream])
 
     assert task.id == sent.id
     assert task.status.state == pb.TaskState.TASK_STATE_COMPLETED
+    assert "".join(p.text for a in task.artifacts for p in a.parts) == "done"
 
 
 async def test_a_caller_mistake_comes_back_in_a2as_words(funduq, callee, serve):

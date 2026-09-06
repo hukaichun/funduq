@@ -53,11 +53,11 @@ async def test_create_run_assigns_a_database_generated_run_id(session, new_ident
     registered = await repo.register_agents(session, identity.public_key, [Registration(name="a")])
     thread_id = await repo.create_thread(session, registered["a"])
 
-    first = await repo.create_run(session, thread_id, registered["a"], "ag-ui", {})
+    first = await repo.create_run(session, thread_id, registered["a"], {})
     await session.commit()
     assert first["run_id"].startswith("run_")
 
-    second = await repo.create_run(session, thread_id, registered["a"], "ag-ui", {})
+    second = await repo.create_run(session, thread_id, registered["a"], {})
     await session.commit()
     assert second["run_id"] != first["run_id"]
 
@@ -74,11 +74,11 @@ async def test_a_message_is_stored_under_the_id_it_was_stamped_with(session, new
     identity = new_identity()
     registered = await repo.register_agents(session, identity.public_key, [Registration(name="a")])
     thread_id = await repo.create_thread(session, registered["a"])
-    run = await repo.create_run(session, thread_id, registered["a"], "ag-ui", {})
+    run = await repo.create_run(session, thread_id, registered["a"], {})
     await session.commit()
 
     stamped = repo.stamp_messages([{"role": "user", "content": "hi"}])
-    await repo.append_thread_messages(session, thread_id, run["run_id"], stamped)
+    await repo.append_thread_messages(session, thread_id, run["run_id"], stamped, origin="caller")
 
     persisted = await repo.get_thread_messages(session, thread_id)
     assert persisted[0]["id"] == stamped[0]["id"]
@@ -88,12 +88,12 @@ async def test_stamping_never_deduplicates_by_content(session, new_identity):
     identity = new_identity()
     registered = await repo.register_agents(session, identity.public_key, [Registration(name="a")])
     thread_id = await repo.create_thread(session, registered["a"])
-    run = await repo.create_run(session, thread_id, registered["a"], "ag-ui", {})
+    run = await repo.create_run(session, thread_id, registered["a"], {})
     await session.commit()
 
     same_content = [{"role": "user", "content": "hi"}]
-    await repo.append_thread_messages(session, thread_id, run["run_id"], repo.stamp_messages(same_content))
-    await repo.append_thread_messages(session, thread_id, run["run_id"], repo.stamp_messages(same_content))
+    await repo.append_thread_messages(session, thread_id, run["run_id"], repo.stamp_messages(same_content), origin="caller")
+    await repo.append_thread_messages(session, thread_id, run["run_id"], repo.stamp_messages(same_content), origin="caller")
 
     persisted = await repo.get_thread_messages(session, thread_id)
     assert len(persisted) == 2

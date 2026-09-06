@@ -46,9 +46,11 @@ Two things this does **not** close, deliberately:
 An agent waiting on a human has two ways to express it, and only one is
 free.
 
-- **Pause the run** (`input-required`). The run settles, funduq forgets it,
-  and no clock runs against the provider. A run can wait on a person for
-  hours or days.
+- **Finish asking.** The run ends `completed` with an interrupt outcome or
+  an unanswered tool call; funduq forgets it, no clock runs against the
+  provider, and the thread reads as waiting from that run's events. The
+  answer, whenever it comes, is the next run. A thread can wait on a person
+  for hours or days.
 - **Block inside the run.** The run is still one the provider accepted and
   has not delivered, so `undelivered_window_seconds` (default 1800) applies:
   when it passes, one **undelivered** is counted against the provider. At
@@ -78,10 +80,10 @@ If an author wants pacing, the way to have it is to declare it —
 
 ## What a restart keeps and what it fails
 
-A run is either waiting or held. A **waiting** run — `queued`, or paused
-`input-required` — was never in any process: its row is the input its
+A run is either waiting or held. A **waiting** run — `queued`, or completed
+with asks still open — was never in any process: its row is the input its
 provider will receive, its messages are in the thread, its KYOK opt-in is in
-its metadata. A new process reads every `queued` row back at start, oldest
+its `forwardedProps`. A new process reads every `queued` row back at start, oldest
 first, and queues it again. Providers connect after start, so each of those
 runs waits on the unserved clock (`unserved_timeout_seconds`, from the moment
 of restart) and is failed `no_provider_took_it` if nobody comes back for it.

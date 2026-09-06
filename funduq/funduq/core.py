@@ -24,7 +24,6 @@ from funduq.changes import ChangeEvent, LlmRosterChanged, RosterChanged, RunStat
 from funduq.config import CoreSettings
 from funduq.doors import (
     InboundRun,
-    PendingAsk,
     authorize_cancel,
     dispatch,
     offline_events,
@@ -55,8 +54,8 @@ from funduq.identity import (
     verify_signature,
 )
 from funduq.kyok import ConnectedLLMProvider, KyokBinding, KyokRelay, parse_kyok_opt_in
-from funduq.pause import outstanding_asks
-from funduq.props import observed, observed_of
+from funduq.pause import open_asks
+from funduq.props import observed_of
 from funduq.models import AgentRecord, AgentRef, AgentSummary, LlmRef, LlmSummary, RunRecord
 
 logger = logging.getLogger("funduq.core")
@@ -398,17 +397,14 @@ class Funduq:
             waiting = await repo.queued_runs(session)
             for stored in waiting:
                 agent = AgentRef(provider_key=stored.provider_key, name=stored.agent_name)
-                props = stored.input_json.get("forwardedProps")
-                addressed = observed_of(props if isinstance(props, dict) else None).get("addressedRunId")
+                bag = stored.forwarded_props if isinstance(stored.forwarded_props, dict) else {}
+                addressed = observed_of(bag).get("addressedRunId")
                 if addressed is not None and self.broker.get(addressed) is None:
                     # An interjection names the run it changes; that run died with the process, so the words have nowhere to go.
-                    await self.mark_run_status(
-                        session, stored.run_id, "failed",
-                        metadata=observed(failureReason="interjection_target_lost"),
-                    )
+                    await self.mark_run_status(session, stored.run_id, "failed")
                     lost.append(stored.run_id)
                     continue
-                opt_in = parse_kyok_opt_in(stored.metadata or {})
+                opt_in = parse_kyok_opt_in(bag)
                 if opt_in is not None and opt_in.llm_provider is not None:
                     self.kyok_relay.bind_run(
                         stored.run_id,
@@ -419,7 +415,8 @@ class Funduq:
                         ),
                     )
                 self.broker.enqueue_run(
-                    stored.run_id, agent, stored.thread_id, stored.input_json, stored.protocol,
+                    stored.run_id, agent, stored.thread_id,
+                    await repo.run_input_of(session, stored),
                     make_handlers(self),
                     seq=await repo.get_last_event_seq(session, stored.run_id),
                     addressed_run_id=addressed,
@@ -632,11 +629,9 @@ class Funduq:
             except Exception:
                 logger.exception("on_change subscriber raised for %r", event)
 
-    async def mark_run_status(
-        self, session: AsyncSession, run_id: str, status: str, metadata: dict[str, Any] | None = None
-    ) -> bool:
+    async def mark_run_status(self, session: AsyncSession, run_id: str, status: str) -> bool:
         """Applies the status transition (see `repo.LEGAL_STATUS_TRANSITIONS`) and notifies change subscribers only when it actually applied."""
-        applied = await repo.mark_run_status(session, run_id, status, metadata=metadata)
+        applied = await repo.mark_run_status(session, run_id, status)
         if applied:
             self._notify_change(RunStatusChanged(run_id=run_id, status=status))
         return applied
@@ -749,7 +744,6 @@ class Funduq:
         agent: AgentRef,
         thread_id: str,
         input_json: dict[str, Any],
-        protocol: str,
         seq: int = 0,
         addressed_run_id: str | None = None,
     ) -> RunSnapshot | None:
@@ -761,7 +755,6 @@ class Funduq:
             agent,
             thread_id,
             input_json,
-            protocol,
             make_handlers(self),
             seq=seq,
             addressed_run_id=addressed_run_id,
@@ -772,41 +765,20 @@ class Funduq:
         agent: AgentRef,
         run_input: dict[str, Any],
         thread_id: str | None = None,
-        metadata: dict[str, Any] | None = None,
         presenter_key: str | None = None,
     ) -> RunHandle:
-        """Create (or reuse) a thread, open a queued run on it, and enqueue it for dispatch."""
+        """Create (or reuse) a thread and open a run on it: every `RunAgentInput` is a run. The caller's declarations to funduq — `actorChain`, `kyok` — ride in `run_input["forwardedProps"]`, the one bag both doors read."""
         async with self.session() as session:
-            caller_metadata, head_key, actor_chain = await verify_caller(session, metadata or {}, presenter_key=presenter_key)
-            caller_metadata, kyok = await resolve_kyok(session, caller_metadata)
-            # Signed here, once, so the run stores exactly what the agent gets.
-            chain = relayed_chain(self, actor_chain, agent)
+            raw_props = run_input.get("forwardedProps")
+            props = raw_props if isinstance(raw_props, dict) else {}
+            props, head_key, actor_chain = await verify_caller(session, props, presenter_key=presenter_key)
+            props, kyok = await resolve_kyok(session, props)
             resolved_thread_id = await repo.ensure_thread(
-                session, agent, thread_id, metadata=caller_metadata,
+                session, agent, thread_id, metadata=props,
                 create_if_missing=True, head_key=head_key,
             )
-            inbound = InboundRun(
-                agent=agent,
-                messages=run_input.get("messages", []),
-                metadata=caller_metadata,
-                head_key=head_key,
-                actor_chain=chain,
-                kyok=kyok,
-                state=run_input.get("state"),
-                tools=run_input.get("tools"),
-                context=run_input.get("context"),
-                resume=run_input.get("resume"),
-                parent_run_id=run_input.get("parentRunId"),
-                forwarded_props=run_input.get("forwardedProps"),
-                protocol="ag-ui",
-            )
-            opened = await open_run(
-                self, session, inbound,
-                thread_id=resolved_thread_id,
-                # An embedder speaks; it does not answer a pending ask.
-                entrance="utterance",
-                ask=None,
-            )
+            inbound = self._inbound(agent, run_input, props if isinstance(raw_props, dict) else raw_props, head_key, actor_chain, kyok)
+            opened = await open_run(self, session, inbound, thread_id=resolved_thread_id)
             live = await dispatch(self, session, inbound, opened)
 
         return RunHandle(
@@ -824,79 +796,88 @@ class Funduq:
         self,
         run_id: str,
         run_input: dict[str, Any],
-        metadata: dict | None = None,
         presenter_key: str | None = None,
     ) -> RunHandle:
-        """Deliver a deferred call's result back into the run it suspended."""
+        """Answer a run that finished asking: opens the next run on its thread with `parentRunId` = `run_id`. The asking run must be the newest on its lineage, completed with asks still open, and not closed by a cancel."""
         async with self.session() as session:
             stored = await repo.get_run(session, run_id)
             if stored is None:
                 raise LookupError(f"no such run: {run_id}")
-            if stored.status != "input-required":
-                raise NoPendingAsk(
-                    f"run '{run_id}' is {stored.status}, not waiting for a result"
-                )
-            agent = AgentRef(provider_key=stored.provider_key, name=stored.agent_name)
+            tail = await repo.lineage_tail(session, run_id)
+            events = await repo.get_run_events(session, run_id)
+            if (
+                tail is None
+                or tail.run_id != run_id
+                or stored.status != "completed"
+                or stored.cancel_requested_by is not None
+                or not open_asks(events)
+            ):
+                raise NoPendingAsk(f"run '{run_id}' is not waiting for a result")
+            agent = stored.agent
 
-            caller_metadata, head_key, actor_chain = await verify_caller(session, metadata or {}, presenter_key=presenter_key)
-            caller_metadata, kyok = await resolve_kyok(session, caller_metadata)
-
-            inbound = InboundRun(
-                agent=agent,
-                messages=run_input.get("messages", []),
-                metadata=caller_metadata,
-                # The run's own, not the answering party's: this is the same run continuing, and what the agent verifies must not change because somebody else answered its pause.
-                head_key=stored.head_key,
-                actor_chain=stored.actor_chain,
-                kyok=kyok,
-                state=run_input.get("state"),
-                tools=run_input.get("tools"),
-                context=run_input.get("context"),
-                resume=run_input.get("resume"),
-                parent_run_id=run_input.get("parentRunId"),
-                forwarded_props=run_input.get("forwardedProps"),
-                protocol=stored.protocol or "ag-ui",
-            )
-            opened = await open_run(
-                self, session, inbound,
-                thread_id=stored.thread_id,
-                entrance="result",
-                ask=PendingAsk(
-                    run_id=run_id,
-                    head_key=stored.head_key,
-                    ask_ids=frozenset(outstanding_asks(stored.metadata or {})),
-                ),
-            )
-            if opened is None:
-                # Another result reached the same ask first.
-                raise NoPendingAsk(f"run '{run_id}' is no longer waiting for a result")
+            raw_props = run_input.get("forwardedProps")
+            props = raw_props if isinstance(raw_props, dict) else {}
+            props, head_key, actor_chain = await verify_caller(session, props, presenter_key=presenter_key)
+            props, kyok = await resolve_kyok(session, props)
+            inbound = self._inbound(agent, run_input, props if isinstance(raw_props, dict) else raw_props, head_key, actor_chain, kyok)
+            opened = await open_run(self, session, inbound, thread_id=stored.thread_id, answers=stored)
             live = await dispatch(self, session, inbound, opened)
 
         return RunHandle(
-            run_id=run_id,
+            run_id=opened.run_id,
             thread_id=stored.thread_id,
             _broker=self.broker,
             _events=(
-                self.broker.subscribe(run_id)
+                self.broker.subscribe(opened.run_id)
                 if live
-                else offline_events(stored.thread_id, run_id)
+                else offline_events(stored.thread_id, opened.run_id)
             ),
         )
 
+    def _inbound(self, agent, run_input, forwarded_props, head_key, actor_chain, kyok) -> InboundRun:
+        return InboundRun(
+            agent=agent,
+            messages=run_input.get("messages", []),
+            head_key=head_key,
+            # Signed here, once, so the run stores exactly what the agent gets.
+            actor_chain=relayed_chain(self, actor_chain, agent),
+            kyok=kyok,
+            state=run_input.get("state"),
+            tools=run_input.get("tools"),
+            context=run_input.get("context"),
+            resume=run_input.get("resume"),
+            parent_run_id=run_input.get("parentRunId"),
+            forwarded_props=forwarded_props,
+        )
+
+    async def run_input(self, run_id: str) -> dict[str, Any] | None:
+        """The `RunAgentInput` a run is — its row's projection, what its provider receives."""
+        async with self.session() as session:
+            stored = await repo.get_run(session, run_id)
+            return await repo.run_input_of(session, stored) if stored else None
+
+    async def lineage(self, run_id: str) -> list[RunRecord]:
+        """Every run descending from `run_id` by `parentRunId`, root first — what an A2A task is."""
+        async with self.session() as session:
+            return await repo.lineage(session, run_id)
+
     async def cancel_run(self, run_id: str, *, metadata: dict[str, Any] | None = None) -> bool:
-        """Asks the run's provider to stop, after checking whoever asked may."""
+        """Asks the run's provider to stop, after checking whoever asked may. A completed run that left asks open has no provider to ask: the request closes what it was waiting on, and that is recorded on the run."""
         async with self.session() as session:
             stored = await repo.get_run(session, run_id)
         if stored is None:
             return False
         requested_by = authorize_cancel(stored, metadata or {})
+        if stored.status in ("failed", "cancelled"):
+            return False
+        if stored.status == "completed":
+            if stored.cancel_requested_by is not None or not open_asks(await self.get_run_events(run_id)):
+                return False
+            async with self.session() as session:
+                await repo.record_cancel_request(session, run_id, requested_by=requested_by or "")
+            return True
         async with self.session() as session:
-            await repo.record_cancel_request(session, run_id, requested_by=requested_by)
-        if stored.status == "input-required":
-            raise RunNotCancellable(
-                f"run '{run_id}' is paused waiting for a result; no provider is "
-                "working on it, so there is nobody to ask to stop"
-            )
+            await repo.record_cancel_request(session, run_id, requested_by=requested_by or "")
         return self.broker.request_cancel(run_id)
 
 

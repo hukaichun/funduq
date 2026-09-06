@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 
 from funduq import repo
-from funduq.props import observed_of
+from funduq.pause import interrupts_of, open_asks, unanswered_tool_calls
 from funduq.broker import FinishStream, RelayEvent, Run
 from funduq.handlers import _handle_finish, _handle_relay
 from funduq_contract import Registration
@@ -14,7 +14,7 @@ async def test_native_ag_ui_interrupt_outcome_pauses_a_run(session, funduq, new_
     registered = await repo.register_agents(session, identity.public_key, [Registration(name="b")])
     agent_b = registered["b"]
     thread_b = await repo.create_thread(session, agent_b)
-    created = await repo.create_run(session, thread_b, agent_b, "ag-ui", {})
+    created = await repo.create_run(session, thread_b, agent_b, {})
     await session.commit()
     await repo.mark_run_status(session, created["run_id"], "running")
     run_id = created["run_id"]
@@ -24,7 +24,7 @@ async def test_native_ag_ui_interrupt_outcome_pauses_a_run(session, funduq, new_
     # what they need, and going through the broker would give the run a lane
     # that races them for its own queue.
     run = Run(
-        run_id=run_id, agent=agent_b, thread_id=thread_b, input_json={}, protocol="ag-ui"
+        run_id=run_id, agent=agent_b, thread_id=thread_b, input_json={}
     )
     interrupt = {"id": "int_1", "reason": "tool_call", "message": "Approve foo(1)?"}
     finished_event = {
@@ -37,8 +37,10 @@ async def test_native_ag_ui_interrupt_outcome_pauses_a_run(session, funduq, new_
     await _handle_finish(funduq, run, FinishStream())
 
     reread = await repo.get_run(session, run_id)
-    assert reread.status == "input-required"
-    assert observed_of(reread.metadata)["interrupts"] == [interrupt]
+    events = await repo.get_run_events(session, run_id)
+    assert reread.status == "completed", "finished asking is finished — AG-UI's own reading"
+    assert interrupts_of(events) == [interrupt]
+    assert open_asks(events) == {"int_1"}, "and the thread is waiting on it, read from the events"
 
 
 async def test_native_ag_ui_success_outcome_completes_a_run_normally(session, funduq, new_identity):
@@ -46,7 +48,7 @@ async def test_native_ag_ui_success_outcome_completes_a_run_normally(session, fu
     registered = await repo.register_agents(session, identity.public_key, [Registration(name="b")])
     agent_b = registered["b"]
     thread_b = await repo.create_thread(session, agent_b)
-    created = await repo.create_run(session, thread_b, agent_b, "ag-ui", {})
+    created = await repo.create_run(session, thread_b, agent_b, {})
     await session.commit()
     await repo.mark_run_status(session, created["run_id"], "running")
     run_id = created["run_id"]
@@ -56,7 +58,7 @@ async def test_native_ag_ui_success_outcome_completes_a_run_normally(session, fu
     # what they need, and going through the broker would give the run a lane
     # that races them for its own queue.
     run = Run(
-        run_id=run_id, agent=agent_b, thread_id=thread_b, input_json={}, protocol="ag-ui"
+        run_id=run_id, agent=agent_b, thread_id=thread_b, input_json={}
     )
     finished_event = {"type": "RUN_FINISHED", "threadId": thread_b, "runId": run_id}
     await _handle_relay(funduq, run, RelayEvent(finished_event))
@@ -66,57 +68,26 @@ async def test_native_ag_ui_success_outcome_completes_a_run_normally(session, fu
     assert reread.status == "completed"
 
 
-async def test_finalize_delegated_call_reports_honestly_without_registering_any_interest(
-    session, new_identity
-):
-    identity = new_identity()
-    registered = await repo.register_agents(session, identity.public_key, [Registration(name="b"), Registration(name="c")]
-    )
-    agent_b, agent_c = registered["b"], registered["c"]
-
-    thread_b = await repo.create_thread(session, agent_b)
-    thread_c = await repo.ensure_thread(session, agent_c, None, parent_thread_id=thread_b)
-
-    run_b = await repo.create_run(session, thread_b, agent_b, "a2a", {})
-    await session.commit()
-    run_c = await repo.create_run(session, thread_c, agent_c, "a2a", {})
-    await session.commit()
-    await repo.mark_run_status(session, run_c["run_id"], "running")
-    await repo.mark_run_status(
-        session, run_c["run_id"], "input-required", metadata={"reason": "hitl_approval"}
-    )
-
-    db_run = await repo.get_run(session, run_c["run_id"])
-    assert db_run.status == "input-required"
-
-    reread_b = await repo.get_run(session, run_b["run_id"])
-    assert reread_b.metadata == {}
-    assert reread_b.status == "queued"
-
-
-async def test_a_delegating_agent_gets_an_honest_answer_by_just_asking_again(session, new_identity):
+async def test_a_run_that_finished_asking_is_not_active_on_its_thread(session, new_identity):
+    """Nobody is working on it — the provider ended its stream — so it is not the thread's active run. That the thread is waiting is a fact about the latest run's events, not a status that keeps it in flight."""
     identity = new_identity()
     registered = await repo.register_agents(session, identity.public_key, [Registration(name="c")])
     agent_c = registered["c"]
     thread_c = await repo.create_thread(session, agent_c)
-
-    run_c = await repo.create_run(session, thread_c, agent_c, "a2a", {})
+    run_c = await repo.create_run(session, thread_c, agent_c, {})
     await session.commit()
     await repo.mark_run_status(session, run_c["run_id"], "running")
-    await repo.mark_run_status(session, run_c["run_id"], "input-required")
-
-    still_active = await repo.get_active_run_for_thread(session, thread_c)
-    assert still_active is not None
-    assert still_active["run_id"] == run_c["run_id"]
-
-    # The answer arrives: the reply lane reopens the run, it runs again, and
-    # completes — the legal road out of a pause.
-    assert await repo.claim_ask(session, run_c["run_id"])
-    await repo.reopen_run(session, run_c["run_id"], {})
-    await repo.mark_run_status(session, run_c["run_id"], "running")
+    await repo.append_run_event(session, run_c["run_id"], 1, {"type": "RUN_STARTED"})
+    await repo.append_run_event(
+        session, run_c["run_id"], 2,
+        {"type": "RUN_FINISHED", "outcome": {"type": "interrupt", "interrupts": [{"id": "int_1", "reason": "hitl_approval"}]}},
+    )
     await repo.mark_run_status(session, run_c["run_id"], "completed")
 
     assert await repo.get_active_run_for_thread(session, thread_c) is None
+    latest = await repo.latest_run_for_thread(session, thread_c)
+    assert latest.run_id == run_c["run_id"]
+    assert open_asks(await repo.get_run_events(session, latest.run_id)) == {"int_1"}
 
 
 async def test_a_result_with_no_pending_ask_is_refused_not_smuggled(funduq, serve):
@@ -169,14 +140,14 @@ async def test_an_unanswered_tool_call_pauses_a_run_that_reported_success(
     registered = await repo.register_agents(session, identity.public_key, [Registration(name="b")])
     agent_b = registered["b"]
     thread_b = await repo.create_thread(session, agent_b)
-    created = await repo.create_run(session, thread_b, agent_b, "ag-ui", {})
+    created = await repo.create_run(session, thread_b, agent_b, {})
     await session.commit()
     await repo.mark_run_status(session, created["run_id"], "running")
     run_id = created["run_id"]
     await session.commit()
 
     run = Run(
-        run_id=run_id, agent=agent_b, thread_id=thread_b, input_json={}, protocol="ag-ui"
+        run_id=run_id, agent=agent_b, thread_id=thread_b, input_json={}
     )
     for event in (
         {"type": "TOOL_CALL_START", "toolCallId": "c1", "toolCallName": "get_weather"},
@@ -194,9 +165,11 @@ async def test_an_unanswered_tool_call_pauses_a_run_that_reported_success(
     await _handle_finish(funduq, run, FinishStream())
 
     reread = await repo.get_run(session, run_id)
-    assert reread.status == "input-required"
-    assert observed_of(reread.metadata)["pendingToolCalls"] == ["c2"]
-    assert observed_of(reread.metadata)["interrupts"] == []
+    events = await repo.get_run_events(session, run_id)
+    assert reread.status == "completed"
+    assert unanswered_tool_calls(events) == ["c2"]
+    assert interrupts_of(events) == []
+    assert open_asks(events) == {"c2"}
 
 
 async def test_a_run_whose_every_tool_call_was_answered_still_completes(
@@ -206,14 +179,14 @@ async def test_a_run_whose_every_tool_call_was_answered_still_completes(
     registered = await repo.register_agents(session, identity.public_key, [Registration(name="b")])
     agent_b = registered["b"]
     thread_b = await repo.create_thread(session, agent_b)
-    created = await repo.create_run(session, thread_b, agent_b, "ag-ui", {})
+    created = await repo.create_run(session, thread_b, agent_b, {})
     await session.commit()
     await repo.mark_run_status(session, created["run_id"], "running")
     run_id = created["run_id"]
     await session.commit()
 
     run = Run(
-        run_id=run_id, agent=agent_b, thread_id=thread_b, input_json={}, protocol="ag-ui"
+        run_id=run_id, agent=agent_b, thread_id=thread_b, input_json={}
     )
     for event in (
         {"type": "TOOL_CALL_START", "toolCallId": "c1", "toolCallName": "get_weather"},
@@ -239,14 +212,14 @@ async def test_an_interrupt_and_an_unanswered_call_are_recorded_in_one_pause(
     registered = await repo.register_agents(session, identity.public_key, [Registration(name="b")])
     agent_b = registered["b"]
     thread_b = await repo.create_thread(session, agent_b)
-    created = await repo.create_run(session, thread_b, agent_b, "ag-ui", {})
+    created = await repo.create_run(session, thread_b, agent_b, {})
     await session.commit()
     await repo.mark_run_status(session, created["run_id"], "running")
     run_id = created["run_id"]
     await session.commit()
 
     run = Run(
-        run_id=run_id, agent=agent_b, thread_id=thread_b, input_json={}, protocol="ag-ui"
+        run_id=run_id, agent=agent_b, thread_id=thread_b, input_json={}
     )
     interrupt = {"id": "int-c3", "reason": "tool_call", "toolCallId": "c3",
                  "message": "Approve send_money(500)?"}
@@ -262,6 +235,8 @@ async def test_an_interrupt_and_an_unanswered_call_are_recorded_in_one_pause(
     await _handle_finish(funduq, run, FinishStream())
 
     reread = await repo.get_run(session, run_id)
-    assert reread.status == "input-required"
-    assert observed_of(reread.metadata)["interrupts"] == [interrupt]
-    assert observed_of(reread.metadata)["pendingToolCalls"] == ["c2", "c3"]
+    events = await repo.get_run_events(session, run_id)
+    assert reread.status == "completed", "finished asking is finished — AG-UI's own reading"
+    assert interrupts_of(events) == [interrupt]
+    assert unanswered_tool_calls(events) == ["c2", "c3"]
+    assert open_asks(events) == {"c2", "c3"}, "one pause, everything it left open — the interrupt by the tool call it is about"

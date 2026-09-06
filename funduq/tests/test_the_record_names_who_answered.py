@@ -1,14 +1,15 @@
-"""Who answered a paused run, and who asked one to stop, are in the record.
+"""Who answered a run that asked, and who asked one to stop, are in the record.
 
-funduq's whole product is the record. It already checked that a resolution
-came from an authority the run answers to — and then discarded the answer,
-keeping only the proof as presented.
+funduq's whole product is the record. Every input is a run, so the answer to
+an ask is a run of its own, on its own row, under its own chain, carrying the
+resolution proof it was accepted on: who answered is what that row says. Who
+asked a run to stop is the one piece of state a run keeps beyond its status.
 
 The case that makes it matter is the provider resolving its own agent's ask.
 Nothing stops it and nothing should — it could have taken the step without
 pausing at all. But a pause that is raised and then answered reads, to
-anyone auditing later, as *an approval was obtained*, and until this landed
-the record could not say the approver was the party that asked.
+anyone auditing later, as *an approval was obtained*, and the record must
+say the approver was the party that asked.
 """
 
 from __future__ import annotations
@@ -16,7 +17,7 @@ from __future__ import annotations
 import pytest
 
 from funduq import repo
-from funduq.errors import RunNotCancellable
+from funduq.pause import open_asks
 from funduq.props import OBSERVED_METADATA_KEY
 from funduq.protocols.a2a import A2AAdapter
 
@@ -26,11 +27,11 @@ from tests.test_responsibility_chains import AskingAgent, _message, _proof
 from a2a.types import a2a_pb2 as pb
 
 COMPLETED = pb.TaskState.TASK_STATE_COMPLETED
+CANCELED = pb.TaskState.TASK_STATE_CANCELED
 
 
 class _PausesTwice:
-    """Two interrupts on two separate rounds, so an appended record has
-    something to append to."""
+    """Two interrupts on two separate runs, so a lineage has more than one answer in it."""
 
     def __init__(self) -> None:
         self.rounds: list = []
@@ -52,10 +53,17 @@ class _PausesTwice:
             yield {"type": "RUN_FINISHED", **ids}
 
 
-async def _observed(funduq, run_id: str) -> dict:
-    async with funduq.session() as session:
-        run = await repo.get_run(session, run_id)
-    return (run.metadata or {}).get(OBSERVED_METADATA_KEY) or {}
+async def _answers(funduq, task_id: str) -> list[str | None]:
+    """Who signed the resolution each answering run in the task's lineage was accepted on, in order."""
+    lineage = await funduq.lineage(task_id)
+    return [
+        ((run.forwarded_props or {}).get("resolution") or {}).get("publicKey")
+        for run in lineage[1:]
+    ]
+
+
+async def _tail(funduq, task_id: str):
+    return (await funduq.lineage(task_id))[-1]
 
 
 def _answer(identity, run_id: str, ask_ids: tuple[str, ...] = ("int_1",)) -> dict:
@@ -82,7 +90,7 @@ async def test_the_head_that_answered_is_named(funduq, serve, new_identity):
     )
 
     assert answered.status.state == COMPLETED
-    assert (await _observed(funduq, first.id))["answeredBy"] == [head.public_key]
+    assert await _answers(funduq, first.id) == [head.public_key]
 
 
 async def test_a_provider_answering_its_own_ask_is_visible_as_that(funduq, serve, new_identity):
@@ -103,9 +111,9 @@ async def test_a_provider_answering_its_own_ask_is_visible_as_that(funduq, serve
         metadata=_answer(keeper, first.id),
     )
 
-    observed = await _observed(funduq, first.id)
-    assert observed["answeredBy"] == [keeper.public_key]
-    assert observed["answeredBy"] != [head.public_key], (
+    answers = await _answers(funduq, first.id)
+    assert answers == [keeper.public_key]
+    assert answers != [head.public_key], (
         "the run's head never answered this, and the record must not read as if it had"
     )
 
@@ -133,10 +141,9 @@ async def test_two_answers_are_two_entries_in_order(funduq, serve, new_identity)
         metadata=_answer(keeper, first.id, ("int_2",)),
     )
 
-    assert (await _observed(funduq, first.id))["answeredBy"] == [
-        head.public_key,
-        keeper.public_key,
-    ]
+    assert await _answers(funduq, first.id) == [head.public_key, keeper.public_key], (
+        "two answers, two runs in the lineage, in order"
+    )
 
 
 async def test_an_old_proof_does_not_answer_a_new_ask(funduq, serve, new_identity):
@@ -180,7 +187,7 @@ async def test_an_unbound_run_names_nobody(funduq, serve):
     first = await A2AAdapter(funduq).send_task(agent, _message("go"))
     await A2AAdapter(funduq).send_task(agent, _message("the answer", task_id=first.id))
 
-    assert "answeredBy" not in await _observed(funduq, first.id)
+    assert await _answers(funduq, first.id) == [None], "an answer, and no authority it was checked against"
 
 
 async def test_a_caller_cannot_plant_an_answerer(funduq, serve, new_identity):
@@ -203,7 +210,9 @@ async def test_a_caller_cannot_plant_an_answerer(funduq, serve, new_identity):
         },
     )
 
-    assert (await _observed(funduq, first.id))["answeredBy"] == [head.public_key]
+    tail = await _tail(funduq, first.id)
+    assert await _answers(funduq, first.id) == [head.public_key]
+    assert "answeredBy" not in (tail.forwarded_props.get(OBSERVED_METADATA_KEY) or {}), "the planted value never reached the record"
 
 
 async def test_the_authority_that_asked_a_run_to_stop_is_named(funduq, serve, new_identity):
@@ -214,19 +223,14 @@ async def test_the_authority_that_asked_a_run_to_stop_is_named(funduq, serve, ne
 
     await A2AAdapter(funduq).cancel_task(agent, run_id, metadata=_proof(head, run_id))
 
-    assert (await _observed(funduq, run_id))["cancelRequestedBy"] == [head.public_key]
+    assert (await funduq.get_run(run_id)).cancel_requested_by == head.public_key
 
 
-async def test_the_asking_is_recorded_even_when_the_run_cannot_be_stopped(funduq, serve, new_identity):
-    """A paused run has no provider working on it, so there is nobody to relay
-    a stop to and `cancel_run` refuses. The asking still happened, and funduq
-    observed it — so it is written before the refusal, not after.
-
-    Deliberately not asserted by watching the run's status: whether a live
-    run has reached `cancelled` yet is a race (it passed on SQLite and failed
-    on Postgres), and a record of *acts* is not a record of outcomes anyway.
-    A refusal is the one case where the two cannot be confused.
-    """
+async def test_cancelling_a_run_that_is_waiting_closes_what_it_asked(funduq, serve, new_identity):
+    """A run that finished asking has no provider working on it, so there is
+    nobody to relay a stop to. The asking still happened and funduq observed
+    it: it is recorded on the run, and the task it belongs to reads as
+    cancelled — the wait is closed, and no answer lands on it afterwards."""
     agent = (await serve(AskingAgent(), "unstoppable")).agents["unstoppable"]
     head = new_identity()
 
@@ -234,9 +238,10 @@ async def test_the_asking_is_recorded_even_when_the_run_cannot_be_stopped(funduq
         agent, _message("go"), actor_chain=[head.sign_chain_hop()]
     )
     async with funduq.session() as session:
-        assert (await repo.get_run(session, first.id)).status == "input-required"
+        stored = await repo.get_run(session, first.id)
+        assert stored.status == "completed"
+        assert open_asks(await repo.get_run_events(session, first.id)) == {"int_1"}
 
-    with pytest.raises(RunNotCancellable):
-        await funduq.cancel_run(first.id, metadata=_proof(head, first.id))
-
-    assert (await _observed(funduq, first.id))["cancelRequestedBy"] == [head.public_key]
+    closed = await A2AAdapter(funduq).cancel_task(agent, first.id, metadata=_proof(head, first.id))
+    assert closed.status.state == CANCELED
+    assert (await funduq.get_run(first.id)).cancel_requested_by == head.public_key

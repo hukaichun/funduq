@@ -27,7 +27,7 @@ from typing import get_args
 import pytest
 from a2a.server.request_handlers.request_handler import RequestHandler
 from a2a.types import a2a_pb2 as pb
-from a2a.utils.errors import TaskNotCancelableError, TaskNotFoundError
+from a2a.utils.errors import TaskNotCancelableError, TaskNotFoundError, UnsupportedOperationError
 from google.protobuf.json_format import MessageToDict
 
 from funduq.protocols.a2a import PROTOCOL_VERSION, A2AAdapter, ServedInterface
@@ -160,13 +160,19 @@ async def test_context_id_is_read_off_the_message(funduq, callee):
     assert second.id != first.id
 
 
-async def test_task_id_on_the_message_continues_that_task(funduq, callee):
+async def test_a_message_naming_a_finished_task_is_refused_in_a2as_words(funduq, callee):
+    """A2A §3.1.1: a task in a terminal state accepts no further messages. The
+    conversation continues with `contextId` alone; the answer to a waiting
+    task is the one follow-up `taskId` names (§3.4.3)."""
     adapter = A2AAdapter(funduq)
     first = await adapter.send_task(callee, _message("hi"))
 
-    second = await adapter.send_task(callee, {**_message("again"), "taskId": first.id})
+    with pytest.raises(UnsupportedOperationError):
+        await adapter.send_task(callee, {**_message("again"), "taskId": first.id})
 
+    second = await adapter.send_task(callee, {**_message("again"), "contextId": first.context_id})
     assert second.context_id == first.context_id
+    assert second.id != first.id
 
 
 async def test_an_unknown_task_id_is_task_not_found_not_a_fresh_thread(funduq, callee):
@@ -175,13 +181,14 @@ async def test_an_unknown_task_id_is_task_not_found_not_a_fresh_thread(funduq, c
         await A2AAdapter(funduq).send_task(callee, {**_message("hi"), "taskId": "run_nope"})
 
 
-async def test_subscribing_to_a_finished_task_reports_its_outcome(funduq, callee):
+async def test_subscribing_to_a_finished_task_is_refused_in_a2as_words(funduq, callee):
+    """A2A §3.1.6: a task in a terminal state has nothing left to stream; `GetTask` is the read for its outcome."""
     adapter = A2AAdapter(funduq)
     sent = await adapter.send_task(callee, _message("hi"))
 
-    events = [event async for event in await adapter.resubscribe_task(callee, sent.id)]
-
-    assert events[-1].status.state == pb.TaskState.TASK_STATE_COMPLETED
+    with pytest.raises(UnsupportedOperationError):
+        await adapter.resubscribe_task(callee, sent.id)
+    assert (await adapter.get_task(callee, sent.id)).status.state == pb.TaskState.TASK_STATE_COMPLETED
 
 
 async def test_subscribing_to_an_unknown_task_is_task_not_found(funduq, callee):
@@ -284,31 +291,24 @@ class _Asks:
         }
 
 
-async def test_cancelling_a_paused_task_is_refused_in_the_same_words(funduq, serve):
-    """`input-required` is not terminal, so it fell past the check above and
-    out through a `cancel_run` that answered False — and the caller got its
-    task back unchanged, at the same state, with no pending-cancel marker on
-    it. A cancel that reads exactly like never having asked is the failure
-    mode the terminal branch exists to prevent, reached by the opposite road.
-
-    Not terminal is not the same as cancellable. funduq's cancel relays the
-    request to whoever is working on the run; a paused run's provider already
-    ended its stream, so there is nobody to relay to and no outcome to
-    observe. `TaskNotCancelableError` is A2A's own word for a task that will
-    not reach `CANCELED`, which is what a2a-python raises in the same place.
-    """
+async def test_cancelling_a_waiting_task_closes_it(funduq, serve):
+    """`input-required` is not terminal (A2A §4.1.3), so a cancel is accepted.
+    Nobody is working on the run — its provider ended the stream — so there
+    is nobody to relay to; what the cancel does is close the wait. The task
+    reads `CANCELED`, funduq records who asked, and no answer lands on it
+    afterwards: a message naming it is refused like any task that has ended."""
     agent = (await serve(_Asks(), "asker")).agents["asker"]
     adapter = A2AAdapter(funduq)
 
     paused = await adapter.send_task(agent, _message("go"))
     assert paused.status.state == pb.TaskState.TASK_STATE_INPUT_REQUIRED
 
-    with pytest.raises(TaskNotCancelableError):
-        await adapter.cancel_task(agent, paused.id)
+    closed = await adapter.cancel_task(agent, paused.id)
+    assert closed.status.state == pb.TaskState.TASK_STATE_CANCELED
+    assert (await funduq.get_run(paused.id)).cancel_requested_by is not None
 
-    # And the ask it was still holding is untouched: refusing a cancel must
-    # not be a way to settle a run funduq has observed nothing about.
-    assert (await funduq.get_run(paused.id)).status == "input-required"
+    with pytest.raises(UnsupportedOperationError):
+        await adapter.send_task(agent, {**_message("too late"), "taskId": paused.id})
 
 
 async def test_the_task_carries_the_conversation_as_history(funduq, callee):

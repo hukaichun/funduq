@@ -73,21 +73,23 @@ async def test_get_run_is_a_run_record_without_the_storage_columns(funduq: Fundu
         "thread_id",
         "provider_key",
         "agent_name",
-        "protocol",
         "status",
-        "head_key",
         "actor_chain",
-        "input_json",
-        "metadata",
         "created_at",
         "started_at",
         "completed_at",
         "last_activity_at",
+        "parent_run_id",
+        "state",
+        "tools",
+        "context",
+        "forwarded_props",
+        "resume",
+        "cancel_requested_by",
     }
     assert run.run_id == handle.run_id
     assert run.thread_id == handle.thread_id
     assert AgentRef(provider_key=run.provider_key, name=run.agent_name) == agent_id
-    assert run.protocol == "ag-ui"
 
 
 async def test_an_unknown_id_is_still_none(funduq: Funduq) -> None:

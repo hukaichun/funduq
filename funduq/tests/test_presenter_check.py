@@ -111,8 +111,8 @@ async def test_the_door_refuses_a_replayed_chain(funduq, new_identity):
         with pytest.raises(InvalidChain):
             await funduq.start_run(
                 agent,
-                {"messages": [{"id": "m1", "role": "user", "content": "transfer the budget"}]},
-                metadata={"actorChain": [caller.sign_chain_hop()]},
+                {"messages": [{"id": "m1", "role": "user", "content": "transfer the budget"}],
+                 "forwardedProps": {"actorChain": [caller.sign_chain_hop()]}},
                 presenter_key=provider_identity.public_key,
             )
     finally:

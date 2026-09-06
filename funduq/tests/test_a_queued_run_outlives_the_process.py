@@ -19,6 +19,7 @@ from funduq import repo
 from funduq.broker import RunBroker
 from funduq.core import Funduq
 from funduq.models import LlmRef
+from funduq.pause import failure_reason_of
 from funduq.props import ADDRESSED_RUN_METADATA_KEY, observed_of
 from funduq.protocols.a2a import A2AAdapter
 
@@ -99,7 +100,7 @@ async def test_the_held_run_dies_with_the_process_and_the_waiting_one_does_not(f
         await _until(lambda: _status_is(reborn, waiting.run_id, "completed"))
 
         stored = await reborn.get_run(waiting.run_id)
-        assert provider.rounds == [stored.input_json], "delivered exactly what the row held"
+        assert provider.rounds == [await reborn.run_input(waiting.run_id)], "delivered exactly what the row is"
     finally:
         if runtime is not None:
             await runtime.aclose(cancel_in_flight=True)
@@ -150,7 +151,7 @@ async def test_a_kyok_binding_is_read_back_from_the_row(funduq, attach, settings
             "context": {"voucher": "v1"},
         }
     }
-    waiting = await funduq.start_run(agent, {"messages": []}, thread_id=busy.thread_id, metadata=opt_in)
+    waiting = await funduq.start_run(agent, {"messages": [], "forwardedProps": opt_in}, thread_id=busy.thread_id)
     assert funduq.kyok_relay.binding_for(waiting.run_id).context == {"voucher": "v1"}
 
     reborn = Funduq(settings)
@@ -160,7 +161,7 @@ async def test_a_kyok_binding_is_read_back_from_the_row(funduq, attach, settings
         assert binding is not None
         assert binding.llm_provider == ref
         assert binding.context == {"voucher": "v1"}, "ordinary content of the record, read back like the rest"
-        assert (await reborn.get_run(waiting.run_id)).metadata["kyok"]["context"] == {"voucher": "v1"}
+        assert (await reborn.get_run(waiting.run_id)).forwarded_props["kyok"]["context"] == {"voucher": "v1"}
     finally:
         await reborn.aclose()
         funduq.detach_all_for(llm_identity.public_key)
@@ -186,18 +187,18 @@ async def test_an_interjection_whose_target_died_fails_loudly(funduq, attach, se
     async def _queued_interjection():
         async with funduq.session() as session:
             rows = await repo.queued_runs(session)
-        return next((r for r in rows if r.protocol == "a2a"), None)
+        return next((r for r in rows if observed_of(r.forwarded_props or {}).get("addressedRunId")), None)
 
     await _until(lambda: _queued_interjection())
     interjection = await _queued_interjection()
-    assert interjection.input_json["forwardedProps"]["funduq"]["addressedRunId"] == busy.run_id
+    assert observed_of(interjection.forwarded_props)["addressedRunId"] == busy.run_id
 
     reborn = Funduq(settings)
     try:
         await reborn.start()
         stored = await reborn.get_run(interjection.run_id)
         assert stored.status == "failed"
-        assert observed_of(stored.metadata)["failureReason"] == "interjection_target_lost"
+        assert failure_reason_of(await reborn.get_run_events(stored.run_id)) == "interjection_target_lost"
         assert interjection.run_id not in reborn.active_runs()
         async with reborn.session() as session:
             events = await repo.get_run_events(session, interjection.run_id)
@@ -215,6 +216,6 @@ async def test_a_recovered_run_nobody_comes_back_for_is_given_up_on(funduq, atta
     try:
         await reborn.start()
         await _until(lambda: _status_is(reborn, waiting.run_id, "failed"))
-        assert observed_of((await reborn.get_run(waiting.run_id)).metadata)["failureReason"] == "no_provider_took_it"
+        assert failure_reason_of(await reborn.get_run_events(waiting.run_id)) == "no_provider_took_it"
     finally:
         await reborn.aclose()

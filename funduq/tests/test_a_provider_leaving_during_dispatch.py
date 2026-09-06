@@ -25,7 +25,7 @@ import pytest
 
 from funduq import doors
 from funduq.models import AgentRef
-from funduq.props import observed_of
+from funduq.pause import failure_reason_of
 
 from tests.conftest import EchoAgent
 
@@ -74,7 +74,7 @@ async def test_a_provider_leaving_mid_dispatch_reaches_the_caller_as_agent_offli
 
     run = await funduq.get_run(handle.run_id)
     assert run.status == "failed", "a run nothing will dispatch must not read as queued forever"
-    assert observed_of(run.metadata).get("failureReason") == "agent_offline"
+    assert failure_reason_of(await funduq.get_run_events(handle.run_id)) == "agent_offline"
     assert handle.run_id not in funduq.active_runs(), "and the broker never took it"
 
 
@@ -93,4 +93,4 @@ async def test_funduq_answers_rather_than_raising_when_nobody_is_serving(
     identity = new_identity()
     agent = AgentRef(provider_key=identity.public_key, name="assistant")
 
-    assert funduq.enqueue_run("run_1", agent, "thread_1", _valid_input("run_1", "thread_1"), "ag-ui") is None
+    assert funduq.enqueue_run("run_1", agent, "thread_1", _valid_input("run_1", "thread_1")) is None

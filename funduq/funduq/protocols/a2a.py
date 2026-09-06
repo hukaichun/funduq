@@ -25,7 +25,6 @@ from google.protobuf.json_format import MessageToDict, ParseDict, ParseError
 from funduq import repo
 from funduq.doors import (
     InboundRun,
-    PendingAsk,
     authorize_view,
     dispatch,
     open_run,
@@ -42,7 +41,7 @@ from funduq.errors import (
     ThreadOwnershipMismatch,
 )
 from funduq.identity import InvalidView
-from funduq.pause import outstanding_asks
+from funduq.pause import open_asks
 from funduq.props import ADDRESSED_RUN_METADATA_KEY
 from funduq.models import AgentRef
 from funduq.protocols.a2a_translate import (
@@ -132,6 +131,34 @@ class A2AAdapter:
             skills=_skills(card.get("skills", [])),
         )
 
+    async def _task(
+        self,
+        agent: AgentRef,
+        task_id: str,
+        *,
+        history_length: int | None = None,
+        cancel_requested: bool = False,
+    ) -> pb.Task:
+        """The task named `task_id` as it stands: its lineage's events in order, its tail's status, the thread's messages as history."""
+        lineage = await self._funduq.lineage(task_id)
+        tail = lineage[-1]
+        events: list[dict[str, Any]] = []
+        tail_events: list[dict[str, Any]] = []
+        for run in lineage:
+            tail_events = await self._funduq.get_run_events(run.run_id)
+            events.extend(tail_events)
+        return build_task(
+            task_id,
+            tail.thread_id,
+            await self._display_name(agent),
+            tail.status,
+            events,
+            thread_messages=await self._funduq.get_thread_messages(tail.thread_id),
+            history_length=history_length,
+            cancel_requested=cancel_requested or tail.cancel_requested_by is not None,
+            tail_events=tail_events,
+        )
+
     async def send_task(
         self,
         agent: AgentRef,
@@ -143,24 +170,15 @@ class A2AAdapter:
         return_immediately: bool = False,
         history_length: int | None = None,
     ) -> pb.Task:
-        """Sends `message` to `agent` as a new (or continuing, via `context_id`/`task_id`) A2A task, waits for it to settle, and returns the resulting `Task`. With `return_immediately` it answers with the Task as it stands instead — funduq's queued lane makes `submitted` a state with real duration, and this is how a polling caller learns that is where its run is."""
+        """Sends `message` to `agent` — a new task, or the answer a waiting task asked for (via `taskId`) — waits for the run it opened to settle, and returns the `Task`. With `return_immediately` it answers with the Task as it stands instead — funduq's queued lane makes `submitted` a state with real duration, and this is how a polling caller learns that is where its run is."""
         with _in_a2as_words():
-            run_id, thread_id, is_live = await self._start_run(
+            run_id, task_id, is_live = await self._start_run(
                 agent, _params(message, actor_chain, metadata), presenter_key=presenter_key
             )
         if not return_immediately and is_live and self._funduq.broker.get(run_id) is not None:
             async for _ in self._funduq.broker.subscribe(run_id):
                 pass
-        stored = await self._funduq.get_run(run_id)
-        return build_task(
-            run_id,
-            thread_id,
-            await self._display_name(agent),
-            stored.status if stored else "completed",
-            await self._funduq.get_run_events(run_id),
-            thread_messages=await self._funduq.get_thread_messages(thread_id),
-            history_length=history_length,
-        )
+        return await self._task(agent, task_id, history_length=history_length)
 
     async def send_task_streaming(
         self,
@@ -171,34 +189,27 @@ class A2AAdapter:
         metadata: dict[str, Any] | None = None,
         presenter_key: str | None = None,
     ) -> AsyncIterator[Event]:
-        """Like `send_task` but yields A2A stream events as the run progresses instead of waiting for it to settle."""
+        """Like `send_task` but yields A2A stream events as the run progresses instead of waiting for it to settle. Every event carries the task's id — the lineage's root — whichever run in it produced the event."""
         with _in_a2as_words():
-            run_id, thread_id, is_live = await self._start_run(
+            run_id, task_id, is_live = await self._start_run(
                 agent, _params(message, actor_chain, metadata), presenter_key=presenter_key
             )
         live = is_live and self._funduq.broker.get(run_id) is not None
         events = self._funduq.broker.subscribe(run_id) if live else None
 
         async def results() -> AsyncIterator[Event]:
-            stored = await self._funduq.get_run(run_id)
-            yield build_task(
-                run_id,
-                thread_id,
-                await self._display_name(agent),
-                stored.status if stored else "queued",
-                [],
-                thread_messages=await self._funduq.get_thread_messages(thread_id),
-            )
+            opening = await self._task(agent, task_id)
+            yield opening
             if not live:
-                status = stored.status if stored else "completed"
-                yield status_update_for_run_status(run_id, thread_id, status)
+                stored = await self._funduq.get_run(run_id)
+                yield status_update_for_run_status(task_id, opening.context_id, stored.status if stored else "completed")
                 return
-            opened: set[str] = set()
+            opened: set[str] = {a.artifact_id for a in opening.artifacts}
             async for item in events:
-                yield agui_event_to_a2a_update(item, run_id, thread_id, opened=opened)
+                yield agui_event_to_a2a_update(item, task_id, opening.context_id, opened=opened)
             stored = await self._funduq.get_run(run_id)
             if stored is not None and stored.status != "completed":
-                yield status_update_for_run_status(run_id, thread_id, stored.status)
+                yield status_update_for_run_status(task_id, opening.context_id, stored.status)
 
         return results()
 
@@ -209,33 +220,28 @@ class A2AAdapter:
         *,
         view_metadata: dict[str, Any] | None = None,
     ) -> AsyncIterator[Event]:
-        """Reattaches to an existing task's event stream. A bound run demands a view proof, exactly as `get_task` does, and answers its absence the same way."""
+        """Reattaches to a task's event stream: the Task as it stands, then whatever its tail run still produces. A bound run demands a view proof, exactly as `get_task` does, and answers its absence the same way; a task in a terminal state has nothing left to stream and is refused, as A2A requires (§3.1.6)."""
         run = await self._run_of(agent, task_id)
         if run is None or not self._may_view(run, view_metadata):
             raise TaskNotFoundError(f"no task '{task_id}' for agent '{agent}'")
-        thread_id = run.thread_id
-        events = self._funduq.broker.subscribe(task_id) if self._funduq.broker.get(task_id) else None
-        opening = build_task(
-            task_id,
-            thread_id,
-            await self._display_name(agent),
-            run.status,
-            await self._funduq.get_run_events(task_id),
-            thread_messages=await self._funduq.get_thread_messages(thread_id),
-        )
+        opening = await self._task(agent, task_id)
+        if opening.status.state in TERMINAL_STATES:
+            raise UnsupportedOperationError(f"task {task_id} has ended; there is nothing to subscribe to")
+        tail = (await self._funduq.lineage(task_id))[-1]
+        events = self._funduq.broker.subscribe(tail.run_id) if self._funduq.broker.get(tail.run_id) else None
 
         async def results() -> AsyncIterator[Event]:
             yield opening
             if events is None:
-                yield status_update_for_run_status(task_id, thread_id, run.status)
+                yield status_update_for_run_status(task_id, opening.context_id, tail.status)
                 return
-            # The opening snapshot already carries whatever this run had produced, so those artifacts exist for the receiver already.
+            # The opening snapshot already carries whatever the task had produced, so those artifacts exist for the receiver already.
             opened: set[str] = {a.artifact_id for a in opening.artifacts}
             async for item in events:
-                yield agui_event_to_a2a_update(item, task_id, thread_id, opened=opened)
-            stored = await self._funduq.get_run(task_id)
+                yield agui_event_to_a2a_update(item, task_id, opening.context_id, opened=opened)
+            stored = await self._funduq.get_run(tail.run_id)
             if stored is not None and stored.status != "completed":
-                yield status_update_for_run_status(task_id, thread_id, stored.status)
+                yield status_update_for_run_status(task_id, opening.context_id, stored.status)
 
         return results()
 
@@ -251,42 +257,26 @@ class A2AAdapter:
         run = await self._run_of(agent, task_id)
         if run is None or not self._may_view(run, view_metadata):
             return None
-        return build_task(
-            task_id,
-            run.thread_id,
-            await self._display_name(agent),
-            run.status,
-            await self._funduq.get_run_events(task_id),
-            thread_messages=await self._funduq.get_thread_messages(run.thread_id),
-            history_length=history_length,
-        )
+        return await self._task(agent, task_id, history_length=history_length)
 
     async def cancel_task(
         self, agent: AgentRef, task_id: str, *, metadata: dict[str, Any] | None = None
     ) -> pb.Task | None:
-        """Asks the provider to stop and returns the task as it stands, marked with the pending request."""
+        """Asks the task's tail run to stop and returns the task as it stands, marked with the pending request. A task waiting for input has no provider to ask: cancelling it closes the wait."""
         run = await self._run_of(agent, task_id)
         if run is None:
             return None
-        if state_for_run_status(run.status) in TERMINAL_STATES:
+        current = await self._task(agent, task_id)
+        if current.status.state in TERMINAL_STATES:
             raise TaskNotCancelableError(
-                f"task {task_id} is already {run.status} and cannot be cancelled"
+                f"task {task_id} has already ended and cannot be cancelled"
             )
+        tail = (await self._funduq.lineage(task_id))[-1]
         try:
-            asked = await self._funduq.cancel_run(task_id, metadata=metadata or {})
+            asked = await self._funduq.cancel_run(tail.run_id, metadata=metadata or {})
         except RunNotCancellable as e:
             raise TaskNotCancelableError(str(e)) from e
-        current = await self._funduq.get_run(task_id) or run
-        return build_task(
-            task_id,
-            run.thread_id,
-            await self._display_name(agent),
-            current.status,
-            await self._funduq.get_run_events(task_id),
-            thread_messages=await self._funduq.get_thread_messages(run.thread_id),
-            cancel_requested=asked,
-        )
-
+        return await self._task(agent, task_id, cancel_requested=asked)
 
     async def _run_of(self, agent: AgentRef, task_id: str):
         """The run for `task_id`, or None if it doesn't exist or belongs to a different agent."""
@@ -311,76 +301,72 @@ class A2AAdapter:
     async def _start_run(
         self, agent: AgentRef, params: dict, *, presenter_key: str | None = None
     ) -> tuple[str, str, bool]:
-        """Resolves `params` (a `contextId`/`taskId`/message envelope) to a thread and run, creating or reopening whichever is needed, and returns `(run_id, thread_id, is_live)`."""
+        """Resolves `params` (a `contextId`/`taskId`/message envelope) to the run it opens and the task that run belongs to, and returns `(run_id, task_id, is_live)`.
+
+        Every message is a run. A message naming a task that is waiting for
+        input answers it: the new run's `parentRunId` is the task's tail and
+        the task id is unchanged. A message naming a task in any other state
+        is refused — the one follow-up A2A defines is the answer (§3.1.1,
+        §3.4.3) — and a `contextId` that disagrees with the task's is
+        rejected.
+        """
         funduq = self._funduq
         async with funduq.session() as session:
             record = await repo.get_agent(session, agent)
             if record is None:
                 raise AgentNotFound(f"agent '{agent}' is not registered")
 
-            metadata, kyok = await resolve_kyok(session, params.get("metadata", {}))
+            # The caller's bag: the message's metadata (plus the request's), where its declarations to funduq ride.
+            props = dict(params.get("metadata") or {})
+            props, kyok = await resolve_kyok(session, props)
             parent_thread_id = await _lineage_parent(session, params)
-            context_id = params.get("contextId") or await _context_of_task(session, params.get("taskId"))
 
-            metadata, head_key, actor_chain = await verify_caller(session, metadata, presenter_key=presenter_key)
+            task_id = params.get("taskId")
+            root = None
+            answers = None
+            if task_id:
+                root = await repo.get_run(session, task_id)
+                if root is None or root.agent != agent:
+                    raise TaskNotFoundError(f"no task '{task_id}'")
+                if params.get("contextId") and params["contextId"] != root.thread_id:
+                    raise InvalidParamsError(
+                        f"contextId '{params['contextId']}' is not the context of task '{task_id}'"
+                    )
+                tail = await repo.lineage_tail(session, task_id)
+                if (
+                    tail.status != "completed"
+                    or tail.cancel_requested_by is not None
+                    or not open_asks(await repo.get_run_events(session, tail.run_id))
+                ):
+                    raise UnsupportedOperationError(
+                        f"task '{task_id}' is not waiting for input; a message naming a task is its answer"
+                    )
+                answers = tail
+            context_id = params.get("contextId") or (root.thread_id if root is not None else None)
+
+            props, head_key, actor_chain = await verify_caller(session, props, presenter_key=presenter_key)
 
             thread_id = await repo.ensure_thread(
                 session, agent, context_id, parent_thread_id,
-                metadata=metadata, head_key=head_key,
+                metadata=props, head_key=head_key,
             )
 
             messages = a2a_message_to_agui_messages(params.get("message", {}))
-
-            addressed_run_id = (
-                # The extension convention puts the key in the Message's own metadata map; the request-level map is accepted too.
-                (params.get("message", {}).get("metadata") or {}).get(ADDRESSED_RUN_METADATA_KEY)
-                or metadata.get(ADDRESSED_RUN_METADATA_KEY)
-            )
-
-            def _inbound(chain: Any, head: str | None) -> InboundRun:
-                return InboundRun(
-                    agent=agent,
-                    messages=messages,
-                    metadata=metadata,
-                    head_key=head,
-                    actor_chain=chain,
-                    kyok=kyok,
-                    addressed_run_id=addressed_run_id,
-                    protocol="a2a",
-                )
-
-            # Two lanes: a message naming a task that is waiting answers it; anything else is a new run on the context.
-            task_id = params.get("taskId")
-            addressed = await repo.get_run(session, task_id) if task_id else None
-            opened = None
-            if (
-                addressed is not None
-                and addressed.thread_id == thread_id
-                and addressed.status == "input-required"
-            ):
-                # A resume is the same run continuing: relay the chain and head it was opened under, not the answering party's.
-                inbound = _inbound(addressed.actor_chain, addressed.head_key)
-                opened = await open_run(
-                    funduq, session, inbound,
-                    thread_id=thread_id,
-                    entrance="result",
-                    ask=PendingAsk(
-                        run_id=task_id,
-                        head_key=addressed.head_key,
-                        ask_ids=frozenset(outstanding_asks(addressed.metadata or {})),
-                    ),
-                )
-            if opened is None:
-                # No task waiting — or another answer landed on it first. A2A does not refuse the message: it opens a new run on the context.
+            inbound = InboundRun(
+                agent=agent,
+                messages=messages,
+                head_key=head_key,
                 # Signed before the run is created, so the record keeps exactly what the agent receives.
-                inbound = _inbound(relayed_chain(funduq, actor_chain, agent), head_key)
-                opened = await open_run(
-                    funduq, session, inbound, thread_id=thread_id, entrance="utterance", ask=None
-                )
-            run_id = opened.run_id
+                actor_chain=relayed_chain(funduq, actor_chain, agent),
+                kyok=kyok,
+                # The extension convention puts the key in the Message's own metadata map, which is in the bag.
+                addressed_run_id=props.get(ADDRESSED_RUN_METADATA_KEY),
+                forwarded_props=props,
+            )
+            opened = await open_run(funduq, session, inbound, thread_id=thread_id, answers=answers)
             live = await dispatch(funduq, session, inbound, opened)
 
-        return run_id, thread_id, live
+        return opened.run_id, (root.run_id if root is not None else opened.run_id), live
 
 
 class A2ARequestHandler(RequestHandler):
@@ -433,7 +419,11 @@ class A2ARequestHandler(RequestHandler):
             metadata=wire.get("metadata"),
             presenter_key=self._presenter_key(context),
             return_immediately=params.configuration.return_immediately,
-            history_length=params.configuration.history_length or None,
+            history_length=(
+                params.configuration.history_length
+                if params.configuration.HasField("history_length")
+                else None
+            ),
         )
 
     @validate_request_params
@@ -457,7 +447,7 @@ class A2ARequestHandler(RequestHandler):
         return await self._adapter.get_task(
             self._agent,
             params.id,
-            history_length=params.history_length or None,
+            history_length=params.history_length if params.HasField("history_length") else None,
             view_metadata=self._view_metadata(context),
         )
 
@@ -533,16 +523,6 @@ def _skills(raw_skills: list[dict[str, Any]]) -> list[pb.AgentSkill]:
     return skills
 
 
-async def _context_of_task(session, task_id: str | None) -> str | None:
-    """The thread a named task belongs to, raising A2A's own `TaskNotFoundError` for an unknown one — an id the caller sent that names nothing is A2A's error to report, and reporting it in A2A's vocabulary is what lets the transport map it without a table of funduq's own."""
-    if not task_id:
-        return None
-    run = await repo.get_run(session, task_id)
-    if run is None:
-        raise TaskNotFoundError(f"no task '{task_id}'")
-    return run.thread_id
-
-
 async def _lineage_parent(session, params: dict) -> str | None:
     reference_task_ids = params.get("message", {}).get("referenceTaskIds") or []
     if not reference_task_ids:
@@ -556,8 +536,8 @@ def _params(
     actor_chain: list[str] | None,
     metadata: dict[str, Any] | None,
 ) -> dict[str, Any]:
-    """Lifts the fields `_start_run` addresses by name out of the A2A message they live on."""
-    combined = dict(metadata or {})
+    """Lifts the fields `_start_run` addresses by name out of the A2A message they live on. The caller's bag is the message's `metadata` with the request's underneath it; a chain handed in by name lands in the same bag."""
+    combined = {**(metadata or {}), **(message.get("metadata") or {})}
     if actor_chain:
         combined["actorChain"] = actor_chain
     return {

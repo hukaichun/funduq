@@ -15,6 +15,7 @@ import time
 import pytest
 
 from funduq import repo
+from funduq.doors import head_key_of
 from funduq.errors import ThreadMembershipRequired
 from funduq.identity import InvalidCancel, InvalidResolution
 from funduq.protocols.a2a import A2AAdapter
@@ -27,6 +28,7 @@ from a2a.utils.errors import TaskNotCancelableError
 
 COMPLETED = pb.TaskState.TASK_STATE_COMPLETED
 INPUT_REQUIRED = pb.TaskState.TASK_STATE_INPUT_REQUIRED
+CANCELED = pb.TaskState.TASK_STATE_CANCELED
 
 
 def _message(
@@ -83,7 +85,7 @@ async def test_a_chained_thread_binds_its_head_at_birth(funduq, serve, new_ident
     async with funduq.session() as session:
         run = await repo.get_run(session, task.id)
         thread = await repo.get_thread(session, task.context_id)
-    assert run.head_key == head.public_key
+    assert head_key_of(run) == head.public_key
     assert thread["head_key"] == head.public_key
 
 
@@ -232,8 +234,8 @@ async def test_the_agui_door_guards_a_chained_resume_the_same_way(funduq, serve,
         return RunAgentInput(
             thread_id=thread_id, run_id="ignored", state={},
             messages=[UserMessage(id="m1", role="user", content=text)],
-            tools=[], context=[], forwarded_props={},
-            metadata=metadata, resume=resume,
+            tools=[], context=[], forwarded_props=metadata,
+            resume=resume,
         )
 
     first = await adapter.run(
@@ -357,9 +359,9 @@ async def test_a_stranger_is_refused_before_being_told_a_run_is_uncancellable(
     with pytest.raises(InvalidCancel):
         await a2a.cancel_task(agent, paused.id, metadata=_proof(stranger, paused.id))
 
-    # The head holds the authority, so it gets the real answer.
-    with pytest.raises(TaskNotCancelableError):
-        await a2a.cancel_task(agent, paused.id, metadata=_proof(head, paused.id))
+    # The head holds the authority, so its cancel lands: the wait is closed.
+    closed = await a2a.cancel_task(agent, paused.id, metadata=_proof(head, paused.id))
+    assert closed.status.state == CANCELED
 
 
 async def test_a_resolution_signature_is_not_a_cancel_signature(funduq, serve, new_identity):

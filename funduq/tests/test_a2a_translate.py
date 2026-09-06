@@ -4,6 +4,7 @@ from a2a.types import a2a_pb2 as pb
 from google.protobuf.json_format import MessageToDict
 
 from funduq.protocols.a2a_translate import (
+    task_state_of,
     a2a_message_to_agui_messages,
     agui_event_to_a2a_update,
     build_task,
@@ -91,7 +92,12 @@ def test_unmodeled_event_falls_back_to_a_working_update():
 def test_run_statuses_map_to_a2a_states():
     assert state_for_run_status("queued") == pb.TaskState.TASK_STATE_SUBMITTED
     assert state_for_run_status("running") == pb.TaskState.TASK_STATE_WORKING
-    assert state_for_run_status("input-required") == pb.TaskState.TASK_STATE_INPUT_REQUIRED
+    asked = [{"type": "RUN_STARTED"}, {"type": "RUN_FINISHED", "outcome": {"type": "interrupt", "interrupts": [{"id": "i1"}]}}]
+    assert task_state_of("completed", asked) == pb.TaskState.TASK_STATE_INPUT_REQUIRED, (
+        "a completed run that left asks open is a task waiting for input — read from its events, not a status"
+    )
+    assert task_state_of("completed", asked, cancel_requested=True) == pb.TaskState.TASK_STATE_CANCELED
+    assert task_state_of("completed", [{"type": "RUN_STARTED"}, {"type": "RUN_FINISHED"}]) == pb.TaskState.TASK_STATE_COMPLETED
     assert state_for_run_status("completed") == pb.TaskState.TASK_STATE_COMPLETED
     assert state_for_run_status("failed") == pb.TaskState.TASK_STATE_FAILED
     assert state_for_run_status("cancelled") == pb.TaskState.TASK_STATE_CANCELED

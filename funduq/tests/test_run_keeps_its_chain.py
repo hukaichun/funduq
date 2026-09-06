@@ -3,6 +3,7 @@ from __future__ import annotations
 import jwt
 
 from funduq import repo
+from funduq.doors import head_key_of
 from funduq.models import AgentRef
 from funduq_provider_sdk import InProcessLink, ProviderRuntime
 
@@ -44,8 +45,7 @@ async def test_a_run_keeps_the_chain_it_was_dispatched_under(funduq, new_identit
 
         handle = await funduq.start_run(
             agent,
-            {"messages": [{"id": "m1", "role": "user", "content": "hi"}]},
-            metadata={"actorChain": chain},
+            {"messages": [{"id": "m1", "role": "user", "content": "hi"}], "forwardedProps": {"actorChain": chain}},
             presenter_key=provider.public_key,
         )
         async for _ in handle.events():
@@ -63,7 +63,7 @@ async def test_a_run_keeps_the_chain_it_was_dispatched_under(funduq, new_identit
             "providerKey": agent.provider_key,
             "name": agent.name,
         }, "the witness names where it sent the run"
-        assert run.head_key == caller.public_key
+        assert head_key_of(run) == caller.public_key
     finally:
         await runtime.aclose()
 
@@ -82,7 +82,7 @@ async def test_a_run_with_no_chain_keeps_none(funduq, new_identity):
             run = await repo.get_run(session, handle.run_id)
 
         assert run.actor_chain is None
-        assert run.head_key is None
+        assert head_key_of(run) is None
     finally:
         await runtime.aclose()
 
@@ -107,8 +107,7 @@ async def test_a_resume_does_not_replace_the_chain_the_run_was_opened_under(
     opened_under = [caller.sign_chain_hop()]
     handle = await funduq.start_run(
         agent_id,
-        {"messages": [{"role": "user", "content": "one"}]},
-        metadata={"actorChain": opened_under},
+        {"messages": [{"role": "user", "content": "one"}], "forwardedProps": {"actorChain": opened_under}},
         presenter_key=caller.public_key,
     )
     [_ async for _ in handle.events()]
@@ -119,12 +118,12 @@ async def test_a_resume_does_not_replace_the_chain_the_run_was_opened_under(
         {
             "messages": [{"role": "user", "content": "two"}],
             "resume": [{"interruptId": "int_1", "status": "resolved", "payload": {"answer": 42}}],
-        },
-        metadata={
-            "actorChain": [answerer.sign_chain_hop()],
-            "resolution": {
-                "publicKey": caller.public_key,
-                "signature": caller.sign(resolve_payload(handle.run_id, ["int_1"])),
+            "forwardedProps": {
+                "actorChain": [answerer.sign_chain_hop()],
+                "resolution": {
+                    "publicKey": caller.public_key,
+                    "signature": caller.sign(resolve_payload(handle.run_id, ["int_1"])),
+                },
             },
         },
         presenter_key=answerer.public_key,
@@ -140,16 +139,18 @@ async def test_a_resume_does_not_replace_the_chain_the_run_was_opened_under(
         jwt.decode(hop, options={"verify_signature": False})["actorPublicKey"]
         for hop in run.actor_chain
     ], "the answerer never enters the chain — answering is not taking the run over"
-    assert run.head_key == caller.public_key, "the run still answers to the head it was born with"
-    assert run.metadata["resolution"]["publicKey"] == caller.public_key, (
-        "the answering act is recorded — bound to this run by a signature, "
+    assert head_key_of(run) == caller.public_key, "the run still answers to the head it was born with"
+    answer = (await funduq.lineage(handle.run_id))[-1]
+    assert answer.run_id != handle.run_id and answer.parent_run_id == handle.run_id, "the answer is a run of its own"
+    assert answer.forwarded_props["resolution"]["publicKey"] == caller.public_key, (
+        "the answering act is on the answer's own row — bound to the asking run by a signature, "
         "which is a stronger trace than a chain"
     )
 
 
-async def test_the_agent_sees_the_same_chain_on_every_round(funduq, serve, new_identity):
-    """A resume is the same run continuing, so what the agent verifies must
-    not change because somebody else answered its pause.
+async def test_the_answer_runs_under_the_answerers_own_chain(funduq, serve, new_identity):
+    """Every input is a run, so the answer to an ask is a run under the chain
+    of whoever answered — not a continuation wearing the asking run's chain.
 
     It used to. The resume path handed dispatch the *answering party's* chain
     and head, and dispatch signed a fresh hop over them — so a provider that
@@ -192,15 +193,15 @@ async def test_the_agent_sees_the_same_chain_on_every_round(funduq, serve, new_i
 
     rounds = [((r.forwarded_props or {}).get("funduq") or {}).get("actorChain") for r in provider.rounds]
     assert len(rounds) == 2, "the ask was answered, so the agent ran twice"
-    assert rounds[0] == rounds[1], "the same run, so the same chain"
+    assert rounds[0] != rounds[1], "two runs, two chains"
 
     signers = [
         jwt.decode(hop, options={"verify_signature": False})["actorPublicKey"]
         for hop in rounds[1]
     ]
-    assert signers[0] == head.public_key, "still working for the head that opened it"
-    assert keeper.public_key not in signers, (
-        "the party that answered the pause does not become who the work is for"
+    assert signers[0] == keeper.public_key, "the answer is the keeper's own run, under the keeper's own hop"
+    assert head.public_key not in signers, (
+        "the head that opened the ask is not on the answer's chain — answering is the answerer's own act"
     )
 
 
@@ -233,7 +234,7 @@ async def test_the_agui_door_relays_the_runs_chain_on_a_resume_too(funduq, serve
         return RunAgentInput(
             thread_id=thread_id, run_id="ignored", state={},
             messages=[UserMessage(id="m1", role="user", content=text)],
-            tools=[], context=[], forwarded_props={}, metadata=metadata, resume=resume,
+            tools=[], context=[], forwarded_props=metadata, resume=resume,
         )
 
     first = await adapter.run(
@@ -266,11 +267,11 @@ async def test_the_agui_door_relays_the_runs_chain_on_a_resume_too(funduq, serve
 
     rounds = [((r.forwarded_props or {}).get("funduq") or {}).get("actorChain") for r in provider.rounds]
     assert len(rounds) == 2, "the ask was answered, so the agent ran twice"
-    assert rounds[0] == rounds[1], "the same run, so the same chain"
+    assert rounds[0] != rounds[1], "two runs, two chains"
 
     signers = [
         jwt.decode(hop, options={"verify_signature": False})["actorPublicKey"]
         for hop in rounds[1]
     ]
-    assert signers[0] == head.public_key
-    assert keeper.public_key not in signers
+    assert signers[0] == keeper.public_key, "the answer is the keeper's own run, under the keeper's own hop"
+    assert head.public_key not in signers

@@ -72,8 +72,7 @@ async def test_the_callers_own_hops_reach_the_agent_untouched_on_both_roads(fund
             messages=[UserMessage(id="m1", role="user", content="hi")],
             tools=[],
             context=[],
-            forwarded_props={},
-            metadata={"actorChain": chain},
+            forwarded_props={"actorChain": chain},
         ),
     )
     async for _ in stream.events:

@@ -5,19 +5,26 @@ from datetime import datetime, timedelta, timezone
 from sqlalchemy import update
 
 from funduq import repo
-from funduq.props import observed
+from funduq.pause import open_asks
 from funduq.core import Funduq
 from funduq.schema import runs
 from funduq_contract import Registration
 
 
 async def _make_paused_run(session, agent, thread_id, seconds_stale: int) -> str:
-    created = await repo.create_run(session, thread_id, agent, "ag-ui", {"messages": []})
+    """A run that finished asking: completed, with a RUN_FINISHED carrying an interrupt outcome in its events. That the thread is waiting is read from those events, not from a status."""
+    created = await repo.create_run(session, thread_id, agent, {"messages": []})
     await session.commit()
     run_id = created["run_id"]
     # The legal road to a pause: a run is claimed (running) before it can ask.
     await repo.mark_run_status(session, run_id, "running")
-    await repo.mark_run_status(session, run_id, "input-required", metadata=observed(interrupts=[]))
+    await repo.append_run_event(session, run_id, 1, {"type": "RUN_STARTED", "threadId": thread_id, "runId": run_id})
+    await repo.append_run_event(
+        session, run_id, 2,
+        {"type": "RUN_FINISHED", "threadId": thread_id, "runId": run_id,
+         "outcome": {"type": "interrupt", "interrupts": [{"id": "int_1", "reason": "question"}]}},
+    )
+    await repo.mark_run_status(session, run_id, "completed")
     await session.execute(
         update(runs)
         .where(runs.c.run_id == run_id)
@@ -50,7 +57,8 @@ async def test_a_pause_has_no_deadline_of_funduqs(session, funduq, new_identity)
 
     run_id = await _make_paused_run(session, agent, thread_id, seconds_stale=10**6)
 
-    assert (await repo.get_run(session, run_id)).status == "input-required"
+    assert (await repo.get_run(session, run_id)).status == "completed"
+    assert open_asks(await repo.get_run_events(session, run_id)) == {"int_1"}
     assert await repo.count_queued_runs_for_thread(session, thread_id) == 0
 
     # And nothing funduq starts changes that: `start()` reaps orphans, and a
@@ -62,8 +70,8 @@ async def test_a_pause_has_no_deadline_of_funduqs(session, funduq, new_identity)
     finally:
         await reborn.aclose()
 
-    assert (await repo.get_run(session, run_id)).status == "input-required"
-    assert await repo.claim_ask(session, run_id)
+    assert (await repo.get_run(session, run_id)).status == "completed"
+    assert open_asks(await repo.get_run_events(session, run_id)) == {"int_1"}, "still asking, still answerable"
 
 
 async def test_a_run_the_broker_has_forgotten_still_gets_its_terminal_event(
@@ -85,7 +93,7 @@ async def test_a_run_the_broker_has_forgotten_still_gets_its_terminal_event(
         session, run_id, 1, {"type": "RUN_FINISHED", "threadId": thread_id, "runId": run_id}
     )
 
-    await repo.mark_run_status(session, run_id, "failed", metadata=observed(failureReason="x"))
+    await repo.mark_run_status(session, run_id, "failed")
     await close_with_terminal_event(funduq, run_id, "x")
 
     events = await repo.get_run_events(session, run_id)
@@ -101,11 +109,11 @@ async def test_a_run_that_reported_its_own_error_is_left_alone(session, funduq, 
     registered = await repo.register_agents(session, identity.public_key, [Registration(name="spoke")])
     agent = registered["spoke"]
     thread_id = await repo.create_thread(session, agent)
-    created = await repo.create_run(session, thread_id, agent, "ag-ui", {})
+    created = await repo.create_run(session, thread_id, agent, {})
     await session.commit()
     run_id = created["run_id"]
     await repo.append_run_event(session, run_id, 1, {"type": "RUN_ERROR", "message": "my own"})
-    await repo.mark_run_status(session, run_id, "failed", metadata=observed(failureReason="x"))
+    await repo.mark_run_status(session, run_id, "failed")
 
     await close_with_terminal_event(funduq, run_id, "x")
 
@@ -120,7 +128,7 @@ async def test_orphans_reaped_at_start_get_terminal_events(settings, session, ne
     registered = await repo.register_agents(session, identity.public_key, [Registration(name="orphan")])
     agent = registered["orphan"]
     thread_id = await repo.create_thread(session, agent)
-    created = await repo.create_run(session, thread_id, agent, "ag-ui", {})
+    created = await repo.create_run(session, thread_id, agent, {})
     await session.commit()
     run_id = created["run_id"]
     # Held by the previous process: only a run somebody had in hand is an orphan.

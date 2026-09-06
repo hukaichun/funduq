@@ -48,7 +48,7 @@ async def _delivered(broker: RunBroker, key: str = "sdk_1"):
     async def record(run, cmd) -> None:
         relayed.append(cmd)
 
-    run = broker.enqueue_run("run_1", AGENT, "thread_1", _valid_input("run_1", "thread_1"), "ag-ui", {RelayEvent: record})
+    run = broker.enqueue_run("run_1", AGENT, "thread_1", _valid_input("run_1", "thread_1"), {RelayEvent: record})
     async with asyncio.timeout(1):
         while run.claimed_by is None:
             await asyncio.sleep(0)

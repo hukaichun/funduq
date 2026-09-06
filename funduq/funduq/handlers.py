@@ -9,7 +9,6 @@ from ag_ui.core import Event, EventType, RunErrorEvent
 from pydantic import TypeAdapter, ValidationError
 
 from funduq import repo
-from funduq.props import observed
 from funduq.agui_reduce import reduce_events_to_messages
 from funduq.broker import (
     Claim,
@@ -22,7 +21,6 @@ from funduq.broker import (
     RequestCancel,
     Run,
 )
-from funduq.pause import interrupt_outcome_of, unanswered_tool_calls
 
 if TYPE_CHECKING:
     from funduq.core import Funduq
@@ -77,9 +75,6 @@ async def _handle_relay(funduq: "Funduq", run: Run, cmd: RelayEvent) -> None:
             return
     if event.get("type") == EventType.RUN_FINISHED:
         run.saw_run_finished = True
-        interrupts = interrupt_outcome_of(event)
-        if interrupts is not None:
-            run.pause_payload = {"interrupts": interrupts}
     elif event.get("type") == EventType.RUN_ERROR:
         run.saw_run_error = True
     run.seq += 1
@@ -91,25 +86,14 @@ async def _handle_relay(funduq: "Funduq", run: Run, cmd: RelayEvent) -> None:
 
 
 async def _handle_finish(funduq: "Funduq", run: Run, cmd: FinishStream) -> None:
-    """Settle the run's final status and, when it completed or paused, fold its events into thread messages."""
+    """Settle the run's final status and, when it completed, fold its events into thread messages. A run that finished asking is completed — AG-UI's own reading; that the thread is now waiting is read from its events, not written here."""
     async with funduq.session() as session:
-        round_events = await repo.get_run_events(
-            session, run.run_id, since_seq=run.round_starting_seq
-        )
-        pending_tool_calls = unanswered_tool_calls(round_events)
-
-        if run.pause_payload is not None or (run.saw_run_finished and pending_tool_calls):
-            status = "input-required"
-            metadata = observed(
-                interrupts=(run.pause_payload or {}).get("interrupts", []),
-                pendingToolCalls=pending_tool_calls,
-            )
-        elif run.saw_run_finished:
-            status, metadata = "completed", None
+        if run.saw_run_finished:
+            status = "completed"
         elif run.cancel_requested:
-            status, metadata = "cancelled", None
+            status = "cancelled"
         else:
-            status, metadata = "failed", observed(failureReason="provider_stream_ended_without_finishing")
+            status = "failed"
 
         failure_event = (
             run_error("the agent's stream ended without finishing",
@@ -118,12 +102,15 @@ async def _handle_finish(funduq: "Funduq", run: Run, cmd: FinishStream) -> None:
             else None
         )
 
-        settled = await funduq.mark_run_status(session, run.run_id, status, metadata=metadata)
-        if settled and status in ("completed", "input-required"):
+        settled = await funduq.mark_run_status(session, run.run_id, status)
+        if settled and status == "completed":
+            round_events = await repo.get_run_events(
+                session, run.run_id, since_seq=run.round_starting_seq
+            )
             reply_messages = reduce_events_to_messages(round_events)
             if reply_messages:
                 await repo.append_thread_messages(
-                    session, run.thread_id, run.run_id, repo.stamp_messages(reply_messages)
+                    session, run.thread_id, run.run_id, repo.stamp_messages(reply_messages), origin="agent"
                 )
         if failure_event is not None:
             run.seq += 1
@@ -162,7 +149,7 @@ async def _handle_fail(funduq: "Funduq", run: Run, cmd: Fail) -> None:
     run.seq += 1
     async with funduq.session() as session:
         await repo.append_run_event(session, run.run_id, run.seq, event)
-        await funduq.mark_run_status(session, run.run_id, "failed", metadata=observed(failureReason=cmd.reason))
+        await funduq.mark_run_status(session, run.run_id, "failed")
     await run.out_queue.put(event)
 
 

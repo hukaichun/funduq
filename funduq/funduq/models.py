@@ -65,19 +65,28 @@ class AgentRecord(BaseModel):
 
 
 class RunRecord(BaseModel):
-    """A run's public-facing record: the same run as stored, minus internal storage columns like its thread messages or run events."""
+    """A run as stored: the AG-UI `RunAgentInput` it is (its messages live in the thread), and the state funduq holds about it."""
 
     run_id: str
     thread_id: str
     provider_key: str
     agent_name: str
-    protocol: str
     status: str
-    head_key: str | None = None
     actor_chain: list[str] | None = None
-    input_json: dict[str, Any] = Field(default_factory=dict)
-    metadata: dict[str, Any] = Field(default_factory=dict)
     created_at: datetime
     started_at: datetime | None = None
     completed_at: datetime | None = None
     last_activity_at: datetime | None = None
+    # RunAgentInput
+    parent_run_id: str | None = None
+    state: Any = None
+    tools: list[dict[str, Any]] = Field(default_factory=list)
+    context: list[dict[str, Any]] = Field(default_factory=list)
+    forwarded_props: Any = None
+    resume: list[dict[str, Any]] | None = None
+    # state
+    cancel_requested_by: str | None = None
+
+    @property
+    def agent(self) -> "AgentRef":
+        return AgentRef(provider_key=self.provider_key, name=self.agent_name)

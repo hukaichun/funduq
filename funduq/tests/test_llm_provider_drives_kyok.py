@@ -97,12 +97,12 @@ def _body(
     *,
     context: dict | None = None,
 ) -> RunAgentInput:
-    kwargs = {}
+    kwargs = {"forwarded_props": {}}
     if ref is not None:
         kyok: dict = {"llmProvider": {"providerKey": ref.provider_key, "name": ref.name}}
         if context is not None:
             kyok["context"] = context
-        kwargs["metadata"] = {"kyok": kyok}
+        kwargs["forwarded_props"] = {"kyok": kyok}
     return RunAgentInput(
         thread_id=thread_id,
         run_id="ignored",
@@ -110,7 +110,6 @@ def _body(
         messages=[UserMessage(id="m1", role="user", content="hi")],
         tools=[],
         context=[],
-        forwarded_props={},
         **kwargs,
     )
 
@@ -203,7 +202,7 @@ async def test_the_callers_context_is_ordinary_content_of_the_record(funduq, ser
 
     async with funduq.session() as session:
         run = await repo.get_run(session, agent.run_id)
-    assert run.metadata["kyok"]["context"] == {"voucher": "v1"}
+    assert run.forwarded_props["kyok"]["context"] == {"voucher": "v1"}
     assert funduq.kyok_relay.binding_for(agent.run_id).context == {"voucher": "v1"}
     await _finish(agent, stream)
 
