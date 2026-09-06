@@ -17,9 +17,9 @@ from funduq.kyok import (
     issue_kyok_token,
     kyok_forwarded_props,
     parse_kyok_opt_in,
-    read_kyok_forwarded_props,
     verify_kyok_token,
 )
+from funduq.props import read_kyok_forwarded_props
 
 
 _AGENT = AgentRef(provider_key="ab" * 32, name="translator")
@@ -97,7 +97,7 @@ def test_anything_else_is_no_opt_in_not_an_error(metadata):
 
 def test_forwarded_props_roundtrip_through_the_model():
     entry = kyok_forwarded_props("run_1", _AGENT, "test-signing-secret")
-    grant = read_kyok_forwarded_props({"kyok": entry})
+    grant = read_kyok_forwarded_props({"funduq": {"kyok": entry}})
     assert grant is not None
     decoded = verify_kyok_token(grant.token, "test-signing-secret")
     assert decoded.run_id == "run_1" and decoded.agent == _AGENT

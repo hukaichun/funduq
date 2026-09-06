@@ -15,7 +15,7 @@ from openai.types.shared import ErrorObject
 from funduq import repo
 from funduq.errors import KyokRejected, LlmProviderNotFound
 from funduq.identity import new_chain
-from funduq.kyok import read_kyok_forwarded_props
+from funduq.props import read_kyok_forwarded_props
 from funduq.models import LlmRef
 from funduq.protocols.a2a import A2AAdapter
 from funduq.protocols.agui import AGUIAdapter

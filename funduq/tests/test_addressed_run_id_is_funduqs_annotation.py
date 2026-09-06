@@ -1,4 +1,4 @@
-"""`forwardedProps.addressedRunId` means funduq verified an interjection at the
+"""`forwardedProps.funduq.addressedRunId` means funduq verified an interjection at the
 door — never that a caller typed it. The record is read back on restart
 (#122), so a caller-written value there would let a caller make funduq's
 decision for it.
@@ -17,23 +17,28 @@ from tests.conftest import Identity
 _AGENT = AgentRef(provider_key="k" * 64, name="a")
 
 
-def test_a_caller_written_addressed_run_id_is_removed():
-    props = build_forwarded_props("s", "run_1", _AGENT, False, {"addressedRunId": "forged", "theirs": 1})
+def test_a_caller_written_funduq_key_is_removed():
+    props = build_forwarded_props("s", "run_1", _AGENT, False, {"funduq": {"addressedRunId": "forged"}, "theirs": 1})
     assert props == {"theirs": 1}
 
 
-def test_a_declared_one_replaces_whatever_the_caller_wrote():
+def test_a_declared_target_replaces_whatever_the_caller_wrote_under_funduqs_key():
     props = build_forwarded_props(
-        "s", "run_1", _AGENT, False, {"addressedRunId": "forged"}, addressed_run_id="run_target"
+        "s", "run_1", _AGENT, False, {"funduq": {"addressedRunId": "forged", "kyok": "fake"}}, addressed_run_id="run_target"
     )
-    assert props == {"addressedRunId": "run_target"}
+    assert props == {"funduq": {"addressedRunId": "run_target"}}
 
 
 def test_nothing_to_add_leaves_the_callers_props_as_they_were():
     assert build_forwarded_props("s", "run_1", _AGENT, False, {"theirs": 1}) == {"theirs": 1}
     assert build_forwarded_props("s", "run_1", _AGENT, False, None) is None
     assert build_forwarded_props("s", "run_1", _AGENT, False, {}) == {}
-    assert build_forwarded_props("s", "run_1", _AGENT, False, {"addressedRunId": "forged"}) is None
+    assert build_forwarded_props("s", "run_1", _AGENT, False, {"funduq": {"addressedRunId": "forged"}}) == {}
+
+
+def test_a_top_level_addressed_run_id_is_the_callers_own_word():
+    """Outside funduq's key the same name means nothing to funduq: relayed verbatim, never read back."""
+    assert build_forwarded_props("s", "run_1", _AGENT, False, {"addressedRunId": "theirs"}) == {"addressedRunId": "theirs"}
 
 
 class NeverFinishes:
@@ -65,7 +70,7 @@ async def _status_is(funduq, run_id: str, status: str) -> bool:
 
 
 async def test_a_recovered_run_is_not_made_an_interjection_by_its_callers_props(funduq, attach, settings):
-    """The caller wrote `forwardedProps.addressedRunId` naming the running turn; no
+    """The caller wrote `forwardedProps.funduq.addressedRunId` naming the running turn; no
     interjection was declared. After a restart the run is an ordinary queued
     turn — not failed as a lost interjection, not delivered as one."""
     identity = Identity()
@@ -75,10 +80,10 @@ async def test_a_recovered_run_is_not_made_an_interjection_by_its_callers_props(
     await _until(lambda: _status_is(funduq, busy.run_id, "running"))
     waiting = await funduq.start_run(
         agent,
-        {"messages": [], "forwardedProps": {"addressedRunId": busy.run_id, "theirs": True}},
+        {"messages": [], "forwardedProps": {"funduq": {"addressedRunId": busy.run_id}, "theirs": True}},
         thread_id=busy.thread_id,
     )
-    assert "addressedRunId" not in (await funduq.get_run(waiting.run_id)).input_json["forwardedProps"]
+    assert "funduq" not in (await funduq.get_run(waiting.run_id)).input_json["forwardedProps"]
 
     reborn = Funduq(settings)
     runtime = None

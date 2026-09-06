@@ -74,7 +74,8 @@ class Agent:
     async def run_stream(self, name: str, run_input):
         props = getattr(run_input, "forwarded_props", None)
         if props is not None:
-            chain = props.get("actorChain") if isinstance(props, dict) else getattr(props, "actorChain", None)
+            ours = props.get("funduq") if isinstance(props, dict) else None
+            chain = ours.get("actorChain") if isinstance(ours, dict) else None
             if chain:
                 self.seen_chain = list(chain)
         ids = {"threadId": run_input.thread_id, "runId": run_input.run_id}
@@ -87,7 +88,7 @@ class Findings:
     deliberate.
 
     The provider holding the caller's chain is not the defect — it is the design
-    (`forwardedProps.actorChain`, so the agent verifies for itself rather than
+    (`forwardedProps.funduq.actorChain`, so the agent verifies for itself rather than
     trusting a summary). Counting it as a failure would make this script
     permanently red for the wrong reason, and the first person to tidy that up
     would delete the line that explains where the exposure comes from.

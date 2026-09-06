@@ -47,13 +47,16 @@ behavior on this page forever — a later chained writer cannot lock it.
 The mechanics are in
 Responsibility chains.
 
-One small carve-out keeps the record honest: the metadata keys funduq
-itself writes into a run's record — `interrupts`, `pendingToolCalls`,
-`failureReason`, and `funduq`, held in reserve — are stripped from
+One small carve-out keeps the record honest: everything funduq itself
+writes into a run's record sits under one metadata key, `funduq` — the
+pause it observed (`interrupts`, `pendingToolCalls`), the reason it
+failed a run (`failureReason`), who answered an ask or asked for a cancel
+(`answeredBy`, `cancelRequestedBy`) — and that one key is stripped from
 caller-supplied metadata at the doors (`props.RESERVED_METADATA_KEYS`,
 stripped in one place because every door funnels through
 `doors.verify_caller`). A caller cannot plant a fake failure reason
-wearing funduq's handwriting.
+wearing funduq's handwriting; the same word outside that key is the
+caller's own and is kept.
 
 **Everything else is relayed verbatim, and that is a promise, not an
 implementation detail.** Metadata under any other key, and the free-form
@@ -65,10 +68,17 @@ belongs to a particular employee and a deployment's own SSO can (see
 responsibility chains). Anything
 built on this passthrough is building on the contract.
 
-What funduq adds to `forwardedProps` it adds *beside* the caller's own
-values, never over them: a KYOK grant when the run opted in, the actor
-chain, and `addressedRunId` when the caller declared an interjection. The reserved list above is the whole of
-what is ever taken away; if that list grows, it is a contract change and
+What funduq adds to `forwardedProps` it adds under the same one key,
+`forwardedProps.funduq`: a KYOK grant when the run opted in, the actor
+chain, and `addressedRunId` when the caller declared an interjection.
+That key is funduq's unconditionally — present when funduq has something
+to say, absent when it does not, and never the caller's value — so an
+agent reading it knows funduq put it there. Every other key in
+`forwardedProps` is the caller's, untouched. The same rule holds on the
+A2A side: what funduq writes into a task's or status update's `metadata`
+(`agui_event`, `agui_events`, `interrupts`, `cancelRequested`) sits under
+`metadata.funduq`. One reserved key, on every surface, is the whole of
+what is ever taken away; if that grows, it is a contract change and
 belongs in the changelog.
 
 ## Agent providers: speak AG-UI shapes, funduq opens the doors
@@ -173,7 +183,7 @@ client author needs them.
   (`https://github.com/hukaichun/funduq/ext/interjection/v1`), a caller
   puts the target task's id in the message's `metadata` under
   `<uri>/addressedRunId`; funduq relays it to the agent as
-  `forwardedProps.addressedRunId` and holds no opinion about the
+  `forwardedProps.funduq.addressedRunId` and holds no opinion about the
   target's state — the agent judges from its own loop, and an ask that
   lands after the target ended degrades to an ordinary next turn. This
   is *intent*, distinct from AG-UI's `parentRunId` (plain continuation,

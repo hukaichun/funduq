@@ -58,7 +58,7 @@ consumer can verify a delegation path without importing funduq.
 **A chain reached you through funduq only if its last hop says so.** funduq
 signs one hop of its own onto every chain it relays, naming the agent it
 dispatched to under `dispatchedTo`. Nobody else can sign that hop. So an
-agent reading `forwardedProps.actorChain` checks two things before treating
+agent reading `forwardedProps.funduq.actorChain` checks two things before treating
 it as relayed: the tail hop's key is the funduq key its link proved at the
 handshake, and `dispatchedTo` is itself. A chain that fails either is
 something the caller typed into its own `forwardedProps`, or a real chain

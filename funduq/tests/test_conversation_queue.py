@@ -416,7 +416,7 @@ async def test_answering_the_paused_question_is_never_refused_by_the_buffer(tigh
 async def test_a_declared_interjection_reaches_the_agent_while_the_turn_is_open(funduq, serve):
     """The interjection extension: the caller *declares* the intent to join a
     turn in flight (never inferred from the target's state), funduq relays it
-    as `forwardedProps.addressedRunId`, and the agent — sole holder of the
+    as `forwardedProps.funduq.addressedRunId`, and the agent — sole holder of the
     live truth — judges what to do with it."""
     from funduq.props import ADDRESSED_RUN_METADATA_KEY
 
@@ -446,7 +446,7 @@ async def test_a_declared_interjection_reaches_the_agent_while_the_turn_is_open(
     # The declared interjection reaches the agent while its target is open,
     # wearing the caller's intent.
     await _until(lambda: len(provider.runs) == 2)
-    assert provider.runs[1].forwarded_props == {"addressedRunId": first_run_id}
+    assert provider.runs[1].forwarded_props == {"funduq": {"addressedRunId": first_run_id}}
 
     provider.release.set()
     first_result, second_result = await asyncio.gather(first, second)

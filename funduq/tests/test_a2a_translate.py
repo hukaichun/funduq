@@ -85,7 +85,7 @@ def test_unmodeled_event_falls_back_to_a_working_update():
     update = _wire(agui_event_to_a2a_update(event, "task_1", "session_1", opened=set()))
 
     assert update["status"]["state"] == "TASK_STATE_WORKING"
-    assert update["metadata"]["agui_event"] == event
+    assert update["metadata"]["funduq"]["agui_event"] == event
 
 
 def test_run_statuses_map_to_a2a_states():
@@ -175,7 +175,7 @@ def test_run_finished_on_an_interrupt_is_input_required_not_completed():
     )
 
     assert _wire(update)["status"]["state"] == "TASK_STATE_INPUT_REQUIRED"
-    assert _wire(update)["metadata"] == {"interrupts": [{"id": "i1", "reason": "approve"}]}
+    assert _wire(update)["metadata"] == {"funduq": {"interrupts": [{"id": "i1", "reason": "approve"}]}}
 
 
 def test_every_ag_ui_event_type_is_mapped_or_reaches_the_overflow_seam():
@@ -199,7 +199,7 @@ def test_every_ag_ui_event_type_is_mapped_or_reaches_the_overflow_seam():
             continue
 
         assert not is_mapped(event)
-        metadata = _wire(update)["metadata"]
+        metadata = _wire(update)["metadata"]["funduq"]
         assert metadata[OVERFLOW_METADATA_KEY] == event, event_type.value
 
 
@@ -220,7 +220,7 @@ def test_get_task_carries_the_same_overflow_the_stream_does():
 
     task = build_task("task_1", "session_1", "agent", "completed", events)
 
-    assert _wire(task)["metadata"][OVERFLOW_METADATA_LIST_KEY] == unmapped
+    assert _wire(task)["metadata"]["funduq"][OVERFLOW_METADATA_LIST_KEY] == unmapped
     assert _wire(task)["artifacts"] == [{"artifactId": "m1", "parts": [{"text": "hi"}]}]
 
 
@@ -242,15 +242,15 @@ def test_the_pending_cancel_marker_can_come_from_the_request_alone():
     window would see a plain `working` and learn nothing — neither that its
     request landed nor that the provider was ignoring it. So the door marks
     what it just did rather than reading back what has been written yet."""
-    from funduq.protocols.a2a_translate import CANCEL_REQUESTED_METADATA_KEY, build_task
+    from funduq.protocols.a2a_translate import CANCEL_REQUESTED_METADATA_KEY, build_task, funduq_metadata_of
 
     asked = build_task("t1", "c1", "agent", "running", [], cancel_requested=True)
     assert asked.status.state == pb.TaskState.TASK_STATE_WORKING
-    assert asked.metadata[CANCEL_REQUESTED_METADATA_KEY] is True
+    assert funduq_metadata_of(asked)[CANCEL_REQUESTED_METADATA_KEY] is True
 
     written = build_task("t1", "c1", "agent", "cancelling", [])
     assert written.status.state == pb.TaskState.TASK_STATE_WORKING
-    assert written.metadata[CANCEL_REQUESTED_METADATA_KEY] is True
+    assert funduq_metadata_of(written)[CANCEL_REQUESTED_METADATA_KEY] is True
 
     plain = build_task("t1", "c1", "agent", "running", [])
-    assert CANCEL_REQUESTED_METADATA_KEY not in plain.metadata
+    assert CANCEL_REQUESTED_METADATA_KEY not in funduq_metadata_of(plain)

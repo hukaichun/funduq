@@ -91,7 +91,7 @@ def parse_kyok_opt_in(metadata: dict) -> KyokOptIn | None:
 
 
 class KyokForwardedProps(BaseModel):
-    """funduq's `forwardedProps.kyok` entry: the grant a KYOK-bound run's agent presents when calling for completions."""
+    """funduq's `forwardedProps.funduq.kyok` entry: the grant a KYOK-bound run's agent presents when calling for completions."""
 
     model_config = ConfigDict(frozen=True)
 
@@ -99,23 +99,10 @@ class KyokForwardedProps(BaseModel):
 
 
 def kyok_forwarded_props(run_id: str, agent: AgentRef, signing_secret: str) -> dict[str, Any]:
-    """Issue a KYOK token for the run and wrap it as the dict to send under the `kyok` forwarded prop."""
+    """Issue a KYOK token for the run and wrap it as the dict funduq sends under `forwardedProps.funduq.kyok`."""
     return KyokForwardedProps(
         token=issue_kyok_token(run_id, agent, signing_secret)
     ).model_dump()
-
-
-def read_kyok_forwarded_props(forwarded_props: Any) -> KyokForwardedProps | None:
-    """Extract the `kyok` entry from `forwarded_props`, or None if missing, not a dict, or invalid."""
-    if not isinstance(forwarded_props, dict):
-        return None
-    raw = forwarded_props.get("kyok")
-    if raw is None:
-        return None
-    try:
-        return KyokForwardedProps.model_validate(raw)
-    except ValidationError:
-        return None
 
 
 @dataclass(frozen=True)

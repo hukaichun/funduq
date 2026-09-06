@@ -14,6 +14,7 @@ from pathlib import Path
 
 from ag_ui.core import ResumeEntry, RunAgentInput, ToolMessage, UserMessage
 
+from funduq.props import observed_of
 from funduq.protocols.agui import AGUIAdapter, EventStream, ThreadSnapshot
 
 REAL_STREAM = json.loads((Path(__file__).parent / "real_deferring_stream.json").read_text())
@@ -74,9 +75,9 @@ def _tool_results(thread_id: str, answers: dict[str, str], resume=None) -> RunAg
 def _answers(paused) -> tuple[dict[str, str], list[ResumeEntry]]:
     """One answer per ask, each through the carrier its kind requires: the
     deferred call by tool result, the approval by `ResumeEntry`."""
-    by_interrupt = {i["toolCallId"]: i["id"] for i in paused.metadata["interrupts"]}
+    by_interrupt = {i["toolCallId"]: i["id"] for i in observed_of(paused.metadata)["interrupts"]}
     tool_results, resume = {}, []
-    for call_id in paused.metadata["pendingToolCalls"]:
+    for call_id in observed_of(paused.metadata)["pendingToolCalls"]:
         if call_id in by_interrupt:
             resume.append(ResumeEntry(interrupt_id=by_interrupt[call_id],
                                       status="resolved", payload={"approved": True}))
@@ -161,7 +162,7 @@ async def test_a_partial_answer_leaves_the_ask_standing(funduq, serve):
     answer: it enters as an utterance and the ask survives, rather than
     reopening a run the provider would only fail."""
     provider, served, agent, first, paused = await _pause(funduq, serve)
-    pending = paused.metadata["pendingToolCalls"]
+    pending = observed_of(paused.metadata)["pendingToolCalls"]
     tool_results, _resume = _answers(paused)
 
     half = await AGUIAdapter(funduq).run(
@@ -171,7 +172,7 @@ async def test_a_partial_answer_leaves_the_ask_standing(funduq, serve):
     assert isinstance(half, EventStream)
     assert half.run_id != first.run_id
     assert (await funduq.get_run(first.run_id)).status == "input-required"
-    assert (await funduq.get_run(first.run_id)).metadata["pendingToolCalls"] == pending
+    assert observed_of((await funduq.get_run(first.run_id)).metadata)["pendingToolCalls"] == pending
 
 
 async def test_after_the_round_trip_the_link_holds_the_whole_resumable_turn(funduq, serve):
@@ -181,7 +182,7 @@ async def test_after_the_round_trip_the_link_holds_the_whole_resumable_turn(fund
     link holds the assistant turn *and* every result — the complete set a
     stateless provider needs to take its next step."""
     provider, served, agent, first, paused = await _pause(funduq, serve)
-    pending = paused.metadata["pendingToolCalls"]
+    pending = observed_of(paused.metadata)["pendingToolCalls"]
     tool_results, resume = _answers(paused)
 
     second = await AGUIAdapter(funduq).run(
@@ -212,7 +213,7 @@ async def test_a_tool_result_cannot_answer_an_approval(funduq, serve):
     nothing. Measured. So funduq does not count one — reopening the run on it
     would trade a waiting run for a silently empty one."""
     provider, served, agent, first, paused = await _pause(funduq, serve)
-    pending = paused.metadata["pendingToolCalls"]
+    pending = observed_of(paused.metadata)["pendingToolCalls"]
 
     wrong_carrier = await AGUIAdapter(funduq).run(
         agent,

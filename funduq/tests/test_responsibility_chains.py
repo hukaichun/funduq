@@ -18,7 +18,7 @@ from funduq import repo
 from funduq.errors import ThreadMembershipRequired
 from funduq.identity import InvalidCancel, InvalidResolution
 from funduq.protocols.a2a import A2AAdapter
-from funduq.protocols.a2a_translate import CANCEL_REQUESTED_METADATA_KEY
+from funduq.protocols.a2a_translate import CANCEL_REQUESTED_METADATA_KEY, funduq_metadata_of
 
 from tests.conftest import EchoAgent
 
@@ -297,7 +297,7 @@ def _was_asked_to_stop(task) -> bool:
     """The cancel landed. Deliberately not a state assertion: what these are
     about is whether the request was accepted at all, and the state it comes
     back in depends on how far the run had got."""
-    return CANCEL_REQUESTED_METADATA_KEY in task.metadata
+    return CANCEL_REQUESTED_METADATA_KEY in funduq_metadata_of(task)
 
 
 def _proof(identity, run_id):

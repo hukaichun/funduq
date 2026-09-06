@@ -16,6 +16,7 @@ from pathlib import Path
 
 from ag_ui.core import RunAgentInput, UserMessage
 
+from funduq.props import observed_of
 from funduq.protocols.agui import AGUIAdapter, EventStream
 
 REAL_STREAM = json.loads((Path(__file__).parent / "real_deferring_stream.json").read_text())
@@ -92,6 +93,6 @@ async def test_the_pull_agrees_with_what_funduq_recorded_as_pending(funduq, serv
     answered = {m["toolCallId"] for m in dumped if m.get("role") == "tool"}
     outstanding = [c for c in announced if c not in answered]
 
-    recorded = (await funduq.get_run(stream.run_id)).metadata
+    recorded = observed_of((await funduq.get_run(stream.run_id)).metadata)
     assert recorded["pendingToolCalls"] == outstanding
     assert len(recorded["interrupts"]) == 1, "the approval, which AG-UI does name"

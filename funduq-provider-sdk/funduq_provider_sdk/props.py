@@ -6,7 +6,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 
 class KyokForwardedProps(BaseModel):
-    """funduq's `forwardedProps.kyok` entry: the grant a KYOK-bound run's agent presents when calling for completions."""
+    """funduq's `forwardedProps.funduq.kyok` entry: the grant a KYOK-bound run's agent presents when calling for completions."""
 
     model_config = ConfigDict(frozen=True)
 

@@ -254,7 +254,7 @@ async def test_cancelling_a_live_task_answers_working_and_says_the_request_is_pe
     cancelled = await adapter.cancel_task(agent, opening.id)
 
     assert cancelled.status.state == pb.TaskState.TASK_STATE_WORKING
-    assert _wire(cancelled)["metadata"][CANCEL_REQUESTED_METADATA_KEY] is True
+    assert _wire(cancelled)["metadata"]["funduq"][CANCEL_REQUESTED_METADATA_KEY] is True
 
 
 async def test_cancelling_a_task_that_already_ended_is_refused_in_a2as_words(funduq, callee):

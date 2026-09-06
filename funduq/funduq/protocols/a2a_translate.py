@@ -3,9 +3,11 @@ from __future__ import annotations
 from typing import Any
 
 from a2a.types import a2a_pb2 as pb
+from google.protobuf.json_format import MessageToDict
 from ag_ui.core import AssistantMessage, EventType, UserMessage
 
 from funduq.pause import interrupt_outcome_of
+from funduq.props import OBSERVED_METADATA_KEY
 
 _PLACEHOLDER_MESSAGE_ID = "unset"
 
@@ -33,11 +35,17 @@ LIFECYCLE_EVENT_TYPES = frozenset(
 TEXT_EVENT_TYPES = frozenset({EventType.TEXT_MESSAGE_CONTENT, EventType.TEXT_MESSAGE_CHUNK})
 MAPPED_EVENT_TYPES = LIFECYCLE_EVENT_TYPES | TEXT_EVENT_TYPES
 
+# Everything funduq itself writes into an A2A task's or status update's `metadata` sits under this one key (`OBSERVED_METADATA_KEY`, the same key as on a run's record and on `forwardedProps`). The keys below are its fields.
 OVERFLOW_METADATA_KEY = "agui_event"
 OVERFLOW_METADATA_LIST_KEY = "agui_events"
-
+INTERRUPTS_METADATA_KEY = "interrupts"
 # Set on a task funduq has been asked to cancel and is still relaying.
-CANCEL_REQUESTED_METADATA_KEY = "funduq/cancelRequested"
+CANCEL_REQUESTED_METADATA_KEY = "cancelRequested"
+
+
+def funduq_metadata_of(message: Any) -> dict[str, Any]:
+    """What funduq wrote under an A2A task's or status update's `metadata`, as plain data, or `{}`."""
+    return MessageToDict(message).get("metadata", {}).get(OBSERVED_METADATA_KEY, {})
 
 
 def is_mapped(event: dict[str, Any]) -> bool:
@@ -93,7 +101,7 @@ def text_delta_of(event: dict[str, Any]) -> tuple[str, str] | None:
 def agui_event_to_a2a_update(
     event: dict[str, Any], task_id: str, context_id: str, *, opened: set[str]
 ) -> pb.TaskStatusUpdateEvent | pb.TaskArtifactUpdateEvent:
-    """Translates one AG-UI run event into the A2A stream event it projects onto: run lifecycle events become status updates (`RUN_STARTED`->working, `RUN_FINISHED`->completed or, when it carries an interrupt outcome, input-required with the interrupts attached, `RUN_ERROR`->failed with the error message attached), text-content events become appending artifact updates keyed by message id, and anything else falls back to a working status update carrying the raw AG-UI event under `metadata.agui_event` so it isn't silently dropped."""
+    """Translates one AG-UI run event into the A2A stream event it projects onto: run lifecycle events become status updates (`RUN_STARTED`->working, `RUN_FINISHED`->completed or, when it carries an interrupt outcome, input-required with the interrupts attached, `RUN_ERROR`->failed with the error message attached), text-content events become appending artifact updates keyed by message id, and anything else falls back to a working status update carrying the raw AG-UI event under `metadata.funduq.agui_event` so it isn't silently dropped."""
     event_type = event.get("type")
 
     if event_type == EventType.RUN_STARTED:
@@ -107,7 +115,7 @@ def agui_event_to_a2a_update(
                 task_id,
                 context_id,
                 pb.TaskState.TASK_STATE_INPUT_REQUIRED,
-                metadata={"interrupts": interrupts},
+                metadata={INTERRUPTS_METADATA_KEY: interrupts},
             )
         return _status_update(task_id, context_id, pb.TaskState.TASK_STATE_COMPLETED)
 
@@ -150,10 +158,11 @@ def _status_update(
             )
         )
     update = pb.TaskStatusUpdateEvent(task_id=task_id, context_id=context_id, status=status)
-    if metadata:
-        update.metadata.update(metadata)
+    ours: dict[str, Any] = dict(metadata or {})
     if agui_event is not None:
-        update.metadata.update({OVERFLOW_METADATA_KEY: agui_event})
+        ours[OVERFLOW_METADATA_KEY] = agui_event
+    if ours:
+        update.metadata.update({OBSERVED_METADATA_KEY: ours})
     return update
 
 
@@ -185,7 +194,7 @@ def build_task(
     history_length: int | None = None,
     cancel_requested: bool = False,
 ) -> pb.Task:
-    """Builds an A2A `Task` from a run's stored status and event history, merging each message's text-content deltas (in event order) into one artifact per `messageId`, filling `history` from the thread's stored messages, and carrying every unmapped event, in order, under `metadata.agui_events`."""
+    """Builds an A2A `Task` from a run's stored status and event history, merging each message's text-content deltas (in event order) into one artifact per `messageId`, filling `history` from the thread's stored messages, and carrying every unmapped event, in order, under `metadata.funduq.agui_events`."""
     merged: dict[str, list[str]] = {}
     overflow: list[dict[str, Any]] = []
     for event in run_events:
@@ -206,9 +215,10 @@ def build_task(
             for artifact_id, chunks in merged.items()
         ],
     )
+    ours: dict[str, Any] = {}
     if overflow:
-        task.metadata.update({OVERFLOW_METADATA_LIST_KEY: overflow})
-    pending_cancel = _cancel_metadata(run_status, cancel_requested)
-    if pending_cancel:
-        task.metadata.update(pending_cancel)
+        ours[OVERFLOW_METADATA_LIST_KEY] = overflow
+    ours.update(_cancel_metadata(run_status, cancel_requested) or {})
+    if ours:
+        task.metadata.update({OBSERVED_METADATA_KEY: ours})
     return task

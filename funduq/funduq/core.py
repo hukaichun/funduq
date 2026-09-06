@@ -56,6 +56,7 @@ from funduq.identity import (
 )
 from funduq.kyok import ConnectedLLMProvider, KyokBinding, KyokRelay, parse_kyok_opt_in
 from funduq.pause import outstanding_asks
+from funduq.props import observed, observed_of
 from funduq.models import AgentRecord, AgentRef, AgentSummary, LlmRef, LlmSummary, RunRecord
 
 logger = logging.getLogger("funduq.core")
@@ -398,12 +399,12 @@ class Funduq:
             for stored in waiting:
                 agent = AgentRef(provider_key=stored.provider_key, name=stored.agent_name)
                 props = stored.input_json.get("forwardedProps")
-                addressed = props.get("addressedRunId") if isinstance(props, dict) else None
+                addressed = observed_of(props if isinstance(props, dict) else None).get("addressedRunId")
                 if addressed is not None and self.broker.get(addressed) is None:
                     # An interjection names the run it changes; that run died with the process, so the words have nowhere to go.
                     await self.mark_run_status(
                         session, stored.run_id, "failed",
-                        metadata={"failureReason": "interjection_target_lost"},
+                        metadata=observed(failureReason="interjection_target_lost"),
                     )
                     lost.append(stored.run_id)
                     continue
