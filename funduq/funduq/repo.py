@@ -601,12 +601,19 @@ async def readers_of(session: AsyncSession, thread: dict[str, Any]) -> set[str] 
     circle = {thread["provider_key"], thread["head_key"]}
     chains = (
         await session.execute(
-            select(runs.c.actor_chain).where(
-                runs.c.thread_id == thread["thread_id"], runs.c.actor_chain.is_not(None)
-            )
+            select(runs.c.actor_chain).where(runs.c.thread_id == thread["thread_id"])
         )
     ).scalars().all()
     for chain in chains:
+        # A run with no chain adds nobody, and the emptiness has three shapes
+        # the database does not distinguish: this column is JSON, so a Python
+        # `None` is stored as JSON `null` rather than SQL NULL and a
+        # `WHERE actor_chain IS NOT NULL` matches it — as it matches `[]`,
+        # which no such filter was ever going to catch. Deciding it here
+        # means one rule in one place instead of a filter that has to be
+        # read twice to be believed.
+        if not chain:
+            continue
         circle |= set(verify_chain(chain).actor_public_keys)
     return circle
 
