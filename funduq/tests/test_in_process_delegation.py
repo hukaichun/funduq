@@ -61,7 +61,9 @@ async def test_the_callers_own_hops_reach_the_agent_untouched_on_both_roads(fund
 
     agui_served = await serve(EchoAgent(), "agui-callee")
     a2a_served = await serve(EchoAgent(), "a2a-callee")
-    chain = new_chain(Ed25519PrivateKey.generate())
+    caller = Ed25519PrivateKey.generate()
+    chain = new_chain(caller)
+    presenter = caller.public_key().public_bytes_raw().hex()
 
     stream = await AGUIAdapter(funduq).run(
         agui_served.agents["agui-callee"],
@@ -74,10 +76,13 @@ async def test_the_callers_own_hops_reach_the_agent_untouched_on_both_roads(fund
             context=[],
             forwarded_props={"actorChain": chain},
         ),
+        presenter_key=presenter,
     )
     async for _ in stream.events:
         pass
-    await A2AAdapter(funduq).send_task(a2a_served.agents["a2a-callee"], _message("hi"), actor_chain=chain)
+    await A2AAdapter(funduq).send_task(
+        a2a_served.agents["a2a-callee"], _message("hi"), actor_chain=chain, presenter_key=presenter
+    )
 
     # No funduq-authored digest exists: the caller's own hops arrive
     # byte-identical and the agent verifies them for itself. What funduq adds
@@ -102,7 +107,10 @@ async def test_identity_is_carried_through_an_in_process_hop(funduq, serve):
     agency, relaying_agent = Ed25519PrivateKey.generate(), Ed25519PrivateKey.generate()
     chain = extend_chain(relaying_agent, new_chain(agency))
 
-    await A2AAdapter(funduq).send_task(callee, _message("hi"), actor_chain=chain)
+    await A2AAdapter(funduq).send_task(
+        callee, _message("hi"), actor_chain=chain,
+        presenter_key=relaying_agent.public_key().public_bytes_raw().hex(),
+    )
 
     from funduq_provider_sdk import verify_chain
 
@@ -122,11 +130,15 @@ async def test_identity_is_carried_through_an_in_process_hop(funduq, serve):
 async def test_a_tampered_chain_is_rejected_on_this_path_too(funduq, serve):
     callee = (await serve(EchoAgent(), "callee")).agents["callee"]
 
-    chain = new_chain(Ed25519PrivateKey.generate())
+    forger = Ed25519PrivateKey.generate()
+    chain = new_chain(forger)
     tampered = [chain[0][:-4] + "AAAA"]
 
     with pytest.raises(InvalidChain):
-        await A2AAdapter(funduq).send_task(callee, _message("hi"), actor_chain=tampered)
+        await A2AAdapter(funduq).send_task(
+            callee, _message("hi"), actor_chain=tampered,
+            presenter_key=forger.public_key().public_bytes_raw().hex(),
+        )
 
 
 async def test_lineage_links_the_callee_thread_back_to_the_caller(funduq, serve, register):

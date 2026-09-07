@@ -2,8 +2,6 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
-from ag_ui.core import Message
-from pydantic import TypeAdapter
 
 from funduq_provider_sdk.identity import WrongFunduq, funduq_connect_payload, verify_signature
 from funduq_provider_sdk.link import FunduqLink
@@ -11,9 +9,6 @@ from funduq_provider_sdk.link import FunduqLink
 if TYPE_CHECKING:
     from funduq_provider_sdk.provider import DeliveredRun
     from funduq_provider_sdk.runtime import ProviderRuntime
-
-_MESSAGES = TypeAdapter(list[Message])
-
 
 class InProcessLink(FunduqLink):
     """A `FunduqLink` connecting a `ProviderRuntime` directly to an in-process funduq instance, with no transport in between."""
@@ -81,9 +76,3 @@ class InProcessLink(FunduqLink):
     async def finish_run(self, run_id: str) -> None:
         self._funduq.finish_run(run_id, claimed_by=self.public_key)
 
-    async def thread_messages(
-        self, thread_id: str, *, limit: int | None = None
-    ) -> list[Message]:
-        raw = await self._funduq.get_thread_messages(thread_id)
-        messages = _MESSAGES.validate_python(raw)
-        return messages[-limit:] if limit is not None else messages

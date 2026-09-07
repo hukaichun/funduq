@@ -49,10 +49,6 @@ class InvalidCancel(ValueError):
     pass
 
 
-class InvalidView(ValueError):
-    pass
-
-
 def _verify_signed_act(
     proof: dict,
     run_id: str,
@@ -113,13 +109,6 @@ def verify_cancel(cancel: dict, run_id: str, allowed_keys: set[str]) -> str:
     """Verifies a cancel proof for a run and returns the signer."""
     return _verify_signed_act(
         cancel, run_id, cancel_payload, allowed_keys, InvalidCancel, "cancel",
-    )
-
-
-def verify_view(view: dict, run_id: str, allowed_keys: set[str]) -> str:
-    """Verifies a view proof for a run and returns the signer."""
-    return _verify_signed_act(
-        view, run_id, view_payload, allowed_keys, InvalidView, "view",
     )
 
 

@@ -79,7 +79,7 @@ async def test_a_chained_thread_binds_its_head_at_birth(funduq, serve, new_ident
     head = new_identity()
 
     task = await A2AAdapter(funduq).send_task(
-        agent, _message("hi"), actor_chain=[head.sign_chain_hop()]
+        agent, _message("hi"), actor_chain=[head.sign_chain_hop()], presenter_key=head.public_key
     )
 
     async with funduq.session() as session:
@@ -94,7 +94,7 @@ async def test_a_non_member_cannot_speak_on_a_bound_thread(funduq, serve, new_id
     head, stranger = new_identity(), new_identity()
 
     task = await A2AAdapter(funduq).send_task(
-        agent, _message("hi"), actor_chain=[head.sign_chain_hop()]
+        agent, _message("hi"), actor_chain=[head.sign_chain_hop()], presenter_key=head.public_key
     )
     thread_id = task.context_id
 
@@ -106,13 +106,13 @@ async def test_a_non_member_cannot_speak_on_a_bound_thread(funduq, serve, new_id
         await A2AAdapter(funduq).send_task(
             agent,
             _message("me neither", context_id=thread_id),
-            actor_chain=[stranger.sign_chain_hop()],
+            actor_chain=[stranger.sign_chain_hop()], presenter_key=stranger.public_key,
         )
 
     # Members interject freely: the head, and the serving provider's own key.
     again = await A2AAdapter(funduq).send_task(
         agent, _message("still me", context_id=thread_id),
-        actor_chain=[head.sign_chain_hop()],
+        actor_chain=[head.sign_chain_hop()], presenter_key=head.public_key,
     )
     assert again.status.state == COMPLETED
 
@@ -128,7 +128,7 @@ async def test_an_unbound_thread_stays_open_and_is_never_retroactively_locked(
     # A chained writer arriving later does not lock the thread against anyone.
     await A2AAdapter(funduq).send_task(
         agent, _message("chained visitor", context_id=thread_id),
-        actor_chain=[new_identity().sign_chain_hop()],
+        actor_chain=[(passerby := new_identity()).sign_chain_hop()], presenter_key=passerby.public_key,
     )
     third = await A2AAdapter(funduq).send_task(
         agent, _message("still anonymous", context_id=thread_id),
@@ -146,7 +146,7 @@ async def test_a_chained_ask_is_resolved_only_by_its_authority(funduq, serve, ne
     head, impostor = new_identity(), new_identity()
 
     first = await A2AAdapter(funduq).send_task(
-        agent, _message("go"), actor_chain=[head.sign_chain_hop()]
+        agent, _message("go"), actor_chain=[head.sign_chain_hop()], presenter_key=head.public_key
     )
     task_id = first.id
     assert first.status.state == INPUT_REQUIRED
@@ -156,7 +156,7 @@ async def test_a_chained_ask_is_resolved_only_by_its_authority(funduq, serve, ne
         await A2AAdapter(funduq).send_task(
             agent,
             _message("unproven answer", task_id=task_id),
-            actor_chain=[head.sign_chain_hop()],
+            actor_chain=[head.sign_chain_hop()], presenter_key=head.public_key,
         )
 
     # A proof signed by the wrong key is refused.
@@ -165,7 +165,7 @@ async def test_a_chained_ask_is_resolved_only_by_its_authority(funduq, serve, ne
         await A2AAdapter(funduq).send_task(
             agent,
             _message("forged answer", task_id=task_id),
-            actor_chain=[head.sign_chain_hop()],
+            actor_chain=[head.sign_chain_hop()], presenter_key=head.public_key,
             metadata={
                 "resolution": {
                     "publicKey": impostor.public_key,
@@ -179,7 +179,7 @@ async def test_a_chained_ask_is_resolved_only_by_its_authority(funduq, serve, ne
     answered = await A2AAdapter(funduq).send_task(
         agent,
         _message("the answer", task_id=task_id),
-        actor_chain=[head.sign_chain_hop()],
+        actor_chain=[head.sign_chain_hop()], presenter_key=head.public_key,
         metadata={
             "resolution": {
                 "publicKey": head.public_key,
@@ -198,7 +198,7 @@ async def test_the_provider_may_resolve_its_own_agents_ask(funduq, serve, new_id
     head = new_identity()
 
     first = await A2AAdapter(funduq).send_task(
-        agent, _message("go"), actor_chain=[head.sign_chain_hop()]
+        agent, _message("go"), actor_chain=[head.sign_chain_hop()], presenter_key=head.public_key
     )
     task_id = first.id
 
@@ -207,7 +207,7 @@ async def test_the_provider_may_resolve_its_own_agents_ask(funduq, serve, new_id
     answered = await A2AAdapter(funduq).send_task(
         agent,
         _message("the keeper answers", task_id=task_id),
-        actor_chain=[keeper.sign_chain_hop()],
+        actor_chain=[keeper.sign_chain_hop()], presenter_key=keeper.public_key,
         metadata={
             "resolution": {
                 "publicKey": keeper.public_key,
@@ -239,7 +239,8 @@ async def test_the_agui_door_guards_a_chained_resume_the_same_way(funduq, serve,
         )
 
     first = await adapter.run(
-        agent, _body("t-chained", "go", {"actorChain": [head.sign_chain_hop()]})
+        agent, _body("t-chained", "go", {"actorChain": [head.sign_chain_hop()]}),
+        presenter_key=head.public_key,
     )
     events = [e async for e in first.events]
     assert any(e.get("type") == "RUN_FINISHED" for e in events)
@@ -254,6 +255,7 @@ async def test_the_agui_door_guards_a_chained_resume_the_same_way(funduq, serve,
             agent,
             _body(first.thread_id, "unproven", {"actorChain": [head.sign_chain_hop()]},
                   resume=answer),
+            presenter_key=head.public_key,
         )
 
     signature = head.sign_resolution(run_id, ["int_1"])
@@ -271,6 +273,7 @@ async def test_the_agui_door_guards_a_chained_resume_the_same_way(funduq, serve,
             },
             resume=answer,
         ),
+        presenter_key=head.public_key,
     )
     final = [e async for e in resumed.events]
     assert any(e.get("type") == "RUN_FINISHED" for e in final)
@@ -289,7 +292,7 @@ async def _live_bound_run(funduq, serve, head):
     served = await serve(_NeverFinishes(), "bound")
     agent = served.agents["bound"]
     stream = await A2AAdapter(funduq).send_task_streaming(
-        agent, _message("go"), actor_chain=[head.sign_chain_hop()]
+        agent, _message("go"), actor_chain=[head.sign_chain_hop()], presenter_key=head.public_key
     )
     opening = await stream.__anext__()
     return agent, opening.id, served.identity
@@ -353,7 +356,7 @@ async def test_a_stranger_is_refused_before_being_told_a_run_is_uncancellable(
     agent = (await serve(AskingAgent(), "asker")).agents["asker"]
     a2a = A2AAdapter(funduq)
 
-    paused = await a2a.send_task(agent, _message("go"), actor_chain=[head.sign_chain_hop()])
+    paused = await a2a.send_task(agent, _message("go"), actor_chain=[head.sign_chain_hop()], presenter_key=head.public_key)
     assert paused.status.state == INPUT_REQUIRED
 
     with pytest.raises(InvalidCancel):

@@ -41,7 +41,6 @@ class QueuedLink(FunduqLink):
         self._limit = limit
         self.outbound: asyncio.Queue = asyncio.Queue()
         self.cancelled: list[str] = []
-        self.queried: list[tuple[str, int | None]] = []
         self.reported: list[tuple[str, object]] = []
         self.finished: list[str] = []
 
@@ -66,9 +65,6 @@ class QueuedLink(FunduqLink):
     async def finish_run(self, run_id: str) -> None:
         self.finished.append(run_id)
 
-    async def thread_messages(self, thread_id: str, *, limit: int | None = None):
-        self.queried.append((thread_id, limit))
-        return []
 
 
 async def test_the_port_hands_the_published_shape_through_untouched():
@@ -113,8 +109,6 @@ def test_a_transport_that_declares_nothing_is_not_constructible():
         async def finish_run(self, run_id: str) -> None:
             pass
 
-        async def thread_messages(self, thread_id: str, *, limit: int | None = None):
-            return []
 
     with pytest.raises(TypeError, match="max_concurrent_runs"):
         Forgetful()
@@ -127,7 +121,6 @@ class LoopbackLink(FunduqLink):
         runtime.link = self
         self.reported: list[tuple[str, object]] = []
         self.finished: list[str] = []
-        self.queried: list[tuple[str, int | None]] = []
 
     @property
     def public_key(self) -> str:
@@ -149,9 +142,6 @@ class LoopbackLink(FunduqLink):
     async def finish_run(self, run_id: str) -> None:
         self.finished.append(run_id)
 
-    async def thread_messages(self, thread_id: str, *, limit: int | None = None):
-        self.queried.append((thread_id, limit))
-        return []
 
 
 async def test_one_link_carries_a_run_down_and_its_results_back():

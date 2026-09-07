@@ -28,6 +28,52 @@ entries below say what to change and not only what moved.
 
 ---
 
+## Revision 21 — 2026-09-07
+
+**Reading the record is one surface, and its reader is a key** (#264).
+Several reads were one mechanism at different doors with the check applied
+at some and not others: `GetTask` demanded a view proof, the provider link's
+`thread_messages` and the facade checked nobody, so a provider holding any
+thread id read any thread, bound or not.
+
+Now core exposes the read once — `Funduq.as_reader(key)` gives a `Reader`
+with `thread_messages`, `run`, `events`, `lineage`, `task_messages`,
+`subscribe` — under one rule: a thread nobody bound is readable by whoever
+holds its id; a bound thread by its parties (the head, the provider serving
+its agent, every key on its runs' chains); to anyone else it does not exist.
+Every entrance translates into that surface. How the transport established
+the key is its business.
+
+- **`FunduqLink.thread_messages` is gone.** The provider link is the
+  provider's job — handshake, registration, offer, verdict, reports, finish.
+  Reading the record is every party's, so it does not ride the provider's
+  private channel. In process the provider calls `as_reader(its key)` on the
+  `Funduq` it shares; over the wire the serving layer exposes the read
+  surface as an endpoint authenticated with the link's key. Transports
+  implementing the link drop the method; `InProcessLink` already has.
+- **Reads take a key, acts take a signature.** `GetTask` and
+  `SubscribeToTask` take `reader` — the key the transport authenticated —
+  in place of a view proof; the A2A handler's `view_metadata_of` hook is
+  gone, `presenter_key_of` serves reads and writes alike. `verify_view` and
+  `authorize_view` leave core; `view_payload` stays in the contract as a
+  payload a transport may have a reader sign to establish its key for one
+  read. `cancel` and `resolution` keep their signed proofs: they are acts on
+  one run, bound to it against replay.
+- **A chain needs an authenticated presenter.** A door handed `actorChain`
+  with no presenter key refuses with `PresenterRequired` — a new error,
+  distinct from `InvalidChain`: nothing the caller sent is wrong, the
+  transport has not said who is at the door. A deployment that authenticates
+  callers changes nothing; one that does not has declared it does not
+  accept chains, and nothing half-works. Map it to "authentication
+  required", not "bad request".
+- **`Task.history` is the task's.** The lineage's own messages, not the
+  whole context's.
+- **`RunHandle.cancel()`** is `async` and goes through `cancel_run`.
+
+Migration: transports drop `thread_messages` from their link and hand a key
+to `presenter_key_of` for reads; callers that presented chains anonymously
+must be authenticated by their transport.
+
 ## Revision 20 — 2026-09-07
 
 **Metadata levels correspond.** Revision 19 translated A2A's `Message.metadata`

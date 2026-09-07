@@ -240,7 +240,10 @@ client author needs them.
   but `text/plain`) raises `ContentTypeNotSupportedError` rather than
   losing the part on the way to the agent; the push-notification
   operations raise `PushNotificationNotSupportedError`, the word §3.3.4
-  names for a card without that capability. Two stay funduq's on purpose, because A2A has no word for
+  names for a card without that capability. A chain presented with no
+  authenticated presenter raises funduq's own `PresenterRequired` —
+  nothing the caller sent is wrong, the transport has not said who is at
+  the door — which a gateway maps to "authentication required", not 400. Two stay funduq's on purpose, because A2A has no word for
   either: `AgentNotFound` (the agent is the endpoint, so an unknown one
   is a routing answer) and `ThreadQueueFull` (backpressure, which is the
   gateway's 429). An invalid actor chain escapes as a Python exception.

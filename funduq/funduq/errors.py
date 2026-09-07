@@ -81,3 +81,17 @@ class NoPendingAsk(FunduqError):
 
 class InvalidRunInput(FunduqError):
     pass
+
+
+class PresenterRequired(FunduqError):
+    """A chain arrived, but this door was not told which key presented it.
+
+    Nothing the caller sent is wrong — the chain may verify perfectly. The
+    chain's last hop says "I am presenting this", and that statement cannot
+    be checked without knowing who is at the door. The transport must
+    authenticate the caller and hand the key to core (`presenter_key_of` on
+    the A2A handler, `presenter_key=` on the AG-UI adapter and the facade);
+    until it does, this deployment does not accept chains. Distinct from
+    `InvalidChain` so a gateway can answer "authentication required" rather
+    than "bad request".
+    """

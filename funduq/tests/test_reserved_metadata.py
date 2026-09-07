@@ -42,12 +42,14 @@ async def test_funduq_authors_no_verification_summary(funduq, serve, new_identit
     the record verbatim."""
     served = await serve(EchoAgent(), "audited")
     agent = served.agents["audited"]
-    chain = [new_identity().sign_chain_hop()]
+    presenter = new_identity()
+    chain = [presenter.sign_chain_hop()]
 
     sent = await A2AAdapter(funduq).send_task(
         agent,
         _message("hi"),
         actor_chain=chain,
+        presenter_key=presenter.public_key,
         metadata={"verifiedActorChain": "not-funduqs-word", "keep": "this"},
     )
 

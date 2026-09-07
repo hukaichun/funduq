@@ -4,6 +4,7 @@ import pytest
 
 from funduq import repo
 from funduq.doors import verify_caller
+from funduq.errors import PresenterRequired
 from funduq.identity import InvalidChain, extend_chain, new_chain
 from funduq.models import AgentRef
 from funduq_provider_sdk import InProcessLink, ProviderRuntime
@@ -71,19 +72,31 @@ async def test_a_delegating_provider_still_passes(session, new_identity):
     assert head == caller.public_key
 
 
-async def test_omitting_the_key_changes_nothing(session, new_identity):
-    """The check is an extension for a deployment that has an authenticating
-    seat, not a new requirement. Withdrawing authority from every caller whose
-    embedder passes no key would be compelling participation — so a caller with
-    no seat in front of it keeps exactly what it had, and the deployment stays
-    exactly as exposed as it was."""
+async def test_omitting_the_key_refuses_the_chain(session, new_identity):
+    """A chain's last hop says "I present this"; with nobody at the door that
+    cannot be checked, and recording it would record an unverified fact. So a
+    door handed a chain with no presenter key refuses it — with a word that
+    is not `InvalidChain`, because nothing the caller sent is wrong: the
+    transport has not said who is at the door.
+
+    This reverses the earlier stance that omitting the key should change
+    nothing. That stance produced half-support: a deployment that never
+    handed a key down still bound threads it could then serve to nobody, the
+    caller who opened them included. A deployment that does not authenticate
+    callers has, in effect, declared it takes no chains, and the refusal says
+    so at the door instead of failing every later read.
+    """
     caller = new_identity()
     chain = [caller.sign_chain_hop()]
 
-    _metadata, head, relayed = await verify_caller(session, {"actorChain": chain})
+    with pytest.raises(PresenterRequired) as refused:
+        await verify_caller(session, {"actorChain": chain})
+    assert not isinstance(refused.value, InvalidChain)
+    assert "presenter_key" in str(refused.value), "the message points the deployment at the hook"
 
-    assert head == caller.public_key
-    assert relayed == chain
+    # Unchained requests are untouched: no chain, no presenter needed.
+    props, head, relayed = await verify_caller(session, {"keep": "this"})
+    assert (props, head, relayed) == ({"keep": "this"}, None, None)
 
 
 async def test_a_tampered_chain_is_refused_before_the_presenter_is_consulted(
