@@ -16,6 +16,7 @@ from a2a.types import a2a_pb2 as pb
 from a2a.utils.constants import PROTOCOL_VERSION_CURRENT, TransportProtocol
 from a2a.utils.errors import (
     InvalidParamsError,
+    PushNotificationNotSupportedError,
     TaskNotCancelableError,
     TaskNotFoundError,
     UnsupportedOperationError,
@@ -475,26 +476,26 @@ class A2ARequestHandler(RequestHandler):
     async def on_create_task_push_notification_config(
         self, params: pb.TaskPushNotificationConfig, context: ServerCallContext
     ) -> pb.TaskPushNotificationConfig:
-        raise UnsupportedOperationError(_PUSHES_NOTHING)
+        raise PushNotificationNotSupportedError(_PUSHES_NOTHING)
 
     async def on_get_task_push_notification_config(
         self, params: pb.GetTaskPushNotificationConfigRequest, context: ServerCallContext
     ) -> pb.TaskPushNotificationConfig:
-        raise UnsupportedOperationError(_PUSHES_NOTHING)
+        raise PushNotificationNotSupportedError(_PUSHES_NOTHING)
 
     async def on_list_task_push_notification_configs(
         self,
         params: pb.ListTaskPushNotificationConfigsRequest,
         context: ServerCallContext,
     ) -> pb.ListTaskPushNotificationConfigsResponse:
-        raise UnsupportedOperationError(_PUSHES_NOTHING)
+        raise PushNotificationNotSupportedError(_PUSHES_NOTHING)
 
     async def on_delete_task_push_notification_config(
         self,
         params: pb.DeleteTaskPushNotificationConfigRequest,
         context: ServerCallContext,
     ) -> None:
-        raise UnsupportedOperationError(_PUSHES_NOTHING)
+        raise PushNotificationNotSupportedError(_PUSHES_NOTHING)
 
     # Listing tasks and the extended card are the transport's to answer if it
     # wants them; core exposes the roster its own way.
@@ -510,7 +511,7 @@ class A2ARequestHandler(RequestHandler):
         raise UnsupportedOperationError("funduq has no extended agent card")
 
 
-_PUSHES_NOTHING = "funduq pushes nothing outward on a caller's behalf"
+_PUSHES_NOTHING = "funduq pushes nothing outward on a caller's behalf; the card declares no pushNotifications capability (A2A §3.3.4)"
 
 
 def _skills(raw_skills: list[dict[str, Any]]) -> list[pb.AgentSkill]:

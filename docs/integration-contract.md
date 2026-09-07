@@ -236,7 +236,11 @@ client author needs them.
   not-found), and an unknown `contextId`, one belonging to another agent,
   a `kyok` opt-in naming an unregistered offering, or a message that will
   not build a run input all raise `InvalidParamsError` carrying funduq's
-  own message. Two stay funduq's on purpose, because A2A has no word for
+  own message; a message carrying a part the card does not accept (anything
+  but `text/plain`) raises `ContentTypeNotSupportedError` rather than
+  losing the part on the way to the agent; the push-notification
+  operations raise `PushNotificationNotSupportedError`, the word §3.3.4
+  names for a card without that capability. Two stay funduq's on purpose, because A2A has no word for
   either: `AgentNotFound` (the agent is the endpoint, so an unknown one
   is a routing answer) and `ThreadQueueFull` (backpressure, which is the
   gateway's 429). An invalid actor chain escapes as a Python exception.

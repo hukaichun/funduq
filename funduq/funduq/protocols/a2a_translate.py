@@ -3,6 +3,7 @@ from __future__ import annotations
 from typing import Any
 
 from a2a.types import a2a_pb2 as pb
+from a2a.utils.errors import ContentTypeNotSupportedError
 from google.protobuf.json_format import MessageToDict
 from ag_ui.core import AssistantMessage, EventType, UserMessage
 
@@ -84,11 +85,17 @@ def _cancel_metadata(run_status: str, cancel_requested: bool = False) -> dict[st
 
 
 def a2a_message_to_agui_messages(a2a_message: dict[str, Any]) -> list[dict[str, Any]]:
-    """Converts one inbound A2A `Message` into a one-element list of AG-UI message dicts, reading its text parts under any A2A spec version's part shape (`text`/`kind: text`/ `type: text`), mapping an agent-authored message to an assistant role (otherwise user), and carrying the message's own `metadata` across as the AG-UI message's `metadata`."""
+    """Converts one inbound A2A `Message` into a one-element list of AG-UI message dicts, reading its text parts under any A2A spec version's part shape (`text`/`kind: text`/ `type: text`) and refusing any other kind with `ContentTypeNotSupportedError`, mapping an agent-authored message to an assistant role (otherwise user), and carrying the message's own `metadata` across as the AG-UI message's `metadata`."""
     raw_role = str(a2a_message.get("role", "")).upper()
-    text = "".join(
-        part["text"] for part in a2a_message.get("parts", []) if isinstance(part.get("text"), str)
-    )
+    parts = a2a_message.get("parts", [])
+    # The card accepts text/plain and nothing else (A2A §3.1.1): a part funduq cannot carry is refused, never dropped on the way to the agent.
+    unsupported = [part for part in parts if not isinstance(part.get("text"), str)]
+    if unsupported:
+        kinds = sorted({str(part.get("mediaType") or next((k for k in ("data", "url", "raw", "file") if k in part), part.get("kind") or part.get("type") or "unknown")) for part in unsupported})
+        raise ContentTypeNotSupportedError(
+            f"this agent accepts text/plain parts only; the message carries {', '.join(str(k) for k in kinds)} part(s)"
+        )
+    text = "".join(part["text"] for part in parts)
     message = (
         AssistantMessage(id=_PLACEHOLDER_MESSAGE_ID, content=text)
         if raw_role in ("ROLE_AGENT", "AGENT")

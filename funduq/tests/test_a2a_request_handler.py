@@ -14,7 +14,9 @@ import pytest
 from a2a.server.context import ServerCallContext
 from a2a.types import a2a_pb2 as pb
 from a2a.utils.errors import (
+    ContentTypeNotSupportedError,
     InvalidParamsError,
+    PushNotificationNotSupportedError,
     TaskNotCancelableError,
     TaskNotFoundError,
     UnsupportedOperationError,
@@ -105,15 +107,44 @@ async def test_subscribing_to_an_unknown_task_is_a2as_own_error(funduq, handler)
         ("on_get_task_push_notification_config", pb.GetTaskPushNotificationConfigRequest()),
         ("on_list_task_push_notification_configs", pb.ListTaskPushNotificationConfigsRequest()),
         ("on_delete_task_push_notification_config", pb.DeleteTaskPushNotificationConfigRequest()),
+    ],
+)
+async def test_push_notifications_are_refused_in_the_words_the_spec_names(handler, operation, request_):
+    """A2A §3.1.7–3.1.10, §3.3.4: with no `pushNotifications` capability on the card, these answer `PushNotificationNotSupportedError` — not the generic refusal."""
+    with pytest.raises(PushNotificationNotSupportedError):
+        await getattr(handler, operation)(request_, ServerCallContext())
+
+
+@pytest.mark.parametrize(
+    ("operation", "request_"),
+    [
         ("on_list_tasks", pb.ListTasksRequest()),
         ("on_get_extended_agent_card", pb.GetExtendedAgentCardRequest()),
     ],
 )
-async def test_what_is_not_offered_answers_unsupported_operation(
-    handler, operation, request_
-):
+async def test_what_is_not_offered_answers_unsupported_operation(handler, operation, request_):
     with pytest.raises(UnsupportedOperationError):
         await getattr(handler, operation)(request_, ServerCallContext())
+
+
+async def test_a_part_the_card_does_not_accept_is_refused_not_dropped(funduq, handler):
+    """The card says `text/plain`. A2A §3.1.1: a message carrying another media type MUST come back `ContentTypeNotSupportedError`. Dropping the part and running on the text would hand the agent less than the caller said."""
+    live_before = set(funduq.active_runs())
+    with pytest.raises(ContentTypeNotSupportedError):
+        await handler.on_message_send(
+            pb.SendMessageRequest(
+                message=pb.Message(
+                    message_id="m-in",
+                    role=pb.Role.ROLE_USER,
+                    parts=[
+                        pb.Part(text="pay this"),
+                        pb.Part(url="https://example.test/invoice.pdf", media_type="application/pdf"),
+                    ],
+                )
+            ),
+            ServerCallContext(),
+        )
+    assert set(funduq.active_runs()) == live_before, "nothing was opened for it"
 
 
 async def test_the_transports_authenticated_identity_is_handed_down(

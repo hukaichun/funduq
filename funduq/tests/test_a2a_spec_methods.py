@@ -79,7 +79,7 @@ OFFERED = {
 }
 
 NOT_OFFERED = {
-    # Push notifications: funduq pushes nothing outward on a caller's behalf.
+    # Push notifications: funduq pushes nothing outward on a caller's behalf, and says so in the spec's own words (`PushNotificationNotSupportedError`).
     "on_create_task_push_notification_config",
     "on_get_task_push_notification_config",
     "on_list_task_push_notification_configs",
