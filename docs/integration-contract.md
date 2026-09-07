@@ -251,6 +251,17 @@ client author needs them.
   it has to be: **the protocol version a caller speaks rides an
   `A2A-Version` header**, so the gateway is the only party holding the
   evidence for that decision.
+- **How a transport establishes `presenter_key` is its own business, and
+  the contract publishes no payload for it on purpose.** A session, mTLS,
+  or a signature over `view_payload` for one read all satisfy it, and so
+  does whatever a deployment already runs. What makes standardising it
+  unnecessary is that the presenter check is not a freshness check: it
+  refuses a chain whose last hop the door did not authenticate, so
+  replaying a captured chain means authenticating as the key that signed
+  that hop — which is being that party. A delegating agent therefore needs
+  nothing beyond the hop it signs, and may sign it hours into a run,
+  because no clock is involved. `operational-limits.md` §1 has the
+  reasoning and the probe.
 - **Non-lifecycle AG-UI events ride status updates** under a funduq
   metadata key. A standard client ignores them, which means tool-call
   events are not visible over A2A.
