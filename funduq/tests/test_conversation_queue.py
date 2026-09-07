@@ -422,14 +422,11 @@ async def test_a_declared_interjection_reaches_the_agent_while_the_turn_is_open(
     thread_id = provider.runs[0].thread_id
 
     second = asyncio.create_task(
-        _send(
-            funduq,
+        A2AAdapter(funduq).send_task(
             agent,
-            {
-                **_message("actually, in metric units"),
-                "contextId": thread_id,
-                "metadata": {ADDRESSED_RUN_METADATA_KEY: first_run_id},
-            },
+            {**_message("actually, in metric units"), "contextId": thread_id},
+            # A declaration to funduq about this run: request-level, like the rest of the bag.
+            metadata={ADDRESSED_RUN_METADATA_KEY: first_run_id},
         )
     )
 
@@ -600,13 +597,12 @@ async def test_an_interjection_naming_no_live_run_is_rejected_at_the_door(funduq
     assert first.status.state == COMPLETED
 
     def interjection(target: str, thread: str | None = None):
-        body = {
-            **_message("too late"),
-            "metadata": {ADDRESSED_RUN_METADATA_KEY: target},
-        }
+        body = dict(_message("too late"))
         if thread is not None:
             body["contextId"] = thread
-        return _send(funduq, agent, body)
+        return A2AAdapter(funduq).send_task(
+            agent, body, metadata={ADDRESSED_RUN_METADATA_KEY: target}
+        )
 
     with pytest.raises(InvalidParamsError):
         await interjection(first.id, first.context_id)  # finished

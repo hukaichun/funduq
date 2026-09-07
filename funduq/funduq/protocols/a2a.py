@@ -316,7 +316,7 @@ class A2AAdapter:
             if record is None:
                 raise AgentNotFound(f"agent '{agent}' is not registered")
 
-            # The caller's bag: the message's metadata (plus the request's), where its declarations to funduq ride.
+            # The caller's bag: the request's metadata — request-level, like forwardedProps on AG-UI — where its declarations to funduq ride. The message's own metadata is the message's, and goes with it.
             props = dict(params.get("metadata") or {})
             props, kyok = await resolve_kyok(session, props)
             parent_thread_id = await _lineage_parent(session, params)
@@ -359,7 +359,7 @@ class A2AAdapter:
                 # Signed before the run is created, so the record keeps exactly what the agent receives.
                 actor_chain=relayed_chain(funduq, actor_chain, agent),
                 kyok=kyok,
-                # The extension convention puts the key in the Message's own metadata map, which is in the bag.
+                # A declaration to funduq about this run, so it rides in the request's metadata like the rest of the bag.
                 addressed_run_id=props.get(ADDRESSED_RUN_METADATA_KEY),
                 forwarded_props=props,
             )
@@ -536,8 +536,8 @@ def _params(
     actor_chain: list[str] | None,
     metadata: dict[str, Any] | None,
 ) -> dict[str, Any]:
-    """Lifts the fields `_start_run` addresses by name out of the A2A message they live on. The caller's bag is the message's `metadata` with the request's underneath it; a chain handed in by name lands in the same bag."""
-    combined = {**(metadata or {}), **(message.get("metadata") or {})}
+    """Lifts the fields `_start_run` addresses by name out of the A2A message they live on. The caller's bag is the **request's** `metadata` — the level `forwardedProps` sits at on AG-UI; a chain handed in by name lands in it. The message's own `metadata` stays on the message and travels with it."""
+    combined = dict(metadata or {})
     if actor_chain:
         combined["actorChain"] = actor_chain
     return {

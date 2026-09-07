@@ -28,6 +28,30 @@ entries below say what to change and not only what moved.
 
 ---
 
+## Revision 20 — 2026-09-07
+
+**Metadata levels correspond.** Revision 19 translated A2A's `Message.metadata`
+into AG-UI's `forwardedProps` — a message-level bag into a request-level
+one. The levels line up differently: A2A's `SendMessageRequest.metadata` is
+the request's bag, as `forwardedProps` is on `RunAgentInput`; A2A's
+`Message.metadata` is the message's, as AG-UI's newer revisions put a
+`metadata` field on every message.
+
+- **The caller's bag — its declarations to funduq (`actorChain`, `kyok`,
+  `resolution`, the interjection target) — is request-level on both doors:**
+  `forwardedProps` on AG-UI, the request's `metadata` on A2A. funduq reads
+  nothing from a message's own metadata.
+- **A2A `Message.metadata` becomes the AG-UI message's `metadata`**, carried
+  to the agent on that message and stored with it in the thread. AG-UI
+  0.1.20's models keep it as an extra field; the field is in AG-UI's current
+  spec.
+- **The interjection extension's key** (`<uri>/addressedRunId`) moves from
+  the message's metadata to the request's, with the rest of the bag.
+
+Migration for an A2A caller: put chain, KYOK opt-in, resolution proof and
+interjection target in the request's `metadata`, not the message's. An
+AG-UI caller changes nothing.
+
 ## Revision 19 — 2026-09-07
 
 **A run is an AG-UI run** (#259). funduq had two models of a run stacked

@@ -84,7 +84,7 @@ def _cancel_metadata(run_status: str, cancel_requested: bool = False) -> dict[st
 
 
 def a2a_message_to_agui_messages(a2a_message: dict[str, Any]) -> list[dict[str, Any]]:
-    """Converts one inbound A2A `Message` into a one-element list of AG-UI message dicts, reading its text parts under any A2A spec version's part shape (`text`/`kind: text`/ `type: text`) and mapping an agent-authored message to an assistant role, otherwise user."""
+    """Converts one inbound A2A `Message` into a one-element list of AG-UI message dicts, reading its text parts under any A2A spec version's part shape (`text`/`kind: text`/ `type: text`), mapping an agent-authored message to an assistant role (otherwise user), and carrying the message's own `metadata` across as the AG-UI message's `metadata`."""
     raw_role = str(a2a_message.get("role", "")).upper()
     text = "".join(
         part["text"] for part in a2a_message.get("parts", []) if isinstance(part.get("text"), str)
@@ -94,7 +94,11 @@ def a2a_message_to_agui_messages(a2a_message: dict[str, Any]) -> list[dict[str, 
         if raw_role in ("ROLE_AGENT", "AGENT")
         else UserMessage(id=_PLACEHOLDER_MESSAGE_ID, content=text)
     )
-    return [message.model_dump(mode="json", by_alias=True, exclude_none=True)]
+    dumped = message.model_dump(mode="json", by_alias=True, exclude_none=True)
+    # Message-level stays message-level: A2A's `Message.metadata` becomes the AG-UI message's `metadata` (the field AG-UI's newer revisions define; the model keeps it as an extra today). funduq reads nothing from it.
+    if isinstance(a2a_message.get("metadata"), dict) and a2a_message["metadata"]:
+        dumped["metadata"] = a2a_message["metadata"]
+    return [dumped]
 
 
 def text_delta_of(event: dict[str, Any]) -> tuple[str, str] | None:
