@@ -16,8 +16,12 @@ import time
 import pytest
 from a2a.utils.errors import TaskNotFoundError
 
+from sqlalchemy import insert
+
+from funduq import repo
 from funduq.identity import InvalidCancel, cancel_payload
 from funduq.protocols.a2a import A2AAdapter
+from funduq.schema import runs
 
 from tests.conftest import EchoAgent
 
@@ -136,3 +140,34 @@ async def test_an_unbound_run_stays_as_public_as_its_id(funduq, serve):
 
     assert await adapter.get_task(served.agents["open"], task.id) is not None
     assert await funduq.as_reader(None).thread_messages(task.context_id)
+
+
+async def test_a_chainless_run_on_a_bound_thread_does_not_break_every_read(funduq, bound):
+    """`readers_of` gathers the chains on a thread to build its circle. It
+    used to filter with `actor_chain.is_not(None)`, which does not mean what
+    it reads as: the column is JSON, so a Python `None` is stored as JSON
+    `null` rather than SQL NULL and the filter matches it — as it matches
+    `[]`, which no such filter catches either. `verify_chain` then raised
+    `InvalidChain("empty actor chain")` and *every* read of the thread
+    raised instead of answering, for the parties in the circle too.
+
+    The doors refuse a chainless write to a bound thread, so this row is one
+    door away rather than impossible; the record has to be total on its own.
+    """
+    served, head, _, task = bound
+    async with funduq.session() as session:
+        stored = await repo.get_run(session, task.id)
+        for run_id, empty in ((f"{task.id}_null", None), (f"{task.id}_empty", [])):
+            await session.execute(
+                insert(runs).values(
+                    run_id=run_id, thread_id=stored.thread_id,
+                    provider_key=served.identity.public_key, agent_name="trusted",
+                    status="completed", actor_chain=empty,
+                )
+            )
+        await session.commit()
+
+    got = await A2AAdapter(funduq).get_task(
+        served.agents["trusted"], task.id, reader=head.public_key
+    )
+    assert got is not None, "the head is in the circle and a chainless sibling run must not hide it"
