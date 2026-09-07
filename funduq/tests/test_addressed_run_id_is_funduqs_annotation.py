@@ -83,7 +83,7 @@ async def test_a_recovered_run_is_not_made_an_interjection_by_its_callers_props(
         {"messages": [], "forwardedProps": {"funduq": {"addressedRunId": busy.run_id}, "theirs": True}},
         thread_id=busy.thread_id,
     )
-    assert "funduq" not in (await funduq.get_run(waiting.run_id)).input_json["forwardedProps"]
+    assert "funduq" not in (await funduq.get_run(waiting.run_id)).forwarded_props
 
     reborn = Funduq(settings)
     runtime = None

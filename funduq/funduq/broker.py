@@ -208,11 +208,9 @@ class Run:
     agent: AgentRef
     thread_id: str
     input_json: dict[str, Any]
-    protocol: str
     queued_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
     seq: int = 0
     round_starting_seq: int = 0
-    pause_payload: dict[str, Any] | None = None
     # The run this one asked to join, verbatim from the caller's declaration.
     addressed_run_id: str | None = None
     offered_to: str | None = None
@@ -241,7 +239,6 @@ class RunSnapshot:
     run_id: str
     agent: AgentRef
     thread_id: str
-    protocol: str
     offered_to: str | None
     claimed_by: str | None
     cancel_requested: bool
@@ -261,7 +258,6 @@ def _snapshot(run: Run) -> RunSnapshot:
         run_id=run.run_id,
         agent=run.agent,
         thread_id=run.thread_id,
-        protocol=run.protocol,
         offered_to=run.offered_to,
         claimed_by=run.claimed_by,
         cancel_requested=run.cancel_requested,
@@ -386,7 +382,6 @@ class RunBroker:
         agent: AgentRef,
         thread_id: str,
         input_json: dict[str, Any],
-        protocol: str,
         handlers: HandlerMap,
         seq: int = 0,
         addressed_run_id: str | None = None,
@@ -402,7 +397,6 @@ class RunBroker:
             agent=agent,
             thread_id=thread_id,
             input_json=input_json,
-            protocol=protocol,
             seq=seq,
             round_starting_seq=seq,
             addressed_run_id=addressed_run_id,

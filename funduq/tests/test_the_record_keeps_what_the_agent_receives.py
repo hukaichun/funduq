@@ -11,6 +11,7 @@ from a2a.types import a2a_pb2 as pb
 from ag_ui.core import RunAgentInput, ToolMessage, UserMessage
 
 from funduq import repo
+from funduq.pause import open_asks
 from funduq.protocols.a2a import A2ARequestHandler
 from funduq.protocols.agui import AGUIAdapter, EventStream
 
@@ -51,8 +52,8 @@ def _utterance(thread_id: str) -> RunAgentInput:
 
 
 async def _stored(funduq, run_id: str) -> dict:
-    async with funduq.session() as session:
-        return (await repo.get_run(session, run_id)).input_json
+    """The row's projection — the `RunAgentInput` the run is."""
+    return await funduq.run_input(run_id)
 
 
 async def test_the_agui_door_stores_what_it_delivers(funduq, serve):
@@ -84,14 +85,15 @@ async def test_the_a2a_door_stores_what_it_delivers(funduq, serve):
     assert RunAgentInput.model_validate(provider.rounds[0]).thread_id == task.context_id
 
 
-async def test_a_reopened_ask_stores_what_its_second_round_delivers(funduq, serve):
+async def test_the_answer_to_an_ask_is_a_run_whose_row_is_what_it_delivered(funduq, serve):
     provider = AsksOnce()
     served = await serve(provider, "c")
     agent = served.agents["c"]
 
     first = await AGUIAdapter(funduq).run(agent, _utterance("t-ask"))
     [_ async for _ in first.events]
-    assert (await funduq.get_run(first.run_id)).status == "input-required"
+    assert (await funduq.get_run(first.run_id)).status == "completed"
+    assert open_asks(await funduq.get_run_events(first.run_id)) == {"call-1"}
     assert provider.rounds == [await _stored(funduq, first.run_id)]
 
     second = await AGUIAdapter(funduq).run(
@@ -102,11 +104,10 @@ async def test_a_reopened_ask_stores_what_its_second_round_delivers(funduq, serv
             tools=[], context=[], forwarded_props=None,
         ),
     )
-    assert isinstance(second, EventStream) and second.run_id == first.run_id
+    assert isinstance(second, EventStream) and second.run_id != first.run_id, "every input is a run"
     [_ async for _ in second.events]
 
+    assert (await funduq.get_run(second.run_id)).parent_run_id == first.run_id, "the answer names the run that asked"
     assert len(provider.rounds) == 2
-    assert provider.rounds[1] == await _stored(funduq, first.run_id), (
-        "the row holds the input of the round the run continued with, not the one it opened with"
-    )
-    assert provider.rounds[1] != provider.rounds[0]
+    assert provider.rounds[1] == await _stored(funduq, second.run_id), "its own row, its own input"
+    assert provider.rounds[0] == await _stored(funduq, first.run_id), "and the asking run's row is untouched"

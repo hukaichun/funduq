@@ -22,6 +22,7 @@ from tests.conftest import publish_agents, publish_offline
 from a2a.types import a2a_pb2 as pb
 
 from funduq import repo
+from funduq.pause import open_asks
 from funduq.protocols.a2a import A2AAdapter
 from funduq_contract import Registration
 
@@ -164,10 +165,11 @@ async def test_a_reply_addressed_to_the_paused_task_resumes_it(funduq, serve):
         {**_message("the answer"), "taskId": task_id},
     )
 
-    assert second.id == task_id, "a reply resumes the task, not a new one"
+    assert second.id == task_id, "a reply continues the task, not a new one"
     assert second.status.state == COMPLETED
     assert len(provider.rounds) == 2
-    assert provider.rounds[1].run_id == provider.rounds[0].run_id
+    assert provider.rounds[1].run_id != provider.rounds[0].run_id, "every input is a run"
+    assert provider.rounds[1].parent_run_id == provider.rounds[0].run_id, "the answer names the run that asked"
 
 
 async def test_an_unaddressed_message_does_not_resume_the_paused_task(funduq, serve):
@@ -195,7 +197,8 @@ async def test_an_unaddressed_message_does_not_resume_the_paused_task(funduq, se
 
     async with funduq.session() as session:
         paused = await repo.get_run(session, task_id)
-    assert paused.status == "input-required", "only an addressed reply may resume the question"
+        still_asking = open_asks(await repo.get_run_events(session, task_id))
+    assert paused.status == "completed" and still_asking, "only an addressed reply answers the question"
 
     reply = await _send(
         funduq, agent, {**_message("the answer"), "taskId": task_id}
@@ -203,19 +206,6 @@ async def test_an_unaddressed_message_does_not_resume_the_paused_task(funduq, se
     assert reply.id == task_id
     assert reply.status.state == COMPLETED
     assert len(provider.rounds) == 3
-
-
-async def test_claiming_an_ask_a_run_is_not_waiting_on_changes_nothing(session, new_identity):
-    identity = new_identity()
-    registered = await repo.register_agents(session, identity.public_key, [Registration(name="r")])
-    agent = registered["r"]
-    thread_id = await repo.create_thread(session, agent)
-    created = await repo.create_run(session, thread_id, agent, "ag-ui", {})
-    await session.commit()
-
-    assert await repo.claim_ask(session, created["run_id"]) is False
-    stored = await repo.get_run(session, created["run_id"])
-    assert stored.status == "queued"
 
 
 async def test_two_agui_runs_on_one_thread_take_turns(funduq, serve):
@@ -446,7 +436,10 @@ async def test_a_declared_interjection_reaches_the_agent_while_the_turn_is_open(
     # The declared interjection reaches the agent while its target is open,
     # wearing the caller's intent.
     await _until(lambda: len(provider.runs) == 2)
-    assert provider.runs[1].forwarded_props == {"funduq": {"addressedRunId": first_run_id}}
+    assert provider.runs[1].forwarded_props["funduq"] == {"addressedRunId": first_run_id}
+    assert provider.runs[1].forwarded_props[ADDRESSED_RUN_METADATA_KEY] == first_run_id, (
+        "the caller's own declaration is in the bag too, relayed like the rest of it"
+    )
 
     provider.release.set()
     first_result, second_result = await asyncio.gather(first, second)
@@ -455,11 +448,14 @@ async def test_a_declared_interjection_reaches_the_agent_while_the_turn_is_open(
     assert second_result.id != first_run_id, "an interjection is still its own run"
 
 
-async def test_a_task_id_naming_a_running_task_declares_nothing(funduq, serve):
-    """taskId's only defined meaning at this door is the reply lane. Naming a
-    running task starts an ordinary next run on its thread — no interjection
-    is inferred, because intent is the caller's to declare, not funduq's to
-    guess from the target's state."""
+async def test_a_task_id_naming_a_running_task_is_refused(funduq, serve):
+    """A2A defines one follow-up for `taskId`: the answer to a task waiting for
+    input (§3.4.3). Naming a task that is still working declares nothing
+    funduq knows how to honour — not an interjection, which is the caller's
+    to declare under its own extension — so it is refused rather than guessed
+    at. The running task is untouched."""
+    from a2a.utils.errors import UnsupportedOperationError
+
     provider = GateAgent()
     served = await serve(provider, "literal")
     agent = served.agents["literal"]
@@ -470,28 +466,12 @@ async def test_a_task_id_naming_a_running_task_declares_nothing(funduq, serve):
     await _until(lambda: len(provider.runs) == 1)
     first_run_id = provider.runs[0].run_id
 
-    second = asyncio.create_task(
-        _send(
-            funduq,
-            agent,
-            {**_message("and another thing"), "taskId": first_run_id},
-        )
-    )
-    await asyncio.sleep(0.1)
-    assert len(provider.runs) == 1, (
-        "no declaration, no interjection — an ordinary next run waits its turn"
-    )
+    with pytest.raises(UnsupportedOperationError):
+        await _send(funduq, agent, {**_message("and another thing"), "taskId": first_run_id})
+    assert len(provider.runs) == 1, "nothing reached the agent"
 
     provider.release.set()
-    results = await asyncio.gather(first, second)
-    assert len(provider.runs) == 2
-    assert not (provider.runs[1].forwarded_props or {}), (
-        "no declaration, no interjection — the run arrives unmarked"
-    )
-    assert provider.runs[1].thread_id == provider.runs[0].thread_id
-    assert {r.status.state for r in results} == {COMPLETED}
-
-
+    assert (await first).status.state == COMPLETED
 async def test_addressing_the_paused_task_needs_no_answer_funduq_relays_anything(funduq, serve):
     provider = AskingAgent()
     served = await serve(provider, "overruled")
@@ -516,17 +496,15 @@ async def test_addressing_the_paused_task_needs_no_answer_funduq_relays_anything
     )
 
 
-async def test_the_second_answer_to_one_ask_degrades_to_an_utterance(funduq, serve):
-    """Two callers answer the same paused task; the reopen is status-guarded, so exactly one
-    wins. The loser is not refused and not dropped — over A2A a result *is* a plain message
-    plus addressing, so one that finds no ask left to land on honestly is an utterance, and it
-    becomes its own queued run on the thread.
+async def test_the_second_answer_to_one_ask_is_refused(funduq, serve):
+    """Two callers answer the same waiting task. The first answer is a run
+    that closes the ask; by the time the second arrives the task has ended,
+    and A2A says an ended task accepts no further messages (§3.1.1). The
+    loser is refused in A2A's own words — not silently repackaged as a fresh
+    run carrying an answer nobody asked for — and continues the conversation,
+    if it wants to, with `contextId` alone."""
+    from a2a.utils.errors import UnsupportedOperationError
 
-    This is the branch both doors now share (`doors.open_run`) and the one
-    place where their grammars deliberately differ: the AG-UI door refuses
-    the same loser with a thread snapshot, because there a `resume` payload
-    *declares* itself a result and a result must not enter dressed as
-    anything else."""
     provider = AskingAgent()
     served = await serve(provider, "contested")
     agent = served.agents["contested"]
@@ -539,14 +517,16 @@ async def test_the_second_answer_to_one_ask_degrades_to_an_utterance(funduq, ser
     winner = await _send(
         funduq, agent, {**_message("mine is the answer"), "taskId": task_id},
     )
-    loser = await _send(
-        funduq, agent, {**_message("no, mine is"), "taskId": task_id},
-    )
-
     assert winner.id == task_id, "the first answer lands on the ask"
-    assert loser.id != task_id, "the second becomes its own run, not a second resume"
-    assert loser.context_id == thread_id, "and it stays on the same thread"
-    assert [r.run_id for r in provider.rounds] == [task_id, task_id, loser.id]
+    assert winner.status.state == COMPLETED
+
+    with pytest.raises(UnsupportedOperationError):
+        await _send(funduq, agent, {**_message("no, mine is"), "taskId": task_id})
+
+    later = await _send(funduq, agent, {**_message("a new thing"), "contextId": thread_id})
+    assert later.id != task_id and later.context_id == thread_id
+    assert [r.run_id for r in provider.rounds][0] == task_id
+    assert len(provider.rounds) == 3
 
 
 async def test_the_second_answer_over_ag_ui_is_refused_with_the_thread_state(funduq, serve):
@@ -598,7 +578,10 @@ async def test_the_second_answer_over_ag_ui_is_refused_with_the_thread_state(fun
 
 async def _paused(funduq, thread_id: str) -> bool:
     async with funduq.session() as session:
-        return await repo.get_paused_run_for_thread(session, thread_id) is not None
+        latest = await repo.latest_run_for_thread(session, thread_id)
+        if latest is None or latest.status != "completed":
+            return False
+        return bool(open_asks(await repo.get_run_events(session, latest.run_id)))
 
 
 async def test_an_interjection_naming_no_live_run_is_rejected_at_the_door(funduq, serve):

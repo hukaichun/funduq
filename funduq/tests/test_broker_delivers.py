@@ -107,7 +107,7 @@ def _enqueue(broker: RunBroker, run_id: str, agent: AgentRef = AGENT, thread_id:
     # Each run gets its own thread unless a test names one: a thread is the
     # unit funduq hands over serially, and most of these tests are about
     # delivery and capacity rather than about a conversation's order.
-    return broker.enqueue_run(run_id, agent, thread_id or f"thread_{run_id}", _valid_input(run_id, thread_id or f"thread_{run_id}"), "ag-ui", {}
+    return broker.enqueue_run(run_id, agent, thread_id or f"thread_{run_id}", _valid_input(run_id, thread_id or f"thread_{run_id}"), {}
     )
 
 
@@ -228,7 +228,7 @@ async def test_runs_of_a_withdrawn_provider_expire_on_the_ordinary_road():
         async def _record_fail(run, cmd) -> None:
             failed.append((run.run_id, cmd.reason))
 
-        b.enqueue_run("run_1", AGENT, "t1", _valid_input("run_1", "t1"), "ag-ui", {Fail: _record_fail})
+        b.enqueue_run("run_1", AGENT, "t1", _valid_input("run_1", "t1"), {Fail: _record_fail})
         await _until(lambda: provider.offered == ["run_1"])
         await _until(lambda: failed == [("run_1", "no_provider_took_it")], timeout=2.0)
     finally:
@@ -357,7 +357,7 @@ async def test_missing_the_window_is_breakage_answered_by_a_fresh_offer(broker):
     b = _own_broker(deliver_timeout_seconds=0.05, unserved_timeout_seconds=0.1)
     try:
         b.register_provider({AGENT: provider})
-        b.enqueue_run("run_1", AGENT, "thread_run_1", _valid_input("run_1", "thread_run_1"), "ag-ui", {})
+        b.enqueue_run("run_1", AGENT, "thread_run_1", _valid_input("run_1", "thread_run_1"), {})
         await _until(lambda: b.quality()["pk_provider"].unanswered >= 1, timeout=2.0)
         assert b.get("run_1").claimed_by is None, "no answer, no claim"
 
@@ -685,7 +685,7 @@ async def test_a_cancel_inside_the_dispatch_window_waits_for_the_answer(patient_
     }
     provider = Recording(hold=held)
     patient_broker.register_provider({AGENT: provider})
-    patient_broker.enqueue_run("run_1", AGENT, "thread_1", _valid_input("run_1", "thread_1"), "ag-ui", handlers)
+    patient_broker.enqueue_run("run_1", AGENT, "thread_1", _valid_input("run_1", "thread_1"), handlers)
     await _until(lambda: provider.offered == ["run_1"])
 
     assert patient_broker.request_cancel("run_1") is True
@@ -704,7 +704,7 @@ async def test_a_cancel_inside_the_window_settles_the_run_when_nobody_takes_it(p
     handlers = {RequestCancel: await _recorder(seen, "cancel")}
     provider = Recording(default=False, hold=held)
     patient_broker.register_provider({AGENT: provider})
-    patient_broker.enqueue_run("run_1", AGENT, "thread_1", _valid_input("run_1", "thread_1"), "ag-ui", handlers)
+    patient_broker.enqueue_run("run_1", AGENT, "thread_1", _valid_input("run_1", "thread_1"), handlers)
     await _until(lambda: provider.offered == ["run_1"])
 
     patient_broker.request_cancel("run_1")
@@ -734,7 +734,7 @@ async def test_a_provider_that_stopped_serving_while_answering_does_not_keep_the
     }
     provider = Recording(hold=held)
     patient_broker.register_provider({AGENT: provider})
-    patient_broker.enqueue_run("run_1", AGENT, "thread_1", _valid_input("run_1", "thread_1"), "ag-ui", handlers)
+    patient_broker.enqueue_run("run_1", AGENT, "thread_1", _valid_input("run_1", "thread_1"), handlers)
     await _until(lambda: provider.offered == ["run_1"])
 
     patient_broker.unregister_provider([AGENT])
@@ -828,7 +828,7 @@ async def test_an_interjection_is_offered_while_the_run_it_names_is_running(brok
     await _until(lambda: broker.get("run_1").is_claimed)
 
     run_2 = broker.enqueue_run(
-        "run_2", AGENT, "one_chat", _valid_input("run_2", "one_chat"), "ag-ui", {},
+        "run_2", AGENT, "one_chat", _valid_input("run_2", "one_chat"), {},
         addressed_run_id="run_1",
     )
     assert run_2 is not None
@@ -851,7 +851,7 @@ async def test_an_interjection_whose_target_settled_degrades_to_the_next_turn(pa
 
     # Declared while run_1 is merely offered — not yet the claimed head — so it waits.
     patient_broker.enqueue_run(
-        "run_2", AGENT, "one_chat", _valid_input("run_2", "one_chat"), "ag-ui", {},
+        "run_2", AGENT, "one_chat", _valid_input("run_2", "one_chat"), {},
         addressed_run_id="run_1",
     )
     await asyncio.sleep(0.05)

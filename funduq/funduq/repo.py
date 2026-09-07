@@ -12,11 +12,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from funduq.identity import provider_fingerprint
 from funduq.props import INTERJECTION_EXTENSION_URI
+from funduq.agui import build_run_agent_input
 from funduq.ids import new_id
 from funduq_contract import Registration
 
 from funduq.models import AgentRecord, AgentRef, AgentSummary, LlmRef, LlmSummary, RunRecord
-from funduq.props import OBSERVED_METADATA_KEY
 from funduq.schema import (
     agents,
     llm_providers,
@@ -32,7 +32,7 @@ logger = logging.getLogger("funduq.repo")
 
 # A run nobody has accepted yet: waiting in the queue, or handed to a provider that has not answered.
 PENDING_RUN_STATUSES = ["queued", "offering"]
-ACTIVE_RUN_STATUSES = [*PENDING_RUN_STATUSES, "running", "cancelling", "input-required"]
+ACTIVE_RUN_STATUSES = [*PENDING_RUN_STATUSES, "running", "cancelling"]
 
 
 def _utcnow() -> datetime:
@@ -505,9 +505,14 @@ def stamp_messages(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
 
 
 async def append_thread_messages(
-    session: AsyncSession, thread_id: str, run_id: str, messages: list[dict[str, Any]]
+    session: AsyncSession,
+    thread_id: str,
+    run_id: str,
+    messages: list[dict[str, Any]],
+    *,
+    origin: str,
 ) -> None:
-    """Writes `messages` — already stamped — to the thread under `run_id`. Not committed."""
+    """Writes `messages` — already stamped — to the thread under `run_id`, saying who said them: `"caller"` (carried in by the run; part of its `RunAgentInput`) or `"agent"` (produced by the run). Not committed."""
     for message in messages:
         await session.execute(
             insert(thread_messages).values(
@@ -516,6 +521,7 @@ async def append_thread_messages(
                 message_id=message["id"],
                 message_json=message,
                 metadata=message.get("metadata", {}),
+                origin=origin,
             )
         )
 
@@ -535,15 +541,12 @@ async def create_run(
     session: AsyncSession,
     thread_id: str,
     agent: AgentRef,
-    protocol: str,
-    input_json: dict[str, Any],
-    metadata: dict[str, Any] | None = None,
-    head_key: str | None = None,
-    actor_chain: list[str] | None = None,
+    run_input: dict[str, Any],
     *,
+    actor_chain: list[str] | None = None,
     run_id: str | None = None,
 ) -> dict[str, str]:
-    """Writes a new queued run; `input_json` is the `RunAgentInput` its provider will receive. A door mints `run_id` first so the input can name it; None mints one here. Not committed."""
+    """Writes a new queued run: the `RunAgentInput` its provider will receive, one column per field (its messages are written to `thread_messages` by the caller), and the state funduq starts it in. A door mints `run_id` first so the input can name it; None mints one here. Not committed."""
     run_id = run_id or new_id("run")
     await session.execute(
         insert(runs).values(
@@ -551,86 +554,57 @@ async def create_run(
             thread_id=thread_id,
             provider_key=agent.provider_key,
             agent_name=agent.name,
-            protocol=protocol,
             status="queued",
-            head_key=head_key,
             actor_chain=actor_chain,
-            input_json=input_json,
-            metadata=metadata or {},
             last_activity_at=_utcnow(),
+            parent_run_id=run_input.get("parentRunId"),
+            state=run_input.get("state"),
+            tools=run_input.get("tools") or [],
+            context=run_input.get("context") or [],
+            forwarded_props=run_input.get("forwardedProps"),
+            resume=run_input.get("resume"),
         )
     )
     return {"run_id": run_id}
 
 
-async def _merge_run_metadata(
-    session: AsyncSession,
-    run_id: str,
-    metadata: dict[str, Any],
-    appending: dict[str, str | None] | None = None,
-) -> dict[str, Any]:
-    """The run's stored metadata with `metadata` written over it, and anything in `appending` added to a list under funduq's own reserved key."""
-    existing = (
+async def messages_of_run(session: AsyncSession, run_id: str) -> list[dict[str, Any]]:
+    """The messages this run carried in — the caller's, in order; what the agent said in reply is on the thread under the same run but is not the run's input."""
+    rows = (
         await session.execute(
-            select(runs.c.metadata).where(runs.c.run_id == run_id)
+            select(thread_messages.c.message_json)
+            .where(thread_messages.c.run_id == run_id, thread_messages.c.origin == "caller")
+            .order_by(thread_messages.c.id)
         )
-    ).scalars().first()
-    merged = {**(existing or {}), **metadata}
-    # funduq's own key merges field by field: a failure reason written later must not erase who answered earlier.
-    ours = {**((existing or {}).get(OBSERVED_METADATA_KEY) or {}), **(metadata.get(OBSERVED_METADATA_KEY) or {})}
-    for key, value in (appending or {}).items():
-        if value is not None:
-            ours[key] = [*(ours.get(key) or []), value]
-    if ours:
-        merged[OBSERVED_METADATA_KEY] = ours
-    return merged
+    ).all()
+    return [row.message_json for row in rows]
+
+
+async def run_input_of(session: AsyncSession, run: RunRecord) -> dict[str, Any]:
+    """The `RunAgentInput` this row is — the projection its provider receives, byte for byte what was stored."""
+    return build_run_agent_input(
+        run.thread_id,
+        run.run_id,
+        await messages_of_run(session, run.run_id),
+        state=run.state,
+        tools=run.tools,
+        context=run.context,
+        forwarded_props=run.forwarded_props,
+        resume=run.resume,
+        parent_run_id=run.parent_run_id,
+    )
 
 
 async def record_cancel_request(
     session: AsyncSession, run_id: str, *, requested_by: str | None
 ) -> None:
-    """Notes which authority asked this run to stop."""
+    """Notes that someone asked this run to stop, and who. The one state a run keeps beyond its status."""
     if requested_by is None:
         return
     await session.execute(
-        update(runs)
-        .where(runs.c.run_id == run_id)
-        .values(
-            metadata=await _merge_run_metadata(
-                session, run_id, {}, appending={"cancelRequestedBy": requested_by}
-            )
-        )
+        update(runs).where(runs.c.run_id == run_id).values(cancel_requested_by=requested_by)
     )
     await session.commit()
-
-
-async def claim_ask(session: AsyncSession, run_id: str) -> bool:
-    """Takes an `input-required` run back to "queued" — the compare-and-set that decides which answer lands on the ask. Not committed: the claim stands only once `reopen_run` has stored what the run continues with."""
-    result = await session.execute(
-        update(runs)
-        .where(runs.c.run_id == run_id, runs.c.status == "input-required")
-        .values(status="queued", last_activity_at=_utcnow())
-    )
-    return result.rowcount > 0
-
-
-async def reopen_run(
-    session: AsyncSession,
-    run_id: str,
-    input_json: dict[str, Any],
-    metadata: dict[str, Any] | None = None,
-    answered_by: str | None = None,
-) -> None:
-    """Stores the `RunAgentInput` a claimed ask continues with, and who answered it. Not committed."""
-    values: dict[str, Any] = {
-        "input_json": input_json,
-        "last_activity_at": _utcnow(),
-    }
-    if metadata or answered_by is not None:
-        values["metadata"] = await _merge_run_metadata(
-            session, run_id, metadata or {}, appending={"answeredBy": answered_by}
-        )
-    await session.execute(update(runs).where(runs.c.run_id == run_id).values(**values))
 
 
 # The run-status state machine: which statuses each `mark_run_status` write may legally come from.
@@ -638,11 +612,10 @@ LEGAL_STATUS_TRANSITIONS: dict[str, tuple[str, ...]] = {
     "offering": ("queued",),
     # "queued" as well as "offering": an offer that was declined, went unanswered, or failed puts the run back in the queue (`Requeue`).
     "running": ("queued", "offering"),
-    "input-required": ("running", "cancelling"),
     "cancelling": ("running",),
     "completed": ("running", "cancelling"),
     "cancelled": ("queued", "offering", "running", "cancelling"),
-    "failed": ("queued", "offering", "running", "cancelling", "input-required"),
+    "failed": ("queued", "offering", "running", "cancelling"),
 }
 
 
@@ -657,15 +630,13 @@ async def return_run_to_queue(session: AsyncSession, run_id: str) -> bool:
     return result.rowcount > 0
 
 
-async def mark_run_status(
-    session: AsyncSession, run_id: str, status: str, metadata: dict[str, Any] | None = None
-) -> bool:
-    """Moves a run to `status` if its current status legally precedes it (`LEGAL_STATUS_TRANSITIONS`), merging in `metadata` if given, and returns whether the transition applied."""
+async def mark_run_status(session: AsyncSession, run_id: str, status: str) -> bool:
+    """Moves a run to `status` if its current status legally precedes it (`LEGAL_STATUS_TRANSITIONS`), and returns whether the transition applied."""
     legal_from = LEGAL_STATUS_TRANSITIONS.get(status)
     if legal_from is None:
         raise ValueError(
             f"run {run_id}: '{status}' is not a status mark_run_status may write — "
-            "runs are created 'queued' and reopened via reopen_run"
+            "runs are created 'queued' and only move along the machine above"
         )
     timestamp_col = {
         "running": "started_at",
@@ -677,8 +648,6 @@ async def mark_run_status(
     values: dict[str, Any] = {"status": status, "last_activity_at": now}
     if timestamp_col:
         values[timestamp_col] = now
-    if metadata:
-        values["metadata"] = await _merge_run_metadata(session, run_id, metadata)
     result = await session.execute(
         update(runs)
         .where(runs.c.run_id == str(run_id), runs.c.status.in_(legal_from))
@@ -743,20 +712,64 @@ async def count_queued_runs_for_thread(session: AsyncSession, thread_id: str) ->
     ).scalar_one()
 
 
-async def get_paused_run_for_thread(session: AsyncSession, thread_id: str) -> dict[str, Any] | None:
-    """The thread's `input-required` run, if it has one."""
+async def latest_run_for_thread(session: AsyncSession, thread_id: str) -> RunRecord | None:
+    """The thread's most recent run. Whether the thread is waiting on an answer is a question about this run's events (`pause.open_asks`), not a status."""
     row = (
         await session.execute(
             select(runs)
-            .where(
-                runs.c.thread_id == thread_id,
-                runs.c.status == "input-required",
-            )
-            .order_by(runs.c.created_at.desc())
+            .where(runs.c.thread_id == thread_id)
+            .order_by(runs.c.created_at.desc(), runs.c.run_id.desc())
             .limit(1)
         )
     ).mappings().first()
-    return dict(row) if row else None
+    return RunRecord(**row) if row else None
+
+
+async def lineage_tail(session: AsyncSession, run_id: str) -> RunRecord | None:
+    """The last run in the lineage rooted at `run_id`: follows `parent_run_id` links downward, taking the newest child at each step. None if `run_id` names no run. An A2A task is such a lineage; its state is its tail's."""
+    current = await get_run(session, run_id)
+    while current is not None:
+        child = (
+            await session.execute(
+                select(runs)
+                .where(runs.c.parent_run_id == current.run_id)
+                .order_by(runs.c.created_at.desc(), runs.c.run_id.desc())
+                .limit(1)
+            )
+        ).mappings().first()
+        if child is None:
+            return current
+        current = RunRecord(**child)
+    return None
+
+
+async def root_of(session: AsyncSession, run: RunRecord) -> str:
+    """The id of the run that started `run`'s lineage — the id a caller holds for it across every answer (an A2A task id), and what a resolution proof is signed over."""
+    current = run
+    while current.parent_run_id is not None:
+        parent = await get_run(session, current.parent_run_id)
+        if parent is None:
+            break
+        current = parent
+    return current.run_id
+
+
+async def lineage(session: AsyncSession, run_id: str) -> list[RunRecord]:
+    """Every run in the lineage rooted at `run_id`, root first."""
+    out: list[RunRecord] = []
+    current = await get_run(session, run_id)
+    while current is not None:
+        out.append(current)
+        child = (
+            await session.execute(
+                select(runs)
+                .where(runs.c.parent_run_id == current.run_id)
+                .order_by(runs.c.created_at.desc(), runs.c.run_id.desc())
+                .limit(1)
+            )
+        ).mappings().first()
+        current = RunRecord(**child) if child else None
+    return out
 
 
 async def get_thread_snapshot(session: AsyncSession, thread_id: str) -> dict[str, Any] | None:
@@ -780,31 +793,16 @@ async def touch_run_activity(session: AsyncSession, run_id: str) -> None:
     )
 
 
-async def _fail_runs(
-    session: AsyncSession, where_clause, failure_reason: str
-) -> list[str]:
-    rows = (
-        await session.execute(
-            select(runs.c.run_id, runs.c.metadata).where(where_clause)
-        )
-    ).all()
+async def _fail_runs(session: AsyncSession, where_clause) -> list[str]:
+    """Marks every run matching `where_clause` failed and returns their ids. The reason is the terminal RUN_ERROR the caller appends — the record, not a column."""
+    rows = (await session.execute(select(runs.c.run_id).where(where_clause))).all()
     now = _utcnow()
     run_ids: list[str] = []
     for row in rows:
         result = await session.execute(
             update(runs)
             .where(runs.c.run_id == row.run_id, where_clause)
-            .values(
-                status="failed",
-                completed_at=now,
-                metadata={
-                    **(row.metadata or {}),
-                    OBSERVED_METADATA_KEY: {
-                        **((row.metadata or {}).get(OBSERVED_METADATA_KEY) or {}),
-                        "failureReason": failure_reason,
-                    },
-                },
-            )
+            .values(status="failed", completed_at=now)
         )
         if result.rowcount > 0:
             run_ids.append(row.run_id)
@@ -814,11 +812,7 @@ async def _fail_runs(
 
 async def fail_orphaned_runs(session: AsyncSession) -> list[str]:
     """Fails every run the previous process was holding — offered, running or cancelling — because the claim and the connection died with it. A `queued` run was never in any process and is not touched: `queued_runs` reads it back."""
-    return await _fail_runs(
-        session,
-        runs.c.status.in_(["offering", "running", "cancelling"]),
-        "orphaned_by_funduq_restart",
-    )
+    return await _fail_runs(session, runs.c.status.in_(["offering", "running", "cancelling"]))
 
 
 async def queued_runs(session: AsyncSession) -> list[RunRecord]:

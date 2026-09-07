@@ -7,6 +7,7 @@ import pytest
 from tests.conftest import publish_agents, publish_offline
 
 from funduq import repo
+from funduq.pause import open_asks
 from funduq.core import Funduq
 from funduq.errors import NoPendingAsk, RunNotCancellable
 from funduq.models import AgentRef
@@ -260,7 +261,8 @@ async def test_a_deferred_calls_result_returns_to_the_run_it_suspended(
     handle = await funduq.start_run(agent_id, {"messages": [{"role": "user", "content": "one"}]})
     first_round = [e async for e in handle.events()]
     await _until(lambda: handle.run_id not in funduq.active_runs())
-    assert (await funduq.get_run(handle.run_id)).status == "input-required"
+    assert (await funduq.get_run(handle.run_id)).status == "completed"
+    assert open_asks(await funduq.get_run_events(handle.run_id)), "finished asking"
 
     resumed = await funduq.resume_run(
         handle.run_id,
@@ -269,13 +271,16 @@ async def test_a_deferred_calls_result_returns_to_the_run_it_suspended(
             "resume": [{"interruptId": "int_1", "status": "resolved", "payload": {"answer": 42}}],
         },
     )
-    assert resumed.run_id == handle.run_id
+    assert resumed.run_id != handle.run_id, "every input is a run"
+    assert (await funduq.get_run(resumed.run_id)).parent_run_id == handle.run_id, "the answer names the run that asked"
     second_round = [e async for e in resumed.events()]
-    await _until(lambda: handle.run_id not in funduq.active_runs())
+    await _until(lambda: resumed.run_id not in funduq.active_runs())
 
-    assert len(await funduq.get_run_events(handle.run_id)) == len(first_round) + len(second_round)
-    assert (await funduq.get_run(handle.run_id)).status == "completed"
-    assert [r.run_id for r in provider.rounds] == [handle.run_id, handle.run_id]
+    assert len(await funduq.get_run_events(handle.run_id)) == len(first_round), "the asking run's record is closed"
+    assert len(await funduq.get_run_events(resumed.run_id)) == len(second_round)
+    assert (await funduq.get_run(resumed.run_id)).status == "completed"
+    assert [r.run_id for r in provider.rounds] == [handle.run_id, resumed.run_id]
+    assert provider.rounds[1].parent_run_id == handle.run_id, "and the agent is told which run it continues"
 
 
 async def test_a_result_offered_to_a_run_that_already_exited_is_refused(
@@ -322,9 +327,9 @@ async def test_start_reconciles_what_the_last_process_left_behind(own_funduq, ne
     agent_id = await _register(own_funduq, "echo", new_identity())
     async with own_funduq.session() as session:
         thread_id = await repo.create_thread(session, agent_id)
-        held = (await repo.create_run(session, thread_id, agent_id, "ag-ui", {"messages": []}))["run_id"]
+        held = (await repo.create_run(session, thread_id, agent_id, {"messages": []}))["run_id"]
         await repo.mark_run_status(session, held, "running")
-        waiting = (await repo.create_run(session, thread_id, agent_id, "ag-ui", {"messages": []}))["run_id"]
+        waiting = (await repo.create_run(session, thread_id, agent_id, {"messages": []}))["run_id"]
         await session.commit()
 
     orphaned = await own_funduq.start()
@@ -341,7 +346,7 @@ async def test_start_runs_once_so_a_second_call_cannot_reap_live_work(own_funduq
 
     async with own_funduq.session() as session:
         thread_id = await repo.create_thread(session, agent_id)
-        fresh = (await repo.create_run(session, thread_id, agent_id, "ag-ui", {"messages": []}))["run_id"]
+        fresh = (await repo.create_run(session, thread_id, agent_id, {"messages": []}))["run_id"]
         await session.commit()
 
     assert await own_funduq.start() == []
@@ -406,7 +411,7 @@ async def test_an_exited_chained_run_is_told_it_exited_not_that_it_signed_wrong(
 
     async with funduq.session() as session:
         await session.execute(
-            update(runs).where(runs.c.run_id == handle.run_id).values(head_key="a" * 64)
+            update(runs).where(runs.c.run_id == handle.run_id).values(actor_chain=[new_identity().sign_chain_hop()])
         )
         await session.commit()
 
@@ -418,24 +423,13 @@ async def test_an_exited_chained_run_is_told_it_exited_not_that_it_signed_wrong(
     assert not issubclass(NoPendingAsk, InvalidResolution)
 
 
-async def test_cancelling_a_paused_run_is_refused_rather_than_answered_false(
-    funduq, new_identity, attach
-):
+async def test_cancelling_a_run_that_is_waiting_closes_the_ask(funduq, new_identity, attach):
     """`cancel_run`'s False means "funduq is no longer tracking it — it has
-    already ended, and there is nobody left to ask". A paused run is not
-    that: it is still waiting, and it was answering False because the broker
-    forgets a run at the end of its stream and a pause *is* the end of the
-    provider's stream.
-
-    So the caller asking to stop a run got back the word for "too late" about
-    a run that had not finished, and no way to tell the two apart. Cancelling
-    means relaying the request to whoever is working on the run, and here
-    nobody is — that is the fact to state.
-
-    Refusing settles nothing: the ask is still there afterwards and still
-    resumable, because a cancel funduq could not relay must not become an
-    outcome funduq never observed.
-    """
+    already ended, and there is nobody left to ask". A run that finished
+    asking is not that: nobody is working on it, but the thread is waiting on
+    it. Cancelling it is the one act that closes the wait: funduq records who
+    asked, the task reads as cancelled, and no answer lands on it afterwards.
+    Nothing is appended to the run's events — funduq observed no outcome."""
     identity = new_identity()
     agent_id = await _register(funduq, "asker", identity)
     provider = PausingProvider()
@@ -444,25 +438,24 @@ async def test_cancelling_a_paused_run_is_refused_rather_than_answered_false(
     handle = await funduq.start_run(agent_id, {"messages": [{"role": "user", "content": "one"}]})
     [_ async for _ in handle.events()]
     await _until(lambda: handle.run_id not in funduq.active_runs())
-    assert (await funduq.get_run(handle.run_id)).status == "input-required"
+    assert (await funduq.get_run(handle.run_id)).status == "completed"
+    assert open_asks(await funduq.get_run_events(handle.run_id))
     settled = await funduq.get_run_events(handle.run_id)
 
-    with pytest.raises(RunNotCancellable):
-        await funduq.cancel_run(handle.run_id)
+    assert await funduq.cancel_run(handle.run_id) is True
 
-    assert (await funduq.get_run(handle.run_id)).status == "input-required"
+    stored = await funduq.get_run(handle.run_id)
+    assert stored.status == "completed"
+    assert stored.cancel_requested_by is not None, "asked, by nobody in particular — an unbound run"
     assert await funduq.get_run_events(handle.run_id) == settled, "nothing was appended"
-
-    resumed = await funduq.resume_run(
-        handle.run_id,
-        {
-            "messages": [{"role": "user", "content": "two"}],
-            "resume": [{"interruptId": "int_1", "status": "resolved", "payload": {"answer": 42}}],
-        },
-    )
-    [_ async for _ in resumed.events()]
-    await _until(lambda: handle.run_id not in funduq.active_runs())
-    assert (await funduq.get_run(handle.run_id)).status == "completed"
+    with pytest.raises(NoPendingAsk):
+        await funduq.resume_run(
+            handle.run_id,
+            {
+                "messages": [{"role": "user", "content": "two"}],
+                "resume": [{"interruptId": "int_1", "status": "resolved", "payload": {"answer": 42}}],
+            },
+        )
 
 
 async def test_a_run_that_really_has_ended_still_answers_false(funduq, new_identity, attach):

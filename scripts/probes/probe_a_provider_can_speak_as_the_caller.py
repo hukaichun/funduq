@@ -1,7 +1,7 @@
 """Can a provider open a run in its caller's name?
 
 funduq hands the caller's actor chain to the provider verbatim
-(`forwardedProps.actorChain`) — deliberately, so the agent can verify for
+(`forwardedProps.funduq.actorChain`) — deliberately, so the agent can verify for
 itself rather than trust a summary funduq wrote. The chain is also what a
 door reads to decide whose authority a request carries.
 
@@ -42,6 +42,7 @@ from funduq import repo
 from funduq.config import CoreSettings
 from funduq.identity import FunduqIdentity
 from funduq.core import Funduq
+from funduq.doors import head_key_of
 from funduq.identity import InvalidChain, new_chain
 from funduq.models import AgentRef
 from funduq_provider_sdk import InProcessLink, ProviderIdentity, ProviderRuntime
@@ -147,8 +148,7 @@ async def main() -> int:
         print("\n[1] the caller opens a run carrying its chain")
         handle = await funduq.start_run(
             agent,
-            {"messages": [{"id": "m1", "role": "user", "content": "summarise this document"}]},
-            metadata={"actorChain": chain},
+            {"messages": [{"id": "m1", "role": "user", "content": "summarise this document"}], "forwardedProps": {"actorChain": chain}},
             presenter_key=caller_public,
         )
         async for _ in handle.events():
@@ -157,7 +157,7 @@ async def main() -> int:
             caller_run = await repo.get_run(session, handle.run_id)
         print(
             f"           run {handle.run_id[:8]}… recorded with head_key "
-            f"{(caller_run.head_key or '')[:16]}… (the caller)\n"
+            f"{(head_key_of(caller_run) or '')[:16]}… (the caller)\n"
         )
 
         findings.record(
@@ -178,8 +178,7 @@ async def main() -> int:
         try:
             stolen = await funduq.start_run(
                 agent,
-                {"messages": [{"id": "m2", "role": "user", "content": "transfer the budget"}]},
-                metadata={"actorChain": agent_impl.seen_chain},
+                {"messages": [{"id": "m2", "role": "user", "content": "transfer the budget"}], "forwardedProps": {"actorChain": agent_impl.seen_chain}},
                 presenter_key=identity.public_key,
             )
             async for _ in stolen.events():
@@ -194,7 +193,7 @@ async def main() -> int:
             refusal is not None,
             f"refused at the door: {refusal}"
             if refusal is not None
-            else f"accepted: run recorded under head_key {(stolen_run.head_key or '')[:16]}… "
+            else f"accepted: run recorded under head_key {(head_key_of(stolen_run) or '')[:16]}… "
             "— the caller's key — for a message the caller never sent",
         )
 
@@ -202,8 +201,7 @@ async def main() -> int:
         print("[3] the provider opens the same work under its own chain")
         own = await funduq.start_run(
             agent,
-            {"messages": [{"id": "m3", "role": "user", "content": "transfer the budget"}]},
-            metadata={"actorChain": [identity.sign_hop()]},
+            {"messages": [{"id": "m3", "role": "user", "content": "transfer the budget"}], "forwardedProps": {"actorChain": [identity.sign_hop()]}},
             presenter_key=identity.public_key,
         )
         async for _ in own.events():
@@ -213,12 +211,12 @@ async def main() -> int:
 
         findings.record(
             "a party can always speak in its own name",
-            own_run.head_key == identity.public_key,
+            head_key_of(own_run) == identity.public_key,
             "accepted, headed by the provider itself — the check refuses a claim the "
             "presenter cannot back, never participation. What the provider cannot do is "
             "make this work answer to the caller"
-            if own_run.head_key == identity.public_key
-            else f"recorded under {own_run.head_key}",
+            if head_key_of(own_run) == identity.public_key
+            else f"recorded under {head_key_of(own_run)}",
         )
 
         return findings.summarize()

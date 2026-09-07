@@ -280,7 +280,7 @@ funduq 拿著。上面那四題不是 funduq 多做的功能，是站在這個�
 | thread queue（`thread_queue_limit`，預設 8） | **入向空隙的持有者** |
 | `addressedRunId`（插話擴充） | 入向空隙，帶宣告的意圖——funduq 只轉，判斷在 agent 自己的迴圈裡 |
 | `parentRunId`（AG-UI 自己的欄位） | 接在後面，下一輪 |
-| `input-required` ＋ `resume`／`ResumeEntry` | ②／③——結果落在待決的那個問題上 |
+| 帶 interrupt outcome 結束的 run ＋ 下一個 run 的 `resume`／`ResumeEntry`（`parentRunId` 指回去） | ②／③——結果落在待決的那個問題上 |
 | `Interrupt.expires_at`、`paused_no_resume` | **出向空隙**的過期 |
 | `cancel_run`／`CancelTask` | 中止，不屬於任何 ● |
 | `run_events`（存下來的 AG-UI 事件流） | 出向觀察，**也是兩個出口唯一的翻譯來源** |

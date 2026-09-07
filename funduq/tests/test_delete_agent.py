@@ -104,10 +104,10 @@ async def test_an_agent_with_a_paused_run_is_refused(funduq):
 
     async with funduq.session() as session:
         thread_id = await repo.ensure_thread(session, agent, None)
-        created = await repo.create_run(session, thread_id, agent, "ag-ui", {})
+        created = await repo.create_run(session, thread_id, agent, {})
         await session.commit()
         await repo.mark_run_status(session, created["run_id"], "running")
-        await repo.mark_run_status(session, created["run_id"], "input-required")
+        await repo.mark_run_status(session, created["run_id"], "completed")
         await session.commit()
 
     with pytest.raises(AgentInUse) as refused:

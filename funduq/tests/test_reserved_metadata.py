@@ -1,17 +1,15 @@
-"""Caller metadata cannot wear funduq's handwriting.
+"""A caller's bag cannot wear funduq's handwriting.
 
-funduq writes a small set of keys into a run's metadata record
-(`funduq`, the one key everything funduq writes sits under). A caller-supplied
-value under any of them is stripped at the doors — otherwise a caller could
-plant a forged verification summary, or a fake failure reason, that later
-readers would take for funduq's own record. Keys funduq does not write are
-plain caller data and pass through untouched.
+The caller's declarations ride in one bag — `forwardedProps` on AG-UI, the
+message's `metadata` on A2A — and that bag is stored on the run and relayed
+to the agent as its `forwardedProps`. funduq's own additions sit under one
+key in it, `funduq`; a caller-supplied value under that key is stripped at
+the doors. Every other key is the caller's and passes through untouched.
 """
 
 from __future__ import annotations
 
 from funduq import repo
-from funduq.props import observed_of
 from funduq.protocols.a2a import A2AAdapter
 
 from tests.conftest import EchoAgent
@@ -55,11 +53,11 @@ async def test_funduq_authors_no_verification_summary(funduq, serve, new_identit
 
     async with funduq.session() as session:
         stored = await repo.get_run(session, sent.id)
-    assert stored.metadata.get("verifiedActorChain") == "not-funduqs-word", (
+    assert stored.forwarded_props.get("verifiedActorChain") == "not-funduqs-word", (
         "funduq writes no such key, so the caller's value passes through as caller data"
     )
-    assert stored.metadata.get("keep") == "this"
-    assert stored.metadata.get("actorChain") == chain, "the chain itself is the record"
+    assert stored.forwarded_props.get("keep") == "this"
+    assert stored.forwarded_props.get("actorChain") == chain, "the chain itself, as presented, is on the record"
 
 
 async def test_only_funduqs_own_key_is_stripped(funduq, serve):
@@ -72,20 +70,19 @@ async def test_only_funduqs_own_key_is_stripped(funduq, serve):
         metadata={
             "addressedRunId": "run_i_made_up",
             "failureReason": "mine to say",
-            "funduq": {"failureReason": "not yours to say", "pendingToolCalls": ["a call nobody made"]},
+            "funduq": {"addressedRunId": "not yours to say", "kyok": {"token": "forged"}},
         },
     )
 
     async with funduq.session() as session:
         stored = await repo.get_run(session, sent.id)
-    assert "failureReason" not in observed_of(stored.metadata), (
-        "everything funduq writes sits under its one key; a caller's value there is stripped, "
-        "so a run cannot be made to look failed or still waiting in funduq's handwriting"
+    assert "funduq" not in stored.forwarded_props, (
+        "the one key funduq writes is never the caller's: a value planted there is stripped, "
+        "so nothing under it can be mistaken for funduq's own annotation"
     )
-    assert "pendingToolCalls" not in observed_of(stored.metadata)
-    assert stored.metadata.get("failureReason") == "mine to say", (
+    assert stored.forwarded_props.get("failureReason") == "mine to say", (
         "outside funduq's key the same word is plain caller data and is kept"
     )
-    assert stored.metadata.get("addressedRunId") == "run_i_made_up", (
-        "funduq does not write this key into run records, so it is plain caller data"
+    assert stored.forwarded_props.get("addressedRunId") == "run_i_made_up", (
+        "funduq does not read this key at the top level, so it is plain caller data"
     )

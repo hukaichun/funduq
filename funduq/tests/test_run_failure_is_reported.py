@@ -12,7 +12,7 @@ from funduq import repo
 from funduq.config import CoreSettings
 from funduq.broker import RunBroker
 from funduq.core import Funduq
-from funduq.props import observed_of
+from funduq.pause import failure_reason_of
 from funduq_contract import Registration
 
 
@@ -134,7 +134,7 @@ async def test_a_permanent_refusal_fails_the_run_with_the_providers_reason(brisk
     async with brisk.session() as session:
         stored = await repo.get_run(session, handle.run_id)
     assert stored.status == "failed"
-    assert observed_of(stored.metadata)["failureReason"] == "this agent was retired, run something newer"
+    assert failure_reason_of(await brisk.get_run_events(handle.run_id)) == "this agent was retired, run something newer"
     assert link.offers == 1
 
 
@@ -161,7 +161,7 @@ async def test_a_malformed_event_fails_the_run_instead_of_relaying_garbage(brisk
         stored = await repo.get_run(session, handle.run_id)
         persisted = await repo.get_run_events(session, handle.run_id)
     assert stored.status == "failed"
-    assert observed_of(stored.metadata)["failureReason"] == "provider sent a malformed AG-UI event"
+    assert failure_reason_of(await brisk.get_run_events(handle.run_id)) == "provider sent a malformed AG-UI event"
     assert [e["type"] for e in persisted] == ["RUN_STARTED", "RUN_ERROR"]
 
 
@@ -256,7 +256,7 @@ async def test_a_run_nobody_ever_comes_for_is_given_up_on(settings: CoreSettings
         await _until(lambda: handle.run_id not in funduq.active_runs())
         run = await funduq.get_run(handle.run_id)
         assert run.status == "failed"
-        assert observed_of(run.metadata)["failureReason"] == "no_provider_took_it"
+        assert failure_reason_of(await funduq.get_run_events(handle.run_id)) == "no_provider_took_it"
     finally:
         if runtime is not None:
             await runtime.aclose(cancel_in_flight=True)
@@ -359,7 +359,7 @@ async def test_a_provider_that_leaves_holding_a_run_fails_it_at_once(settings: C
         await _until(lambda: handle.run_id not in funduq.active_runs())
         run = await funduq.get_run(handle.run_id)
         assert run.status == "failed"
-        assert observed_of(run.metadata)["failureReason"] == "provider_left_holding_it"
+        assert failure_reason_of(await funduq.get_run_events(handle.run_id)) == "provider_left_holding_it"
         assert funduq.broker.quality()[identity.public_key].abandoned == 1
     finally:
         if runtime is not None:

@@ -18,8 +18,10 @@ from funduq.identity import (
     verify_view,
 )
 from funduq.kyok import KyokBinding, KyokOptIn, parse_kyok_opt_in
+from funduq.handlers import close_with_terminal_event
 from funduq.models import AgentRef
-from funduq.props import RESERVED_METADATA_KEYS, build_forwarded_props, observed
+from funduq.pause import open_asks
+from funduq.props import RESERVED_METADATA_KEYS, build_forwarded_props
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
@@ -29,9 +31,10 @@ if TYPE_CHECKING:
 __all__ = [
     "InboundRun",
     "Opened",
-    "PendingAsk",
     "authorize_cancel",
+    "authorize_view",
     "dispatch",
+    "head_key_of",
     "offline_events",
     "open_run",
     "relayed_chain",
@@ -46,13 +49,13 @@ def relayed_chain(funduq: "Funduq", chain: Any, agent: AgentRef) -> Any:
 
 
 async def verify_caller(
-    session: "AsyncSession", metadata: dict, *, presenter_key: str | None = None
+    session: "AsyncSession", props: dict, *, presenter_key: str | None = None
 ) -> tuple[dict, str | None, Any]:
-    """Verifies `metadata["actorChain"]` if present and returns `(metadata stripped of funduq's reserved keys, the chain's head key, the raw chain)` — `(metadata, None, None)` when no chain is attached."""
-    metadata = {k: v for k, v in metadata.items() if k not in RESERVED_METADATA_KEYS}
-    actor_chain = metadata.get("actorChain")
+    """Reads the caller's declarations off its bag — `forwardedProps` on AG-UI, the message's `metadata` on A2A, one bag either way — verifies `actorChain` if present, and returns `(the bag stripped of funduq's own key, the chain's head key, the raw chain)`; `(bag, None, None)` when no chain is attached."""
+    props = {k: v for k, v in props.items() if k not in RESERVED_METADATA_KEYS}
+    actor_chain = props.get("actorChain")
     if not actor_chain:
-        return metadata, None, None
+        return props, None, None
     verified = verify_chain(actor_chain)
     if presenter_key is not None and presenter_key != verified.presenter:
         raise InvalidChain(
@@ -60,18 +63,23 @@ async def verify_caller(
             f"{verified.presenter[:16]}…, but the caller authenticated as "
             f"{presenter_key[:16]}… — extend the chain with your own key to present it"
         )
-    return metadata, verified.head, actor_chain
+    return props, verified.head, actor_chain
 
 
 async def resolve_kyok(
-    session: "AsyncSession", metadata: dict
+    session: "AsyncSession", props: dict
 ) -> tuple[dict, KyokOptIn | None]:
-    """Reads a KYOK opt-in out of `metadata` and returns `(metadata, the opt-in or None)`. The opt-in stays in the metadata, context included: it is ordinary content of the run's record, and a restart rebuilds the binding from it."""
-    opt_in = parse_kyok_opt_in(metadata)
+    """Reads a KYOK opt-in off the caller's bag and returns `(the bag, the opt-in or None)`. The opt-in stays in the bag, context included: it is the caller's own word, relayed to the agent like the rest, and a restart rebuilds the binding from it."""
+    opt_in = parse_kyok_opt_in(props)
     if opt_in is not None and opt_in.llm_provider is not None:
         if await repo.get_llm_provider(session, opt_in.llm_provider) is None:
             raise LlmProviderNotFound(f"unknown KYOK LLM provider '{opt_in.llm_provider}'")
-    return metadata, opt_in
+    return props, opt_in
+
+
+def head_key_of(run: Any) -> str | None:
+    """The authority a run was opened under: the first hop of its chain, or None for an unbound run."""
+    return verify_chain(run.actor_chain).head if run.actor_chain else None
 
 
 @dataclass(frozen=True)
@@ -80,7 +88,6 @@ class InboundRun:
 
     agent: AgentRef
     messages: list[dict[str, Any]]
-    metadata: dict[str, Any]
     head_key: str | None = None
     actor_chain: Any = None
     kyok: KyokOptIn | None = None
@@ -91,7 +98,6 @@ class InboundRun:
     resume: list[dict[str, Any]] | None = None
     parent_run_id: str | None = None
     forwarded_props: Any = None
-    protocol: str = "ag-ui"
 
     @property
     def kyok_ref(self) -> Any:
@@ -121,29 +127,18 @@ async def dispatch(
             inbound.agent,
             opened.thread_id,
             opened.input_json,
-            inbound.protocol,
             seq=opened.starting_seq,
             addressed_run_id=inbound.addressed_run_id,
         )
         is None
     ):
         funduq.kyok_relay.discard(opened.run_id)
-        await funduq.mark_run_status(
-            session, opened.run_id, "failed", metadata=observed(failureReason="agent_offline")
-        )
+        await funduq.mark_run_status(session, opened.run_id, "failed")
         await session.commit()
+        # The record keeps the terminal event too, not only the caller's stream: a failed run with no RUN_ERROR would have no reason.
+        await close_with_terminal_event(funduq, opened.run_id, "agent_offline")
         return False
     return True
-
-
-@dataclass(frozen=True)
-class PendingAsk:
-    """The paused run a result would land on, the key authorized to answer it,
-    and the outstanding ask ids a resolution proof must sign."""
-
-    run_id: str
-    head_key: str | None
-    ask_ids: frozenset[str] = frozenset()
 
 
 @dataclass(frozen=True)
@@ -158,12 +153,13 @@ class Opened:
 
 def authorize_cancel(run: Any, metadata: dict[str, Any]) -> str | None:
     """Refuses a cancel that carries no authority over a run whose thread is bound, and returns the authority that asked (`None` for an unbound run)."""
-    if run.head_key is None:
+    head = head_key_of(run)
+    if head is None:
         return None
     return verify_cancel(
         metadata.get("cancel") or {},
         run.run_id,
-        {run.head_key, run.provider_key},
+        {head, run.provider_key},
     )
 
 
@@ -175,11 +171,10 @@ def authorize_view(run: Any, metadata: dict[str, Any]) -> str | None:
     resolve stay with the head and the serving provider. An unbound run has
     no parties to scope to and stays as public as its funduq-minted id.
     """
-    if run.head_key is None:
+    head = head_key_of(run)
+    if head is None:
         return None
-    allowed = {run.head_key, run.provider_key}
-    if run.actor_chain:
-        allowed |= set(verify_chain(run.actor_chain).actor_public_keys)
+    allowed = {head, run.provider_key} | set(verify_chain(run.actor_chain).actor_public_keys)
     return verify_view(
         metadata.get("view") or {},
         run.run_id,
@@ -193,15 +188,15 @@ async def open_run(
     inbound: InboundRun,
     *,
     thread_id: str,
-    entrance: Literal["utterance", "result"],
-    ask: PendingAsk | None,
-) -> Opened | None:
-    """Resolves a request to the run it belongs on — the pending ask it answers, or a new run queued on the thread — and writes that run's row with the `RunAgentInput` its provider will receive.
+    answers: Any = None,
+) -> Opened:
+    """Opens a new run on the thread and writes its row — the `RunAgentInput` its provider will receive, one column per field, with its messages in the thread — in one commit.
 
-    One form in the database: the row holds the delivered input, from either
-    door. So the ids are taken first (the ask claimed or a fresh run id
-    minted, the turn's messages stamped), the input is built naming them,
-    and only then are the row and the messages written — in one commit.
+    Every input is a run (AG-UI's own model). When the input answers the
+    thread's open asks, `answers` is the finished run that asked: the new
+    run's `parentRunId` names it, and on a bound thread the bag must carry a
+    resolution proof signed by that run's head or the serving provider over
+    exactly the asks still open.
     """
     if inbound.addressed_run_id is not None:
         target = funduq.broker.get(inbound.addressed_run_id)
@@ -211,28 +206,25 @@ async def open_run(
                 "live run on this thread"
             )
 
-    answered_by = None
-    landed_on_ask = False
-    if ask is not None:
-        if ask.head_key is not None:
+    parent_run_id = inbound.parent_run_id
+    if answers is not None:
+        head = head_key_of(answers)
+        if head is not None:
             # A chained ask names its authorities; the resolution must be signed by one of them, over exactly the asks still open.
-            answered_by = verify_resolution(
-                inbound.metadata.get("resolution") or {},
-                ask.run_id,
-                set(ask.ask_ids),
-                {ask.head_key, inbound.agent.provider_key},
+            bag = inbound.forwarded_props if isinstance(inbound.forwarded_props, dict) else {}
+            # Signed over the id the caller holds for this conversation — the lineage's root, the A2A task id — and exactly the asks still open; the ask ids are new for every pause, so the proof binds to this one.
+            verify_resolution(
+                bag.get("resolution") or {},
+                await repo.root_of(session, answers),
+                open_asks(await repo.get_run_events(session, answers.run_id)),
+                {head, inbound.agent.provider_key},
             )
-        landed_on_ask = await repo.claim_ask(session, ask.run_id)
-    if landed_on_ask:
-        run_id = ask.run_id
-        starting_seq = await repo.get_last_event_seq(session, run_id)
-    elif entrance == "result":
-        return None
+        parent_run_id = answers.run_id
     else:
+        # An answer is how a waiting thread drains; only fresh utterances count against the buffer.
         await repo.ensure_queue_room(session, thread_id, funduq.settings.thread_queue_limit)
-        run_id = new_id("run")
-        starting_seq = 0
 
+    run_id = new_id("run")
     messages = repo.stamp_messages(inbound.messages)
     try:
         input_json = build_run_agent_input(
@@ -253,24 +245,18 @@ async def open_run(
                 addressed_run_id=inbound.addressed_run_id,
             ),
             resume=inbound.resume,
-            parent_run_id=inbound.parent_run_id,
+            parent_run_id=parent_run_id,
         )
     except ValueError as e:
         raise InvalidRunInput(str(e)) from e
 
-    if landed_on_ask:
-        await repo.reopen_run(
-            session, run_id, input_json, metadata=inbound.metadata, answered_by=answered_by
-        )
-    else:
-        await repo.create_run(
-            session, thread_id, inbound.agent, inbound.protocol, input_json,
-            metadata=inbound.metadata, head_key=inbound.head_key,
-            actor_chain=inbound.actor_chain, run_id=run_id,
-        )
-    await repo.append_thread_messages(session, thread_id, run_id, messages)
+    await repo.create_run(
+        session, thread_id, inbound.agent, input_json,
+        actor_chain=inbound.actor_chain, run_id=run_id,
+    )
+    await repo.append_thread_messages(session, thread_id, run_id, messages, origin="caller")
     await session.commit()
-    return Opened(run_id=run_id, thread_id=thread_id, starting_seq=starting_seq, input_json=input_json)
+    return Opened(run_id=run_id, thread_id=thread_id, starting_seq=0, input_json=input_json)
 
 
 async def offline_events(thread_id: str, run_id: str) -> AsyncIterator[dict[str, Any]]:

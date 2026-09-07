@@ -57,7 +57,7 @@ async def _until(predicate, timeout: float = 1.0) -> None:
 
 async def _delivered(broker: RunBroker, handlers: dict, run_id: str = "run_1"):
     broker.register_provider({AGENT: Taker(broker)})
-    run = broker.enqueue_run(run_id, AGENT, "thread_1", _valid_input(run_id, "thread_1"), "ag-ui", handlers)
+    run = broker.enqueue_run(run_id, AGENT, "thread_1", _valid_input(run_id, "thread_1"), handlers)
     await _until(lambda: run.claimed_by is not None)
     return run
 
@@ -66,7 +66,7 @@ async def test_next_seq_increments_for_a_known_run(broker):
     from funduq.broker import Run
 
     run = Run(
-        run_id="run_1", agent=AGENT, thread_id="thread_1", input_json={}, protocol="ag-ui"
+        run_id="run_1", agent=AGENT, thread_id="thread_1", input_json={}
     )
     run.seq += 1
     run.seq += 1
@@ -147,7 +147,7 @@ async def test_cancelling_a_queued_run_records_it_once_and_ends_it(broker):
     # A provider with no room: the run is queued, still funduq's, and never
     # offered — which is the state this is about.
     broker.register_provider({AGENT: Taker(max_concurrent_runs=0)})
-    run = broker.enqueue_run("run_1", AGENT, "thread_1", _valid_input("run_1", "thread_1"), "ag-ui", {RequestCancel: on_cancel})
+    run = broker.enqueue_run("run_1", AGENT, "thread_1", _valid_input("run_1", "thread_1"), {RequestCancel: on_cancel})
     assert run.claimed_by is None
 
     broker.request_cancel("run_1")
@@ -158,7 +158,7 @@ async def test_cancelling_a_queued_run_records_it_once_and_ends_it(broker):
 
 async def test_request_cancel_marks_the_run_before_anything_else_happens(broker):
     broker.register_provider({AGENT: Taker(max_concurrent_runs=0)})
-    run = broker.enqueue_run("run_1", AGENT, "thread_1", _valid_input("run_1", "thread_1"), "ag-ui", {})
+    run = broker.enqueue_run("run_1", AGENT, "thread_1", _valid_input("run_1", "thread_1"), {})
 
     assert not run.cancel_requested
     broker.request_cancel("run_1")

@@ -16,7 +16,7 @@ from pathlib import Path
 
 from ag_ui.core import RunAgentInput, UserMessage
 
-from funduq.props import observed_of
+from funduq.pause import interrupts_of, open_asks, unanswered_tool_calls
 from funduq.protocols.agui import AGUIAdapter, EventStream
 
 REAL_STREAM = json.loads((Path(__file__).parent / "real_deferring_stream.json").read_text())
@@ -49,7 +49,9 @@ async def test_the_link_hands_back_enough_to_resume_a_paused_turn(funduq, serve)
     assert isinstance(stream, EventStream)
     [_ async for _ in stream.events]
 
-    assert (await funduq.get_run(stream.run_id)).status == "input-required"
+    events = await funduq.get_run_events(stream.run_id)
+    assert (await funduq.get_run(stream.run_id)).status == "completed"
+    assert open_asks(events), "finished asking"
 
     # The provider knows its thread id — `ClaimedRun` carries it — so this is
     # the read every link must implement, not an in-process shortcut.
@@ -93,6 +95,6 @@ async def test_the_pull_agrees_with_what_funduq_recorded_as_pending(funduq, serv
     answered = {m["toolCallId"] for m in dumped if m.get("role") == "tool"}
     outstanding = [c for c in announced if c not in answered]
 
-    recorded = observed_of((await funduq.get_run(stream.run_id)).metadata)
-    assert recorded["pendingToolCalls"] == outstanding
-    assert len(recorded["interrupts"]) == 1, "the approval, which AG-UI does name"
+    events = await funduq.get_run_events(stream.run_id)
+    assert unanswered_tool_calls(events) == outstanding
+    assert len(interrupts_of(events)) == 1, "the approval, which AG-UI does name"

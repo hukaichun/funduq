@@ -35,15 +35,24 @@ AG-UI/A2A — and opting in is always the caller's explicit act, never an
 inference funduq makes. The largest opt-in is the responsibility chain:
 a thread whose first run carries an actor chain binds the chain's head
 at birth — thereafter only the head or the serving provider may write
-to it, and a paused ask on a chained run is answered only with a
-signature from those keys (`metadata.resolution`, signed over the run's
-outstanding ask ids via the `funduq-resolve` payload — good for exactly
-that ask and no other), and **stopping one of
-its runs takes the same authority** (`metadata.cancel`, the
+to it, and an ask left open on a chained run is answered only with a
+signature from those keys (`resolution` in the caller's bag, signed over
+the task id — the asking run's lineage root — and its open ask ids via the
+`funduq-resolve` payload; the ask ids are new for every pause, so the proof
+is good for exactly that ask and no other), and **stopping one of its runs
+takes the same authority** (`metadata.cancel`, the
 `funduq-cancel:{run_id}:{timestamp}` payload — A2A's `CancelTaskRequest`
 carries `metadata` even though it carries no message, so a standard
 client has the slot). A thread opened without a chain keeps the open
 behavior on this page forever — a later chained writer cannot lock it.
+
+**The caller's bag.** Everything a caller says *to funduq* — `actorChain`,
+the `kyok` opt-in, `resolution` — rides in one place: `forwardedProps` on
+AG-UI (the protocol's own field for a caller's free-form bag) and the
+message's `metadata` on A2A, which the A2A door translates to
+`forwardedProps` one-to-one. There is no `metadata` field on
+`RunAgentInput`; funduq adds none. The bag reaches the agent as sent, with
+funduq's one key added (below).
 The mechanics are in
 Responsibility chains.
 
@@ -150,25 +159,32 @@ task's thread, and an unknown one is a JSON-RPC `-32001`. Note it is read
 from the message, not from `params`; a `params`-level `taskId` is
 ignored and the call starts a fresh thread.
 
-**A resumed run keeps its task id.** A pause does not end a task and
-resuming does not mint a successor, so a stored task id stays valid
-across the pause.
+**A task is a lineage of runs, and keeps its id across every answer.**
+Every input is a run (AG-UI's model). A run that finishes asking is
+`completed`; the answer is the next run, its `parentRunId` naming the one
+that asked. An A2A task is the lineage those links form: the task id is
+the root run's id, the task's state is the tail run's — `INPUT_REQUIRED`
+while the tail has asks open — and every event of a later run reaches the
+client labelled with the task's id. `GetTask` reads the whole lineage.
 
 ### Current gaps, stated plainly
 
 These are not design positions. They are what the code does today, and a
 client author needs them.
 
-- **Addressing a paused task over A2A rides `taskId`, not
-  `elicitationId`.** A message whose `taskId` names the thread's
-  `input-required` task resumes it with whatever the message says —
-  funduq never checks that it answers the question; a redirection or an
-  overrule rides the same road, and the provider judges it from the
-  thread's shape. Who may do so is gated by nothing
-  more than knowing the id, the same capability-by-identifier trust
-  every thread reference carries today (a recorded contradiction, not a
-  position). When A2A v1.1's `elicitationId` lands, that is the marker
-  this interim rule yields to.
+- **Answering a waiting task over A2A rides `taskId`, not
+  `elicitationId`.** A message whose `taskId` names a task waiting for
+  input answers it with whatever the message says — a new run on the
+  lineage; funduq never checks that it answers the question, a
+  redirection or an overrule rides the same road, and the provider judges
+  it from the thread's shape. Who may do so is gated by nothing more than
+  knowing the id on an unbound thread, the same capability-by-identifier
+  trust every thread reference carries today (a recorded contradiction,
+  not a position). A `taskId` naming a task that has ended, or one still
+  working, is refused (`UnsupportedOperationError`, A2A §3.1.1): the one
+  follow-up the spec defines is the answer, and funduq no longer invents a
+  meaning for the rest — continue with `contextId` alone. When A2A v1.1's
+  `elicitationId` lands, that is the marker this interim rule yields to.
 - **A message sent while a run is active becomes its own task,
   delivered alongside.** It is a new task on the thread — never merged
   into the active run and never dropped — and funduq offers it to the
@@ -193,7 +209,7 @@ client author needs them.
 - **The thread's pending buffer is bounded** (`thread_queue_limit`,
   default 8). At the limit a new message is refused loudly —
   `ThreadQueueFull`, meaning NOT accepted, retry after the thread
-  drains — never accepted-then-expired. Answering a paused task via
+  drains — never accepted-then-expired. Answering a waiting task via
   `taskId` is exempt: the reply is how the buffer drains.
 - **funduq mints every thread id, on both doors — the id in funduq's reply
   is the one to continue with.** An unseen AG-UI `threadId` gets a new

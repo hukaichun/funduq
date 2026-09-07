@@ -28,6 +28,73 @@ entries below say what to change and not only what moved.
 
 ---
 
+## Revision 19 — 2026-09-07
+
+**A run is an AG-UI run** (#259). funduq had two models of a run stacked
+on each other: AG-UI's, where every `RunAgentInput` is a run, and A2A's
+task, which pauses in `input-required` and continues under the same id
+when the answer arrives. The run followed the task — a paused run was
+*reopened* with the answer's input, on both doors — and the `runs` table
+followed neither cleanly: the delivered input as one blob beside columns
+duplicating it, a `metadata` bag holding the caller's words and funduq's
+observations together, a `protocol` label saying which door opened it.
+
+Now there is one model, AG-UI's. **Every input is a run.** A run that
+finishes asking — an interrupt outcome, a tool call nobody answered — is
+`completed`, as AG-UI says; the answer is the next run, with `parentRunId`
+naming the one that asked. Nothing is reopened; `input-required` is not a
+run status any more. Whether a thread is waiting is read from its latest
+run's events. An A2A task is the lineage those `parentRunId` links form:
+the task id is the root run's id, its state is the tail run's, and every
+event of a later run reaches the A2A client labelled with the task's id.
+
+**What a caller does differently**
+
+- **AG-UI: declarations ride in `forwardedProps`.** `actorChain`, `kyok`
+  (opt-in and context), `resolution` — the things a caller says to funduq
+  — go in the run input's `forwardedProps`, which is AG-UI's own field for
+  a caller's bag. The `metadata` extension `RunAgentInput` never had is
+  gone. The bag is relayed to the agent as it was sent, with funduq's one
+  key (`forwardedProps.funduq`) added; so an agent now also sees the
+  caller's declarations, verbatim, beside funduq's.
+- **A2A: `Message.metadata` is that same bag**, translated to
+  `forwardedProps` one-to-one. Nothing else changes on the wire. The
+  resolution proof is signed over the **task id** (the lineage's root) and
+  the open ask ids, which is what a caller holds; ask ids are new for every
+  pause, so the binding is still to one ask.
+- **A message naming a task** (A2A §3.1.1, §3.4.3): answers it when the
+  task is waiting for input — the one follow-up the spec defines; is
+  refused with `UnsupportedOperationError` when the task has ended, as the
+  spec requires; and is refused likewise when the task is still working,
+  where the spec defines nothing and funduq no longer invents an ordinary
+  next run. Continue a conversation with `contextId` and no `taskId`.
+- **Cancelling a task that is waiting for input** now lands: nobody is
+  working on it, so the cancel closes the wait — the task reads `CANCELED`,
+  funduq records who asked, and no answer lands on it afterwards. It used
+  to be refused as not cancelable.
+- **Subscribing to a task that has ended** is refused (`UnsupportedOperationError`,
+  §3.1.6); `GetTask` is the read for its outcome. `historyLength: 0` now
+  means no history, as §3.2.4 says (the field's presence is read).
+- **`agent_offline`** now also leaves a terminal `RUN_ERROR` in the run's
+  events, not only on the caller's stream.
+
+**What a provider sees differently**
+
+`DeliveredRun` and the link are unchanged. An answer arrives as a new run
+whose `parentRunId` names the run that asked, under the answerer's own
+chain (`forwardedProps.funduq.actorChain`), not the asking run's; the
+caller's declarations are in `forwardedProps` beside funduq's key. The
+delivered-run frame in the vectors is unchanged in shape.
+
+**The record.** `runs` is `RunAgentInput` one column per field plus funduq's
+state (`status`, the agent, `actor_chain`, `cancel_requested_by`,
+timestamps); `input_json`, `metadata`, `head_key` and `protocol` are gone,
+and so is the `input-required` status. `thread_messages` says who said each
+message (`origin`: `caller` or `agent`). `RunRecord` follows. Pause details
+and failure reasons are read from `run_events`; `answeredBy` is the answer
+run's own row. Alembic revision `a1f4c9d27e3b`; rows are not migrated
+(nothing is published, and a restart already voids held runs).
+
 ## Revision 18 — 2026-09-07
 
 **One key for what funduq adds.** funduq used to scatter its own
