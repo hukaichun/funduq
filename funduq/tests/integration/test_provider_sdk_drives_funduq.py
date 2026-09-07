@@ -90,7 +90,7 @@ async def test_funduq_asks_the_provider_that_took_the_run_to_stop(funduq, runtim
     async with asyncio.timeout(5):
         await started.wait()
 
-    handle.cancel()
+    await handle.cancel()
     [_ async for _ in handle.events()]
 
     await _until(lambda: handle.run_id not in funduq.active_runs())

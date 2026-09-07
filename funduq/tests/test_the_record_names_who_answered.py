@@ -80,12 +80,12 @@ async def test_the_head_that_answered_is_named(funduq, serve, new_identity):
     head = new_identity()
 
     first = await A2AAdapter(funduq).send_task(
-        agent, _message("go"), actor_chain=[head.sign_chain_hop()]
+        agent, _message("go"), actor_chain=[head.sign_chain_hop()], presenter_key=head.public_key
     )
     answered = await A2AAdapter(funduq).send_task(
         agent,
         _message("the answer", task_id=first.id),
-        actor_chain=[head.sign_chain_hop()],
+        actor_chain=[head.sign_chain_hop()], presenter_key=head.public_key,
         metadata=_answer(head, first.id),
     )
 
@@ -102,12 +102,12 @@ async def test_a_provider_answering_its_own_ask_is_visible_as_that(funduq, serve
     head, keeper = new_identity(), served.identity
 
     first = await A2AAdapter(funduq).send_task(
-        agent, _message("go"), actor_chain=[head.sign_chain_hop()]
+        agent, _message("go"), actor_chain=[head.sign_chain_hop()], presenter_key=head.public_key
     )
     await A2AAdapter(funduq).send_task(
         agent,
         _message("I approve myself", task_id=first.id),
-        actor_chain=[keeper.sign_chain_hop()],
+        actor_chain=[keeper.sign_chain_hop()], presenter_key=keeper.public_key,
         metadata=_answer(keeper, first.id),
     )
 
@@ -126,18 +126,18 @@ async def test_two_answers_are_two_entries_in_order(funduq, serve, new_identity)
     head, keeper = new_identity(), served.identity
 
     first = await A2AAdapter(funduq).send_task(
-        agent, _message("go"), actor_chain=[head.sign_chain_hop()]
+        agent, _message("go"), actor_chain=[head.sign_chain_hop()], presenter_key=head.public_key
     )
     await A2AAdapter(funduq).send_task(
         agent,
         _message("one", task_id=first.id),
-        actor_chain=[head.sign_chain_hop()],
+        actor_chain=[head.sign_chain_hop()], presenter_key=head.public_key,
         metadata=_answer(head, first.id),
     )
     await A2AAdapter(funduq).send_task(
         agent,
         _message("two", task_id=first.id),
-        actor_chain=[keeper.sign_chain_hop()],
+        actor_chain=[keeper.sign_chain_hop()], presenter_key=keeper.public_key,
         metadata=_answer(keeper, first.id, ("int_2",)),
     )
 
@@ -156,13 +156,13 @@ async def test_an_old_proof_does_not_answer_a_new_ask(funduq, serve, new_identit
     head = new_identity()
 
     first = await A2AAdapter(funduq).send_task(
-        agent, _message("go"), actor_chain=[head.sign_chain_hop()]
+        agent, _message("go"), actor_chain=[head.sign_chain_hop()], presenter_key=head.public_key
     )
     stolen = _answer(head, first.id)  # signs the first ask, "int_1"
     await A2AAdapter(funduq).send_task(
         agent,
         _message("one", task_id=first.id),
-        actor_chain=[head.sign_chain_hop()],
+        actor_chain=[head.sign_chain_hop()], presenter_key=head.public_key,
         metadata=stolen,
     )
 
@@ -173,7 +173,7 @@ async def test_an_old_proof_does_not_answer_a_new_ask(funduq, serve, new_identit
         await A2AAdapter(funduq).send_task(
             agent,
             _message("replayed", task_id=first.id),
-            actor_chain=[head.sign_chain_hop()],
+            actor_chain=[head.sign_chain_hop()], presenter_key=head.public_key,
             metadata=stolen,
         )
 
@@ -198,12 +198,12 @@ async def test_a_caller_cannot_plant_an_answerer(funduq, serve, new_identity):
     head, impostor = new_identity(), new_identity()
 
     first = await A2AAdapter(funduq).send_task(
-        agent, _message("go"), actor_chain=[head.sign_chain_hop()]
+        agent, _message("go"), actor_chain=[head.sign_chain_hop()], presenter_key=head.public_key
     )
     await A2AAdapter(funduq).send_task(
         agent,
         _message("the answer", task_id=first.id),
-        actor_chain=[head.sign_chain_hop()],
+        actor_chain=[head.sign_chain_hop()], presenter_key=head.public_key,
         metadata={
             OBSERVED_METADATA_KEY: {"answeredBy": [impostor.public_key]},
             **_answer(head, first.id),
@@ -235,7 +235,7 @@ async def test_cancelling_a_run_that_is_waiting_closes_what_it_asked(funduq, ser
     head = new_identity()
 
     first = await A2AAdapter(funduq).send_task(
-        agent, _message("go"), actor_chain=[head.sign_chain_hop()]
+        agent, _message("go"), actor_chain=[head.sign_chain_hop()], presenter_key=head.public_key
     )
     async with funduq.session() as session:
         stored = await repo.get_run(session, first.id)

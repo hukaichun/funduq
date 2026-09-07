@@ -176,13 +176,13 @@ async def test_the_answer_runs_under_the_answerers_own_chain(funduq, serve, new_
     head, keeper = new_identity(), served.identity
 
     first = await A2AAdapter(funduq).send_task(
-        agent, _message("go"), actor_chain=[head.sign_chain_hop()]
+        agent, _message("go"), actor_chain=[head.sign_chain_hop()], presenter_key=head.public_key
     )
     signature = keeper.sign_resolution(first.id, ["int_1"])
     await A2AAdapter(funduq).send_task(
         agent,
         _message("the provider answers its own ask", task_id=first.id),
-        actor_chain=[keeper.sign_chain_hop()],
+        actor_chain=[keeper.sign_chain_hop()], presenter_key=keeper.public_key,
         metadata={
             "resolution": {
                 "publicKey": keeper.public_key,
@@ -238,7 +238,8 @@ async def test_the_agui_door_relays_the_runs_chain_on_a_resume_too(funduq, serve
         )
 
     first = await adapter.run(
-        agent, _body("t-resumed", "go", {"actorChain": [head.sign_chain_hop()]})
+        agent, _body("t-resumed", "go", {"actorChain": [head.sign_chain_hop()]}),
+        presenter_key=head.public_key,
     )
     [_ async for _ in first.events]
     await _until(lambda: first.run_id not in funduq.active_runs())
@@ -261,6 +262,7 @@ async def test_the_agui_door_relays_the_runs_chain_on_a_resume_too(funduq, serve
                 {"interruptId": "int_1", "status": "resolved", "payload": {"answer": 42}}
             )],
         ),
+        presenter_key=keeper.public_key,
     )
     [_ async for _ in answered.events]
     await _until(lambda: first.run_id not in funduq.active_runs())

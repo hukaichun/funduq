@@ -78,10 +78,6 @@ class WireLink:
     async def finish_run(self, run_id: str) -> None:
         self._funduq.finish_run(json.loads(json.dumps(run_id)), claimed_by=self.public_key)
 
-    async def thread_messages(self, thread_id: str, *, limit: int | None = None):
-        raw = await self._funduq.get_thread_messages(thread_id)
-        return json.loads(json.dumps(raw))
-
 
 async def test_a_run_travels_as_byte_frames_end_to_end(funduq):
     async def agent(run_input: RunAgentInput):

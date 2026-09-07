@@ -173,6 +173,7 @@ async def main() -> int:
         handle = await funduq.start_run(
             agent,
             {"messages": [{"id": "m1", "role": "user", "content": "act on the caller's behalf"}], "forwardedProps": {"actorChain": branched}},
+            presenter_key=hexk(b_key),
         )
         async for _ in handle.events():
             pass

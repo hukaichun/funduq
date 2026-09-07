@@ -10,7 +10,7 @@ from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from funduq.identity import provider_fingerprint
+from funduq.identity import provider_fingerprint, verify_chain
 from funduq.props import INTERJECTION_EXTENSION_URI
 from funduq.agui import build_run_agent_input
 from funduq.ids import new_id
@@ -578,6 +578,37 @@ async def messages_of_run(session: AsyncSession, run_id: str) -> list[dict[str, 
         )
     ).all()
     return [row.message_json for row in rows]
+
+
+async def messages_of_runs(session: AsyncSession, run_ids: list[str]) -> list[dict[str, Any]]:
+    """Every thread message the given runs carried in or produced, in thread order — a task's history when `run_ids` is a lineage."""
+    if not run_ids:
+        return []
+    rows = (
+        await session.execute(
+            select(thread_messages.c.message_json)
+            .where(thread_messages.c.run_id.in_(run_ids))
+            .order_by(thread_messages.c.id)
+        )
+    ).all()
+    return [row.message_json for row in rows]
+
+
+async def readers_of(session: AsyncSession, thread: dict[str, Any]) -> set[str] | None:
+    """The keys that may read a bound thread — its head, the provider serving its agent, and every key on its runs' chains — or None for a thread nobody bound, which is readable by whoever holds its id."""
+    if thread.get("head_key") is None:
+        return None
+    circle = {thread["provider_key"], thread["head_key"]}
+    chains = (
+        await session.execute(
+            select(runs.c.actor_chain).where(
+                runs.c.thread_id == thread["thread_id"], runs.c.actor_chain.is_not(None)
+            )
+        )
+    ).scalars().all()
+    for chain in chains:
+        circle |= set(verify_chain(chain).actor_public_keys)
+    return circle
 
 
 async def run_input_of(session: AsyncSession, run: RunRecord) -> dict[str, Any]:

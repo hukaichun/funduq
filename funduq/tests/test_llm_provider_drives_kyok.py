@@ -272,11 +272,13 @@ async def test_a_delegating_caller_funds_the_sub_agent_by_saying_so(funduq, serv
     sub_served = await serve(sub, "sub-agent")
     sub.identity = sub_served.identity
 
-    chain = new_chain(Ed25519PrivateKey.generate())
+    delegator = Ed25519PrivateKey.generate()
+    chain = new_chain(delegator)
     await A2AAdapter(funduq).send_task(
         sub_served.agents["sub-agent"],
         {"role": "user", "parts": [{"type": "text", "text": "delegated"}]},
         actor_chain=chain,
+        presenter_key=delegator.public_key().public_bytes_raw().hex(),
         metadata={
             "kyok": {
                 "llmProvider": {"providerKey": ref.provider_key, "name": ref.name},

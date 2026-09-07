@@ -3,8 +3,6 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from typing import Any
 
-from ag_ui.core import Message
-
 from funduq_provider_sdk.provider import DeliveredRun, Refusal
 
 
@@ -38,10 +36,4 @@ class FunduqLink(ABC):
 
     @abstractmethod
     async def finish_run(self, run_id: str) -> None:
-        pass
-
-    @abstractmethod
-    async def thread_messages(
-        self, thread_id: str, *, limit: int | None = None
-    ) -> list[Message]:
         pass

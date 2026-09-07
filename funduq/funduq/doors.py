@@ -9,13 +9,12 @@ from ag_ui.core import RunErrorEvent, RunStartedEvent
 
 from funduq.agui import build_run_agent_input
 from funduq.ids import new_id
-from funduq.errors import InvalidRunInput, LlmProviderNotFound
+from funduq.errors import InvalidRunInput, LlmProviderNotFound, PresenterRequired
 from funduq.identity import (
     InvalidChain,
     verify_chain,
     verify_cancel,
     verify_resolution,
-    verify_view,
 )
 from funduq.kyok import KyokBinding, KyokOptIn, parse_kyok_opt_in
 from funduq.handlers import close_with_terminal_event
@@ -32,7 +31,6 @@ __all__ = [
     "InboundRun",
     "Opened",
     "authorize_cancel",
-    "authorize_view",
     "dispatch",
     "head_key_of",
     "offline_events",
@@ -56,8 +54,17 @@ async def verify_caller(
     actor_chain = props.get("actorChain")
     if not actor_chain:
         return props, None, None
+    if presenter_key is None:
+        # The chain's last hop says "I present this"; with nobody at the door that cannot be checked, and recording it would record an unverified fact.
+        raise PresenterRequired(
+            "a chain was presented, but this door was not told which key presented it. "
+            "Nothing in the request is wrong: the transport must authenticate the caller "
+            "and hand the key to core (`presenter_key_of` on the A2A handler, "
+            "`presenter_key=` on the AG-UI adapter and the facade). Until it does, this "
+            "deployment does not accept chains."
+        )
     verified = verify_chain(actor_chain)
-    if presenter_key is not None and presenter_key != verified.presenter:
+    if presenter_key != verified.presenter:
         raise InvalidChain(
             "the chain's last hop was signed by "
             f"{verified.presenter[:16]}…, but the caller authenticated as "
@@ -160,25 +167,6 @@ def authorize_cancel(run: Any, metadata: dict[str, Any]) -> str | None:
         metadata.get("cancel") or {},
         run.run_id,
         {head, run.provider_key},
-    )
-
-
-def authorize_view(run: Any, metadata: dict[str, Any]) -> str | None:
-    """Refuses a read of a bound run that carries no view proof from one of its parties, and returns the authority that asked (`None` for an unbound run).
-
-    The read circle is wider than the act circle: every actor on the run's
-    chain may look — responsibility flowed through them — while cancel and
-    resolve stay with the head and the serving provider. An unbound run has
-    no parties to scope to and stays as public as its funduq-minted id.
-    """
-    head = head_key_of(run)
-    if head is None:
-        return None
-    allowed = {head, run.provider_key} | set(verify_chain(run.actor_chain).actor_public_keys)
-    return verify_view(
-        metadata.get("view") or {},
-        run.run_id,
-        allowed,
     )
 
 

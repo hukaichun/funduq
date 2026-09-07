@@ -204,7 +204,7 @@ async def test_a_cancelled_run_gets_no_run_error(brisk):
     stream = handle.events()
     assert (await stream.__anext__())["type"] == "RUN_STARTED"
     await started.wait()
-    handle.cancel()
+    await handle.cancel()
 
     assert [e["type"] async for e in stream] == []
 

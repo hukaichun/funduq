@@ -2,9 +2,11 @@
 
 The read circle is wider than the act circle: every actor on the run's
 chain may look — the parties responsibility flowed through — while cancel
-and resolve stay with the head and the serving provider. An unauthorized
-read looks like absence, because existence is part of what is guarded; an
-unbound run stays as public as its funduq-minted id.
+and resolve stay with the head and the serving provider. A read takes a
+key: the transport authenticates whoever is asking and hands the key down
+(`presenter_key_of`); how it established the key is its business. An
+unauthorized read looks like absence, because existence is part of what is
+guarded; an unbound run stays as public as its funduq-minted id.
 """
 
 from __future__ import annotations
@@ -12,10 +14,9 @@ from __future__ import annotations
 import time
 
 import pytest
-from a2a.types import a2a_pb2 as pb
 from a2a.utils.errors import TaskNotFoundError
 
-from funduq.identity import InvalidCancel, cancel_payload, view_payload
+from funduq.identity import InvalidCancel, cancel_payload
 from funduq.protocols.a2a import A2AAdapter
 
 from tests.conftest import EchoAgent
@@ -25,33 +26,23 @@ def _message(text: str) -> dict:
     return {"role": "user", "parts": [{"type": "text", "text": text}]}
 
 
-def _view(identity, run_id: str) -> dict:
-    timestamp = int(time.time())
-    return {
-        "view": {
-            "publicKey": identity.public_key,
-            "timestamp": timestamp,
-            "signature": identity.sign(view_payload(run_id, timestamp)),
-        }
-    }
-
-
 @pytest.fixture
 async def bound(funduq, serve, new_identity):
     """One settled run under a two-party chain: head (the user) -> middle (a
-    delegating provider) -> the serving provider."""
+    delegating provider) -> the serving provider. The middle party presents."""
     head, middle = new_identity(), new_identity()
     served = await serve(EchoAgent(), "trusted")
     chain = [head.sign_chain_hop()]
     chain.append(middle.sign_chain_hop(chain[-1]))
 
     task = await A2AAdapter(funduq).send_task(
-        served.agents["trusted"], _message("hi"), metadata={"actorChain": chain}
+        served.agents["trusted"], _message("hi"), metadata={"actorChain": chain},
+        presenter_key=middle.public_key,
     )
     return served, head, middle, task
 
 
-async def test_without_a_proof_a_bound_run_looks_absent(funduq, bound):
+async def test_without_a_key_a_bound_run_looks_absent(funduq, bound):
     served, _, _, task = bound
     adapter = A2AAdapter(funduq)
 
@@ -66,27 +57,39 @@ async def test_every_chain_party_may_look(funduq, bound):
     adapter = A2AAdapter(funduq)
 
     for party in (head, middle, served.identity):
-        got = await adapter.get_task(
-            served.agents["trusted"], task.id, view_metadata=_view(party, task.id)
-        )
+        got = await adapter.get_task(served.agents["trusted"], task.id, reader=party.public_key)
         assert got is not None, f"{party.public_key[:8]} is on the chain and may look"
         assert any(m.parts[0].text == "hi" for m in got.history)
 
 
-async def test_a_strangers_own_signature_buys_nothing(funduq, bound, new_identity):
+async def test_a_stranger_sees_nothing(funduq, bound, new_identity):
     served, _, _, task = bound
     stranger = new_identity()
 
     got = await A2AAdapter(funduq).get_task(
-        served.agents["trusted"], task.id, view_metadata=_view(stranger, task.id)
+        served.agents["trusted"], task.id, reader=stranger.public_key
     )
 
     assert got is None
 
 
+async def test_the_same_rule_holds_on_the_facade_and_for_the_provider(funduq, bound, new_identity):
+    """One surface, every entrance: the provider serving the agent reads its thread's history as itself; a stranger reads nothing; the record does not care which door asked."""
+    served, head, _, task = bound
+    stranger = new_identity()
+
+    assert await funduq.as_reader(served.identity.public_key).thread_messages(task.context_id), "the provider is a party"
+    assert await funduq.as_reader(head.public_key).thread_messages(task.context_id), "so is the head"
+    assert await funduq.as_reader(stranger.public_key).thread_messages(task.context_id) == []
+    assert await funduq.as_reader(None).thread_messages(task.context_id) == []
+    assert await funduq.as_reader(stranger.public_key).run(task.id) is None
+    assert await funduq.as_reader(stranger.public_key).lineage(task.id) == []
+
+
 async def test_the_middle_actor_may_look_but_not_cancel(funduq, serve, new_identity):
     """The act circle stays {head, serving provider}: a delegating middle
-    party follows what it handed on, it does not stop it."""
+    party follows what it handed on, it does not stop it. Reads take a key;
+    acts take a signature over the act."""
 
     class Holding:
         async def run_stream(self, agent_name, run_input):
@@ -105,15 +108,11 @@ async def test_the_middle_actor_may_look_but_not_cancel(funduq, serve, new_ident
         served.agents["slow"],
         _message("hi"),
         metadata={"actorChain": chain},
+        presenter_key=middle.public_key,
         return_immediately=True,
     )
 
-    assert (
-        await adapter.get_task(
-            served.agents["slow"], task.id, view_metadata=_view(middle, task.id)
-        )
-        is not None
-    )
+    assert await adapter.get_task(served.agents["slow"], task.id, reader=middle.public_key) is not None
 
     timestamp = int(time.time())
     with pytest.raises(InvalidCancel):
@@ -135,6 +134,5 @@ async def test_an_unbound_run_stays_as_public_as_its_id(funduq, serve):
     adapter = A2AAdapter(funduq)
     task = await adapter.send_task(served.agents["open"], _message("hi"))
 
-    got = await adapter.get_task(served.agents["open"], task.id)
-
-    assert got is not None
+    assert await adapter.get_task(served.agents["open"], task.id) is not None
+    assert await funduq.as_reader(None).thread_messages(task.context_id)

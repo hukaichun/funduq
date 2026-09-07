@@ -196,10 +196,7 @@ async def test_after_the_round_trip_the_link_holds_the_whole_resumable_turn(fund
     handed = {m["toolCallId"] for m in provider.rounds[1]["messages"] if m.get("role") == "tool"}
     assert handed == set(tool_results), "handed: only the new results"
 
-    pulled = [
-        m.model_dump(mode="json", by_alias=True, exclude_none=True)
-        for m in await served.link.thread_messages(first.thread_id)
-    ]
+    pulled = await funduq.as_reader(served.identity.public_key).thread_messages(first.thread_id)
     announced = {c["id"] for m in pulled for c in (m.get("toolCalls") or [])}
     answered = {m["toolCallId"] for m in pulled if m.get("role") == "tool"}
     assert len(announced) == 3, "pulled: the assistant turn, whole"

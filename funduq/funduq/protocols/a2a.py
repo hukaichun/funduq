@@ -25,8 +25,8 @@ from google.protobuf.json_format import MessageToDict, ParseDict, ParseError
 
 from funduq import repo
 from funduq.doors import (
+    authorize_cancel,
     InboundRun,
-    authorize_view,
     dispatch,
     open_run,
     relayed_chain,
@@ -41,11 +41,11 @@ from funduq.errors import (
     ThreadNotFound,
     ThreadOwnershipMismatch,
 )
-from funduq.identity import InvalidView
 from funduq.pause import open_asks
 from funduq.props import ADDRESSED_RUN_METADATA_KEY
 from funduq.models import AgentRef
 from funduq.protocols.a2a_translate import (
+    task_state_of,
     TERMINAL_STATES,
     a2a_message_to_agui_messages,
     agui_event_to_a2a_update,
@@ -137,16 +137,20 @@ class A2AAdapter:
         agent: AgentRef,
         task_id: str,
         *,
+        reader: str | None,
         history_length: int | None = None,
         cancel_requested: bool = False,
-    ) -> pb.Task:
-        """The task named `task_id` as it stands: its lineage's events in order, its tail's status, the thread's messages as history."""
-        lineage = await self._funduq.lineage(task_id)
+    ) -> pb.Task | None:
+        """The task named `task_id` as `reader` may see it: its lineage's events in order, its tail's status, the lineage's messages as history. None if there is no such task for this reader."""
+        record = self._funduq.as_reader(reader)
+        lineage = await record.lineage(task_id)
+        if not lineage or lineage[0].agent != agent:
+            return None
         tail = lineage[-1]
         events: list[dict[str, Any]] = []
         tail_events: list[dict[str, Any]] = []
         for run in lineage:
-            tail_events = await self._funduq.get_run_events(run.run_id)
+            tail_events = await record.events(run.run_id)
             events.extend(tail_events)
         return build_task(
             task_id,
@@ -154,7 +158,8 @@ class A2AAdapter:
             await self._display_name(agent),
             tail.status,
             events,
-            thread_messages=await self._funduq.get_thread_messages(tail.thread_id),
+            # A2A's `history` is the task's, not the context's: the lineage's own messages.
+            thread_messages=await record.task_messages(task_id),
             history_length=history_length,
             cancel_requested=cancel_requested or tail.cancel_requested_by is not None,
             tail_events=tail_events,
@@ -179,7 +184,7 @@ class A2AAdapter:
         if not return_immediately and is_live and self._funduq.broker.get(run_id) is not None:
             async for _ in self._funduq.broker.subscribe(run_id):
                 pass
-        return await self._task(agent, task_id, history_length=history_length)
+        return await self._task(agent, task_id, reader=presenter_key, history_length=history_length)
 
     async def send_task_streaming(
         self,
@@ -199,7 +204,7 @@ class A2AAdapter:
         events = self._funduq.broker.subscribe(run_id) if live else None
 
         async def results() -> AsyncIterator[Event]:
-            opening = await self._task(agent, task_id)
+            opening = await self._task(agent, task_id, reader=presenter_key)
             yield opening
             if not live:
                 stored = await self._funduq.get_run(run_id)
@@ -219,17 +224,17 @@ class A2AAdapter:
         agent: AgentRef,
         task_id: str,
         *,
-        view_metadata: dict[str, Any] | None = None,
+        reader: str | None = None,
     ) -> AsyncIterator[Event]:
-        """Reattaches to a task's event stream: the Task as it stands, then whatever its tail run still produces. A bound run demands a view proof, exactly as `get_task` does, and answers its absence the same way; a task in a terminal state has nothing left to stream and is refused, as A2A requires (§3.1.6)."""
-        run = await self._run_of(agent, task_id)
-        if run is None or not self._may_view(run, view_metadata):
+        """Reattaches to a task's event stream as `reader`: the Task as it stands, then whatever its tail run still produces. A task the reader may not see is not found — existence is part of what is guarded; one in a terminal state has nothing left to stream and is refused, as A2A requires (§3.1.6)."""
+        opening = await self._task(agent, task_id, reader=reader)
+        if opening is None:
             raise TaskNotFoundError(f"no task '{task_id}' for agent '{agent}'")
-        opening = await self._task(agent, task_id)
         if opening.status.state in TERMINAL_STATES:
             raise UnsupportedOperationError(f"task {task_id} has ended; there is nothing to subscribe to")
-        tail = (await self._funduq.lineage(task_id))[-1]
-        events = self._funduq.broker.subscribe(tail.run_id) if self._funduq.broker.get(tail.run_id) else None
+        record = self._funduq.as_reader(reader)
+        tail = (await record.lineage(task_id))[-1]
+        events = await record.subscribe(tail.run_id) if self._funduq.broker.get(tail.run_id) else None
 
         async def results() -> AsyncIterator[Event]:
             yield opening
@@ -252,32 +257,35 @@ class A2AAdapter:
         task_id: str,
         *,
         history_length: int | None = None,
-        view_metadata: dict[str, Any] | None = None,
+        reader: str | None = None,
     ) -> pb.Task | None:
-        """Returns the current `Task` for `task_id`, or None if it doesn't belong to `agent` — or if the run is bound to a chain and `view_metadata` carries no valid view proof from one of its parties. An unauthorized read looks like absence: existence is part of what is guarded."""
-        run = await self._run_of(agent, task_id)
-        if run is None or not self._may_view(run, view_metadata):
-            return None
-        return await self._task(agent, task_id, history_length=history_length)
+        """The current `Task` for `task_id` as `reader` may see it, or None: the task does not exist, belongs to another agent, or its thread is bound and the reader is not one of its parties. An unauthorized read looks like absence — existence is part of what is guarded."""
+        return await self._task(agent, task_id, reader=reader, history_length=history_length)
 
     async def cancel_task(
         self, agent: AgentRef, task_id: str, *, metadata: dict[str, Any] | None = None
     ) -> pb.Task | None:
-        """Asks the task's tail run to stop and returns the task as it stands, marked with the pending request. A task waiting for input has no provider to ask: cancelling it closes the wait."""
+        """Asks the task's tail run to stop and returns the task **as it stood when the request was made**, marked with the pending request. A cancel is an act with its own signed proof (`metadata.cancel`); the answer is read as the key that proof names. funduq can ask a provider to stop and cannot make it, so the answer never says `canceled` on the strength of the request — what the provider does with it shows up on the next read. A task waiting for input has no provider to ask, so cancelling it closes the wait."""
         run = await self._run_of(agent, task_id)
         if run is None:
             return None
-        current = await self._task(agent, task_id)
-        if current.status.state in TERMINAL_STATES:
+        reader = authorize_cancel(run, metadata or {}) or None
+        lineage = await self._funduq.lineage(task_id)
+        tail = lineage[-1]
+        state = task_state_of(tail.status, await self._funduq.get_run_events(tail.run_id), tail.cancel_requested_by is not None)
+        if state in TERMINAL_STATES:
             raise TaskNotCancelableError(
                 f"task {task_id} has already ended and cannot be cancelled"
             )
-        tail = (await self._funduq.lineage(task_id))[-1]
+        # Read before asking: the snapshot the request was made against, so the answer is the same whether the provider stops before or after we look.
+        as_it_stood = await self._task(agent, task_id, reader=reader, cancel_requested=True)
         try:
             asked = await self._funduq.cancel_run(tail.run_id, metadata=metadata or {})
         except RunNotCancellable as e:
             raise TaskNotCancelableError(str(e)) from e
-        return await self._task(agent, task_id, cancel_requested=asked)
+        if asked:
+            return as_it_stood
+        return await self._task(agent, task_id, reader=reader)
 
     async def _run_of(self, agent: AgentRef, task_id: str):
         """The run for `task_id`, or None if it doesn't exist or belongs to a different agent."""
@@ -285,15 +293,6 @@ class A2AAdapter:
         if run is None or AgentRef(provider_key=run.provider_key, name=run.agent_name) != agent:
             return None
         return run
-
-    @staticmethod
-    def _may_view(run: Any, view_metadata: dict[str, Any] | None) -> bool:
-        """Whether this read carries the authority a bound run demands; always true for an unbound one."""
-        try:
-            authorize_view(run, view_metadata or {})
-        except InvalidView:
-            return False
-        return True
 
     async def _display_name(self, agent: AgentRef) -> str:
         record = await self._funduq.get_agent(agent)
@@ -388,23 +387,18 @@ class A2ARequestHandler(RequestHandler):
         agent: AgentRef,
         *,
         presenter_key_of: Callable[[ServerCallContext], str | None] | None = None,
-        view_metadata_of: Callable[[ServerCallContext], dict | None] | None = None,
     ) -> None:
         self._adapter = A2AAdapter(funduq)
         self._agent = agent
         # The transport is the party that authenticates whoever presents a
-        # request; this hook is where it hands that identity down.
+        # request; this one hook is where it hands that key down — for writes
+        # (the chain's presenter) and reads (who is looking) alike. How it
+        # established the key is its business: a session, mTLS, or a
+        # signature over `view_payload` for one read.
         self._presenter_key_of = presenter_key_of
-        # A2A's read requests carry no caller data, so a view proof for a
-        # bound run rides the transport (a header, typically); this hook is
-        # where the transport hands it down as `{"view": …}`.
-        self._view_metadata_of = view_metadata_of
 
     def _presenter_key(self, context: ServerCallContext) -> str | None:
         return self._presenter_key_of(context) if self._presenter_key_of else None
-
-    def _view_metadata(self, context: ServerCallContext) -> dict | None:
-        return self._view_metadata_of(context) if self._view_metadata_of else None
 
     @validate_request_params
     async def on_message_send(
@@ -449,7 +443,7 @@ class A2ARequestHandler(RequestHandler):
             self._agent,
             params.id,
             history_length=params.history_length if params.HasField("history_length") else None,
-            view_metadata=self._view_metadata(context),
+            reader=self._presenter_key(context),
         )
 
     @validate_request_params
@@ -466,7 +460,7 @@ class A2ARequestHandler(RequestHandler):
         self, params: pb.SubscribeToTaskRequest, context: ServerCallContext
     ) -> AsyncGenerator[Event]:
         stream = await self._adapter.resubscribe_task(
-            self._agent, params.id, view_metadata=self._view_metadata(context)
+            self._agent, params.id, reader=self._presenter_key(context)
         )
         async for event in stream:
             yield event

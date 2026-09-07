@@ -156,10 +156,10 @@ async def test_a_provider_can_read_the_history_its_run_input_does_not_carry(fund
     second = await adapter.run(agent, _body(first.thread_id, "two"))
     [_ async for _ in second.events]
 
-    history = await served.runtime.link.thread_messages(first.thread_id)
+    history = await funduq.as_reader(served.identity.public_key).thread_messages(first.thread_id)
 
-    assert [m.role for m in history] == ["user", "assistant", "user", "assistant"]
-    assert [m.content for m in history if m.role == "user"] == ["one", "two"]
+    assert [m["role"] for m in history] == ["user", "assistant", "user", "assistant"]
+    assert [m["content"] for m in history if m["role"] == "user"] == ["one", "two"]
 
 
 async def test_limit_keeps_the_most_recent(funduq, serve):
@@ -173,14 +173,15 @@ async def test_limit_keeps_the_most_recent(funduq, serve):
         thread_id = result.thread_id
         [_ async for _ in result.events]
 
-    assert len(await served.runtime.link.thread_messages(thread_id)) == 6
-    assert [m.content for m in await served.runtime.link.thread_messages(thread_id, limit=2)] == ["three", "done"]
+    history = await funduq.as_reader(served.identity.public_key).thread_messages(thread_id)
+    assert len(history) == 6
+    assert [m["content"] for m in history[-2:]] == ["three", "done"]
 
 
 async def test_an_unknown_thread_is_empty_rather_than_an_error(funduq, serve):
     served = await serve(None, "solo")
 
-    assert await served.runtime.link.thread_messages("no-such-thread") == []
+    assert await funduq.as_reader(served.identity.public_key).thread_messages("no-such-thread") == []
 
 
 async def test_the_minted_id_rides_the_answer(funduq, serve):

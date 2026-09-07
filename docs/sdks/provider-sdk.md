@@ -30,7 +30,7 @@ run (handing it over — the verdict, accepted / declined / `Refusal`,
 answers through funduq's `answer_offer` door on the same road reports
 take, so a provider that accepts and streams in the same breath loses
 nothing), `cancel` (acknowledged),
-`report_event`, `finish_run`, `thread_messages`. `InProcessLink` is the
+`report_event`, `finish_run`. Reading the record — a thread's history, a run — is not a link verb: every party reads through funduq's one read surface (`Funduq.as_reader(key)`), the provider as the key it proved at the handshake. `InProcessLink` is the
 in-process transport (in-process is a transport, not a special case);
 `ProviderRuntime` is the worker loop — one handler per thread, one active
 run per thread by construction — that executes each agent's `run_stream`,
