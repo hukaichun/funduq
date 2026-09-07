@@ -47,10 +47,14 @@ client has the slot). A thread opened without a chain keeps the open
 behavior on this page forever — a later chained writer cannot lock it.
 
 **The caller's bag.** Everything a caller says *to funduq* — `actorChain`,
-the `kyok` opt-in, `resolution` — rides in one place: `forwardedProps` on
-AG-UI (the protocol's own field for a caller's free-form bag) and the
-message's `metadata` on A2A, which the A2A door translates to
-`forwardedProps` one-to-one. There is no `metadata` field on
+the `kyok` opt-in, `resolution`, an interjection target — rides in one
+place, and that place is **request-level** on both doors: `forwardedProps`
+on AG-UI (the protocol's own field for a caller's free-form bag) and the
+request's `metadata` on A2A (`SendMessageRequest.metadata`), which the A2A
+door translates to `forwardedProps` one-to-one. Levels correspond: an A2A
+`Message.metadata` is message-level, so it becomes the AG-UI message's own
+`metadata`, carried to the agent on that message and stored with it —
+funduq reads nothing from it. There is no `metadata` field on
 `RunAgentInput`; funduq adds none. The bag reaches the agent as sent, with
 funduq's one key added (below).
 The mechanics are in
@@ -197,7 +201,7 @@ client author needs them.
 - **Asking to join a turn in flight is a declared extension, never an
   inference.** Under the interjection extension
   (`https://github.com/hukaichun/funduq/ext/interjection/v1`), a caller
-  puts the target task's id in the message's `metadata` under
+  puts the target task's id in the request's `metadata` — the bag — under
   `<uri>/addressedRunId`; funduq relays it to the agent as
   `forwardedProps.funduq.addressedRunId` and holds no opinion about the
   target's state — the agent judges from its own loop, and an ask that

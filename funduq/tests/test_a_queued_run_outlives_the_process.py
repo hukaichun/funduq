@@ -179,8 +179,8 @@ async def test_an_interjection_whose_target_died_fails_loudly(funduq, attach, se
                 "role": "user",
                 "parts": [{"type": "text", "text": "actually, in metric"}],
                 "contextId": busy.thread_id,
-                "metadata": {ADDRESSED_RUN_METADATA_KEY: busy.run_id},
             },
+            metadata={ADDRESSED_RUN_METADATA_KEY: busy.run_id},
         )
     )
 
