@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import datetime
 from typing import Any
 
 from a2a.types import a2a_pb2 as pb
@@ -211,6 +212,7 @@ def build_task(
     history_length: int | None = None,
     cancel_requested: bool = False,
     tail_events: list[dict[str, Any]] | None = None,
+    status_at: "datetime | None" = None,
 ) -> pb.Task:
     """Builds an A2A `Task` from a task's tail status and event history (`tail_events`, when the task is a lineage and `run_events` spans it), merging each message's text-content deltas (in event order) into one artifact per `messageId`, filling `history` from the thread's stored messages, and carrying every unmapped event, in order, under `metadata.funduq.agui_events`."""
     merged: dict[str, list[str]] = {}
@@ -223,11 +225,16 @@ def build_task(
         elif not is_mapped(event):
             overflow.append(event)
 
+    status = pb.TaskStatus(
+        # The task's state is its tail run's; `run_events` may span the whole lineage for the artifacts.
+        state=task_state_of(run_status, run_events if tail_events is None else tail_events, cancel_requested)
+    )
+    if status_at is not None:
+        status.timestamp.FromDatetime(status_at)
     task = pb.Task(
         id=task_id,
         context_id=context_id,
-        # The task's state is its tail run's; `run_events` may span the whole lineage for the artifacts.
-        status=pb.TaskStatus(state=task_state_of(run_status, run_events if tail_events is None else tail_events, cancel_requested)),
+        status=status,
         history=history_of(thread_messages or [], context_id, limit=history_length),
         artifacts=[
             pb.Artifact(artifact_id=artifact_id, parts=[pb.Part(text="".join(chunks))])

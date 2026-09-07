@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import contextlib
+from datetime import datetime, timezone
 import logging
 from collections.abc import AsyncGenerator, AsyncIterator, Callable
 from dataclasses import dataclass
@@ -34,6 +35,7 @@ from funduq.doors import (
     verify_caller,
 )
 from funduq.errors import (
+    StreamTaken,
     AgentNotFound,
     InvalidRunInput,
     LlmProviderNotFound,
@@ -163,6 +165,7 @@ class A2AAdapter:
             history_length=history_length,
             cancel_requested=cancel_requested or tail.cancel_requested_by is not None,
             tail_events=tail_events,
+            status_at=tail.last_activity_at or tail.created_at,
         )
 
     async def send_task(
@@ -234,7 +237,11 @@ class A2AAdapter:
             raise UnsupportedOperationError(f"task {task_id} has ended; there is nothing to subscribe to")
         record = self._funduq.as_reader(reader)
         tail = (await record.lineage(task_id))[-1]
-        events = await record.subscribe(tail.run_id) if self._funduq.broker.get(tail.run_id) else None
+        try:
+            events = await record.subscribe(tail.run_id) if self._funduq.broker.get(tail.run_id) else None
+        except StreamTaken as e:
+            # A2A §3.5.2 leaves serving several streams a MAY; funduq serves one, so a second is refused rather than handed half the events.
+            raise UnsupportedOperationError(str(e)) from e
 
         async def results() -> AsyncIterator[Event]:
             yield opening
@@ -286,6 +293,61 @@ class A2AAdapter:
         if asked:
             return as_it_stood
         return await self._task(agent, task_id, reader=reader)
+
+    async def list_tasks(
+        self,
+        agent: AgentRef,
+        *,
+        context_id: str | None,
+        reader: str | None = None,
+        status: int | None = None,
+        page_size: int | None = None,
+        page_token: str | None = None,
+        history_length: int | None = None,
+        status_timestamp_after: "datetime | None" = None,
+        include_artifacts: bool = False,
+    ) -> pb.ListTasksResponse:
+        """The tasks of one context as `reader` may see them (A2A §3.1.4), newest status first, cursor-paged.
+
+        A `contextId` is required in practice: it is the id a caller holds, and
+        holding it is what makes a thread's tasks visible to anyone on an unbound
+        thread — the standing capability-by-identifier rule. Without one nothing
+        is visible, and the page is empty. On a bound thread the reader must be
+        a party, or the page is empty likewise: existence is part of what is
+        guarded.
+        """
+        size = page_size if page_size and page_size > 0 else 50
+        empty = pb.ListTasksResponse(tasks=[], next_page_token="", page_size=0, total_size=0)
+        if not context_id:
+            return empty
+        record = self._funduq.as_reader(reader)
+        tasks: list[pb.Task] = []
+        for root in await record.root_runs(context_id):
+            if root.agent != agent:
+                continue
+            task = await self._task(agent, root.run_id, reader=reader, history_length=history_length)
+            if task is None:
+                continue
+            if status and task.status.state != status:
+                continue
+            if status_timestamp_after is not None and task.status.timestamp.ToDatetime(tzinfo=timezone.utc) <= status_timestamp_after:
+                continue
+            tasks.append(task)
+        tasks.sort(key=lambda task: task.status.timestamp.ToDatetime(), reverse=True)
+        try:
+            offset = int(page_token) if page_token else 0
+        except ValueError as e:
+            raise InvalidParamsError(f"pageToken '{page_token}' is not one this door issued") from e
+        page = tasks[offset : offset + size]
+        if not include_artifacts:
+            for task in page:
+                task.ClearField("artifacts")
+        return pb.ListTasksResponse(
+            tasks=page,
+            next_page_token=str(offset + size) if offset + size < len(tasks) else "",
+            page_size=len(page),
+            total_size=len(tasks),
+        )
 
     async def _run_of(self, agent: AgentRef, task_id: str):
         """The run for `task_id`, or None if it doesn't exist or belongs to a different agent."""
@@ -497,7 +559,21 @@ class A2ARequestHandler(RequestHandler):
     async def on_list_tasks(
         self, params: pb.ListTasksRequest, context: ServerCallContext
     ) -> pb.ListTasksResponse:
-        raise UnsupportedOperationError("listing tasks is not offered through the A2A door")
+        return await self._adapter.list_tasks(
+            self._agent,
+            context_id=params.context_id or None,
+            reader=self._presenter_key(context),
+            status=params.status or None,
+            page_size=params.page_size if params.HasField("page_size") else None,
+            page_token=params.page_token or None,
+            history_length=params.history_length if params.HasField("history_length") else None,
+            status_timestamp_after=(
+                params.status_timestamp_after.ToDatetime(tzinfo=timezone.utc)
+                if params.HasField("status_timestamp_after")
+                else None
+            ),
+            include_artifacts=params.include_artifacts if params.HasField("include_artifacts") else False,
+        )
 
     async def on_get_extended_agent_card(
         self, params: pb.GetExtendedAgentCardRequest, context: ServerCallContext

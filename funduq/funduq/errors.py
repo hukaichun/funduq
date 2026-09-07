@@ -95,3 +95,7 @@ class PresenterRequired(FunduqError):
     `InvalidChain` so a gateway can answer "authentication required" rather
     than "bad request".
     """
+
+
+class StreamTaken(FunduqError):
+    """The run already has a live stream. funduq serves one stream per run (A2A §3.5.2 leaves serving several a MAY); a second subscriber is refused rather than handed half the events."""
