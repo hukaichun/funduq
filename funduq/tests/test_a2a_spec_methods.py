@@ -76,6 +76,7 @@ OFFERED = {
     "on_get_task": "get_task",
     "on_cancel_task": "cancel_task",
     "on_subscribe_to_task": "resubscribe_task",
+    "on_list_tasks": "list_tasks",
 }
 
 NOT_OFFERED = {
@@ -84,9 +85,7 @@ NOT_OFFERED = {
     "on_get_task_push_notification_config",
     "on_list_task_push_notification_configs",
     "on_delete_task_push_notification_config",
-    # Listing tasks and the extended card are the gateway's to answer if it
-    # wants them; core exposes the roster its own way.
-    "on_list_tasks",
+    # The extended card is the gateway's to answer if it wants one.
     "on_get_extended_agent_card",
 }
 

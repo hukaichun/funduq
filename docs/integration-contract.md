@@ -254,6 +254,18 @@ client author needs them.
 - **Non-lifecycle AG-UI events ride status updates** under a funduq
   metadata key. A standard client ignores them, which means tool-call
   events are not visible over A2A.
+- **`ListTasks` is scoped by `contextId`.** The id a caller holds is what
+  makes a thread's tasks visible to it; without a `contextId` nothing is
+  visible and the page is empty (`nextPageToken` is always present, `""`
+  when there is no more). On a bound thread the reader — the key the
+  transport authenticated — must be a party, or the page is empty
+  likewise. Tasks come newest status first, cursor-paged; `artifacts` are
+  omitted unless `includeArtifacts` asks (§3.1.4).
+- **One stream per task.** A2A leaves serving several concurrent streams
+  a MAY (§3.5.2); funduq serves one, so a `SubscribeToTask` on a task
+  whose stream is already open is refused with `UnsupportedOperationError`
+  rather than handed half the events. When that stream ends, a live task
+  can be subscribed to again.
 
 ## Where the inventions live
 

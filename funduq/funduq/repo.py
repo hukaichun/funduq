@@ -774,6 +774,18 @@ async def lineage_tail(session: AsyncSession, run_id: str) -> RunRecord | None:
     return None
 
 
+async def root_runs_in_thread(session: AsyncSession, thread_id: str) -> list[RunRecord]:
+    """The runs that start a lineage on `thread_id` — the thread's tasks, as A2A counts them — newest first."""
+    rows = (
+        await session.execute(
+            select(runs)
+            .where(runs.c.thread_id == thread_id, runs.c.parent_run_id.is_(None))
+            .order_by(runs.c.created_at.desc(), runs.c.run_id.desc())
+        )
+    ).mappings().all()
+    return [RunRecord(**row) for row in rows]
+
+
 async def root_of(session: AsyncSession, run: RunRecord) -> str:
     """The id of the run that started `run`'s lineage — the id a caller holds for it across every answer (an A2A task id), and what a resolution proof is signed over."""
     current = run

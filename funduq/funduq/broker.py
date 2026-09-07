@@ -36,6 +36,7 @@ from funduq.config import (
     UNDELIVERED_WINDOW_SECONDS,
     UNSERVED_TIMEOUT_SECONDS,
 )
+from funduq.errors import StreamTaken
 from funduq.models import AgentRef
 
 logger = logging.getLogger("funduq.broker")
@@ -230,6 +231,8 @@ class Run:
     saw_run_finished: bool = False
     saw_run_error: bool = False
     out_queue: asyncio.Queue[Any] = field(default_factory=asyncio.Queue)
+    # One consumer at a time: a second would take half the events.
+    stream_open: bool = False
     settled: asyncio.Event = field(default_factory=asyncio.Event)
 
 
@@ -265,12 +268,15 @@ def _snapshot(run: Run) -> RunSnapshot:
 
 
 async def _drain_run(run: Run) -> AsyncIterator[Any]:
-    """Yields items placed on `run.out_queue` until the END_OF_STREAM sentinel, then returns."""
-    while True:
-        item = await run.out_queue.get()
-        if item is END_OF_STREAM:
-            return
-        yield item
+    """Yields items placed on `run.out_queue` until the END_OF_STREAM sentinel, then returns. Holds the run's one stream while it lives."""
+    try:
+        while True:
+            item = await run.out_queue.get()
+            if item is END_OF_STREAM:
+                return
+            yield item
+    finally:
+        run.stream_open = False
 
 
 async def _no_events() -> AsyncIterator[Any]:
@@ -915,9 +921,14 @@ class RunBroker:
         return _snapshot(run) if run is not None else None
 
     def subscribe(self, run_id: str) -> AsyncIterator[Any]:
-        """Returns an async iterator of whatever is pushed to `run_id`'s out_queue, ending when the run settles; an empty iterator if `run_id` is unknown."""
+        """Returns an async iterator of whatever is pushed to `run_id`'s out_queue, ending when the run settles; an empty iterator if `run_id` is unknown. One stream per run: a second subscriber while one is open raises `StreamTaken` — two consumers of one queue would each get half the events."""
         run = self._runs.get(run_id)
-        return _drain_run(run) if run is not None else _no_events()
+        if run is None:
+            return _no_events()
+        if run.stream_open:
+            raise StreamTaken(f"run {run_id} already has a live stream; funduq serves one")
+        run.stream_open = True
+        return _drain_run(run)
 
     def _poke_threads(self) -> None:
         for handler in list(self._threads.values()):

@@ -163,6 +163,13 @@ class Reader:
             lineage = await repo.lineage(session, run_id)
             return await repo.messages_of_runs(session, [r.run_id for r in lineage])
 
+    async def root_runs(self, thread_id: str) -> list[RunRecord]:
+        """The tasks on a thread — the runs that start a lineage — newest first; empty if the reader may not see the thread."""
+        async with self._funduq.session() as session:
+            if not await self._may_read(session, thread_id):
+                return []
+            return await repo.root_runs_in_thread(session, thread_id)
+
     async def subscribe(self, run_id: str) -> AsyncIterator[Any] | None:
         """The live stream of a run the reader may see; None if there is no such run for this reader (the run may exist and be somebody else's)."""
         if await self.run(run_id) is None:

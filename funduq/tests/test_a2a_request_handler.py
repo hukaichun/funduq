@@ -118,7 +118,6 @@ async def test_push_notifications_are_refused_in_the_words_the_spec_names(handle
 @pytest.mark.parametrize(
     ("operation", "request_"),
     [
-        ("on_list_tasks", pb.ListTasksRequest()),
         ("on_get_extended_agent_card", pb.GetExtendedAgentCardRequest()),
     ],
 )
