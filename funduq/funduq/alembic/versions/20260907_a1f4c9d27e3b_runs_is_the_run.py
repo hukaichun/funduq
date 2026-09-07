@@ -22,7 +22,7 @@ def upgrade() -> None:
     op.execute(sa.text("DELETE FROM run_events"))
     op.execute(sa.text("DELETE FROM thread_messages"))
     op.execute(sa.text("DELETE FROM runs"))
-    with op.batch_alter_table("runs", recreate="always") as batch:
+    with op.batch_alter_table("runs") as batch:
         batch.drop_constraint("ck_runs_protocol", type_="check")
         batch.drop_constraint("ck_runs_status", type_="check")
         batch.drop_column("protocol")
@@ -37,7 +37,7 @@ def upgrade() -> None:
         batch.add_column(sa.Column("resume", _JSON, nullable=True))
         batch.add_column(sa.Column("cancel_requested_by", sa.String(), nullable=True))
         batch.create_check_constraint("ck_runs_status", _STATUS_CHECK)
-    with op.batch_alter_table("thread_messages", recreate="always") as batch:
+    with op.batch_alter_table("thread_messages") as batch:
         batch.add_column(sa.Column("origin", sa.String(), nullable=False))
         batch.create_check_constraint("ck_thread_messages_origin", "origin IN ('caller', 'agent')")
 
@@ -46,10 +46,10 @@ def downgrade() -> None:
     op.execute(sa.text("DELETE FROM run_events"))
     op.execute(sa.text("DELETE FROM thread_messages"))
     op.execute(sa.text("DELETE FROM runs"))
-    with op.batch_alter_table("thread_messages", recreate="always") as batch:
+    with op.batch_alter_table("thread_messages") as batch:
         batch.drop_constraint("ck_thread_messages_origin", type_="check")
         batch.drop_column("origin")
-    with op.batch_alter_table("runs", recreate="always") as batch:
+    with op.batch_alter_table("runs") as batch:
         batch.drop_constraint("ck_runs_status", type_="check")
         for column in ("cancel_requested_by", "resume", "forwarded_props", "context", "tools", "state", "parent_run_id"):
             batch.drop_column(column)
