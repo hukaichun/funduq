@@ -265,10 +265,11 @@ class A2AAdapter:
     async def cancel_task(
         self, agent: AgentRef, task_id: str, *, metadata: dict[str, Any] | None = None
     ) -> pb.Task | None:
-        """Asks the task's tail run to stop and returns the task as it stands, marked with the pending request. A cancel is an act, and carries its own signed proof (`metadata.cancel`); a task waiting for input has no provider to ask, so cancelling it closes the wait."""
+        """Asks the task's tail run to stop and returns the task **as it stood when the request was made**, marked with the pending request. A cancel is an act with its own signed proof (`metadata.cancel`); the answer is read as the key that proof names. funduq can ask a provider to stop and cannot make it, so the answer never says `canceled` on the strength of the request — what the provider does with it shows up on the next read. A task waiting for input has no provider to ask, so cancelling it closes the wait."""
         run = await self._run_of(agent, task_id)
         if run is None:
             return None
+        reader = authorize_cancel(run, metadata or {}) or None
         lineage = await self._funduq.lineage(task_id)
         tail = lineage[-1]
         state = task_state_of(tail.status, await self._funduq.get_run_events(tail.run_id), tail.cancel_requested_by is not None)
@@ -276,12 +277,15 @@ class A2AAdapter:
             raise TaskNotCancelableError(
                 f"task {task_id} has already ended and cannot be cancelled"
             )
+        # Read before asking: the snapshot the request was made against, so the answer is the same whether the provider stops before or after we look.
+        as_it_stood = await self._task(agent, task_id, reader=reader, cancel_requested=True)
         try:
             asked = await self._funduq.cancel_run(tail.run_id, metadata=metadata or {})
         except RunNotCancellable as e:
             raise TaskNotCancelableError(str(e)) from e
-        # The proof verified names the key that asked; the answer is read as that key.
-        return await self._task(agent, task_id, reader=authorize_cancel(run, metadata or {}) or None, cancel_requested=asked)
+        if asked:
+            return as_it_stood
+        return await self._task(agent, task_id, reader=reader)
 
     async def _run_of(self, agent: AgentRef, task_id: str):
         """The run for `task_id`, or None if it doesn't exist or belongs to a different agent."""
