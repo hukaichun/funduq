@@ -390,6 +390,23 @@ async def test_history_length_keeps_the_last_messages(funduq, callee):
     assert trimmed.history[0].role == pb.Role.ROLE_AGENT
 
 
+async def test_history_length_zero_keeps_none(funduq, callee):
+    """§3.2.4 reads the field's presence, so an explicit 0 asks for no
+    history and an absent field asks for all of it. The two used to give the
+    same answer: the handler passed 0 down, and `history_of` then fell back
+    to the whole list because 0 is falsy. Slicing does not fix it on its own
+    either — `history[-0:]` is `history[0:]`, the entire list again."""
+    adapter = A2AAdapter(funduq)
+    sent = await adapter.send_task(callee, _message("hi"))
+    assert len(sent.history) >= 2, "one exchange stores at least two messages"
+
+    none = await adapter.get_task(callee, sent.id, history_length=0)
+    every = await adapter.get_task(callee, sent.id)
+
+    assert list(none.history) == []
+    assert len(every.history) == len(sent.history)
+
+
 async def test_an_unknown_context_id_is_a2as_own_error_not_a_new_thread(funduq, callee):
     """Thread ids are funduq-minted on both doors; a caller's own string
     never addresses state. The doors differ only in what an unknown id can
