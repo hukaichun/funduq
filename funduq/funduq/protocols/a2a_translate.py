@@ -187,7 +187,7 @@ def _status_update(
 def history_of(
     thread_messages: list[dict[str, Any]], context_id: str, *, limit: int | None = None
 ) -> list[pb.Message]:
-    """The Task's `history`: each stored user/assistant thread message becomes one A2A `Message` — the reverse of `a2a_message_to_agui_messages`. Other roles are funduq-internal machinery, not the conversation, and stay out. `limit` keeps the last N after that filter."""
+    """The Task's `history`: each stored user/assistant thread message becomes one A2A `Message` — the reverse of `a2a_message_to_agui_messages`. Other roles are funduq-internal machinery, not the conversation, and stay out. `limit` keeps the last N after that filter — `0` keeps none, which is what §3.2.4 says an explicit `historyLength: 0` asks for, and only an absent field (`None`) keeps all."""
     history = [
         pb.Message(
             message_id=str(message.get("id") or ""),
@@ -198,7 +198,9 @@ def history_of(
         for message in thread_messages
         if message.get("role") in ("user", "assistant")
     ]
-    return history[-limit:] if limit else history
+    if limit is None:
+        return history
+    return history[-limit:] if limit else []
 
 
 def build_task(
