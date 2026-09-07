@@ -24,11 +24,21 @@ gateway that authenticates the caller by SSO, mTLS, or a credential it
 issued, and passes the key it authenticated as `presenter_key`. funduq then
 refuses a chain whose last hop someone else signed.
 
-Passing it is optional and omitting it changes nothing, because this is an
-extension for a deployment that has such a seat rather than a new
-requirement. A deployment that omits it is exactly as exposed as it was:
-any party holding a chain can present it. See
-actor chain and
+Passing it is not optional. A chain arriving with no `presenter_key` raises
+`PresenterRequired` — the request is refused, not accepted unchecked,
+because recording a chain nobody vouched for would record an unverified
+fact. A deployment without such a seat does not accept chains at all.
+
+**That check is the whole of the anti-replay story**, and a transport
+author should know why nothing else is needed. The chain is not a secret:
+it reaches the serving provider, and its as-presented form is on the run's
+record, so any party that has seen one holds the bytes. What holding them
+does not buy is presenting them — the door refuses a chain whose last hop
+it did not authenticate, and the only way past that is to authenticate as
+the key that signed the last hop, which is to be that party. So a hop
+carries no timestamp and needs none: an agent may extend a chain hours
+after it received the work, and the proof is exactly as strong as it was
+at the first minute. See
 `scripts/probes/probe_a_provider_can_speak_as_the_caller.py`.
 
 Two things this does **not** close, deliberately:
