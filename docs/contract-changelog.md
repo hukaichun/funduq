@@ -28,6 +28,48 @@ entries below say what to change and not only what moved.
 
 ---
 
+## Revision 22 — 2026-09-08
+
+**Core does not decide who may read** (#275). Revision 21 named the line in
+its own entry below — "Reads take a key, acts take a signature … `cancel`
+and `resolution` keep their signed proofs: they are acts on one run" — and
+then had reads answer to the record of acts. A chain records that something
+happened and who answers for it. A read makes nothing happen and adds no
+hop, so it is not the chain's to rule on.
+
+Who may look is an authorisation policy, and authorisation sits at the wire,
+in a deployment of any size owned by a different team from the one embedding
+this library. Core keeping a second copy meant one rule with two owners, and
+core's won silently: a denied read returned `[]` or `None`, which is what
+"there is nothing there" also looks like, so a serving layer that widened
+its own rule was overruled without a signal. There was no way to widen it
+either — the only lever a door held was which key it passed, so the one
+available extension was to pass a key already on the chain, which is to
+impersonate a party.
+
+- **`Funduq.as_reader` and the `Reader` class are gone.** The record's own
+  reads are the surface: `get_thread_messages`, `get_run`, `get_run_events`,
+  `lineage`, and now `root_runs`, `task_messages` and `subscribe`, which
+  existed only on `Reader` before. None of them filters.
+- **`Funduq.parties_of(thread_id)` is the answer.** The head, the provider
+  serving the agent, every key on the thread's runs' chains — or `None` for
+  a thread nobody bound, which names no parties at all. Deriving it stays
+  core's alone: the chains are here and only here are they verified. What
+  follows from it is the transport's.
+- **`reader=` is gone from the A2A door.** `get_task`, `resubscribe_task`
+  and `list_tasks` no longer take it, and `A2ARequestHandler` no longer
+  feeds `presenter_key_of` into reads. `presenter_key` stays on the write
+  path, where it is checked against a chain's last hop — an act.
+- **`list_tasks` still needs a `contextId`**, unchanged: holding the id is
+  what makes a thread's tasks addressable. What changed is that naming them
+  is now all this door decides.
+
+Migration: a serving layer that wants revision 21's rule keeps it, in one
+place of its own — `parties_of` returns the same set the gate used to
+compute. A deployment that had no seat in front of its doors now serves
+reads to whoever reaches them, so the seat is not optional any more; #275
+records the argument and what it costs.
+
 ## Revision 21 — 2026-09-07
 
 **Reading the record is one surface, and its reader is a key** (#264).

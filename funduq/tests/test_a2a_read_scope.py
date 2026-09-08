@@ -46,54 +46,43 @@ async def bound(funduq, serve, new_identity):
     return served, head, middle, task
 
 
-async def test_without_a_key_a_bound_run_looks_absent(funduq, bound):
-    served, _, _, task = bound
-    adapter = A2AAdapter(funduq)
+async def test_core_does_not_decide_who_may_read(funduq, bound, new_identity):
+    """A chain records acts; reading is not one, so it no longer decides who
+    may look (#275). Every read answers from the record, to whoever asks —
+    the doors carry no `reader` and core carries no circle. Authorisation is
+    the wire's, where it belongs and where a different team usually owns it.
 
-    assert await adapter.get_task(served.agents["trusted"], task.id) is None
-    with pytest.raises(TaskNotFoundError):
-        async for _ in await adapter.resubscribe_task(served.agents["trusted"], task.id):
-            pass
-
-
-async def test_every_chain_party_may_look(funduq, bound):
-    served, head, middle, task = bound
-    adapter = A2AAdapter(funduq)
-
-    for party in (head, middle, served.identity):
-        got = await adapter.get_task(served.agents["trusted"], task.id, reader=party.public_key)
-        assert got is not None, f"{party.public_key[:8]} is on the chain and may look"
-        assert any(m.parts[0].text == "hi" for m in got.history)
-
-
-async def test_a_stranger_sees_nothing(funduq, bound, new_identity):
+    What core still owes that team is the answer it cannot compute for
+    itself: `parties_of`, asserted below."""
     served, _, _, task = bound
     stranger = new_identity()
+    adapter = A2AAdapter(funduq)
 
-    got = await A2AAdapter(funduq).get_task(
-        served.agents["trusted"], task.id, reader=stranger.public_key
-    )
+    assert await adapter.get_task(served.agents["trusted"], task.id) is not None
+    assert await funduq.get_thread_messages(task.context_id)
+    assert await funduq.get_run(task.id) is not None
+    assert await funduq.lineage(task.id)
 
-    assert got is None
+    # And nothing about the stranger's key changes any of it — there is no
+    # longer anywhere to put it.
+    assert stranger.public_key not in (await funduq.parties_of(task.context_id))
 
 
-async def test_the_same_rule_holds_on_the_facade_and_for_the_provider(funduq, bound, new_identity):
-    """One surface, every entrance: the provider serving the agent reads its thread's history as itself; a stranger reads nothing; the record does not care which door asked."""
-    served, head, _, task = bound
-    stranger = new_identity()
+async def test_a_task_of_another_agent_is_still_not_this_agents(funduq, bound, serve):
+    """The one thing `get_task` still refuses is the thing that was never
+    authorisation: a task belonging to a different agent is not this agent's
+    task, whoever is asking."""
+    served, _, _, task = bound
+    other = (await serve(EchoAgent(), "other")).agents["other"]
 
-    assert await funduq.as_reader(served.identity.public_key).thread_messages(task.context_id), "the provider is a party"
-    assert await funduq.as_reader(head.public_key).thread_messages(task.context_id), "so is the head"
-    assert await funduq.as_reader(stranger.public_key).thread_messages(task.context_id) == []
-    assert await funduq.as_reader(None).thread_messages(task.context_id) == []
-    assert await funduq.as_reader(stranger.public_key).run(task.id) is None
-    assert await funduq.as_reader(stranger.public_key).lineage(task.id) == []
+    assert await A2AAdapter(funduq).get_task(other, task.id) is None
 
 
 async def test_the_middle_actor_may_look_but_not_cancel(funduq, serve, new_identity):
     """The act circle stays {head, serving provider}: a delegating middle
-    party follows what it handed on, it does not stop it. Reads take a key;
-    acts take a signature over the act."""
+    party follows what it handed on, it does not stop it. The chain decides
+    acts and only acts — since #275 it decides no reads at all, so what is
+    asserted here is the refusal, not the look."""
 
     class Holding:
         async def run_stream(self, agent_name, run_input):
@@ -116,7 +105,7 @@ async def test_the_middle_actor_may_look_but_not_cancel(funduq, serve, new_ident
         return_immediately=True,
     )
 
-    assert await adapter.get_task(served.agents["slow"], task.id, reader=middle.public_key) is not None
+    assert await adapter.get_task(served.agents["slow"], task.id) is not None
 
     timestamp = int(time.time())
     with pytest.raises(InvalidCancel):
@@ -139,17 +128,17 @@ async def test_an_unbound_run_stays_as_public_as_its_id(funduq, serve):
     task = await adapter.send_task(served.agents["open"], _message("hi"))
 
     assert await adapter.get_task(served.agents["open"], task.id) is not None
-    assert await funduq.as_reader(None).thread_messages(task.context_id)
+    assert await funduq.get_thread_messages(task.context_id)
 
 
 async def test_a_chainless_run_on_a_bound_thread_does_not_break_every_read(funduq, bound):
-    """`readers_of` gathers the chains on a thread to build its circle. It
-    used to filter with `actor_chain.is_not(None)`, which does not mean what
-    it reads as: the column is JSON, so a Python `None` is stored as JSON
-    `null` rather than SQL NULL and the filter matches it — as it matches
-    `[]`, which no such filter catches either. `verify_chain` then raised
-    `InvalidChain("empty actor chain")` and *every* read of the thread
-    raised instead of answering, for the parties in the circle too.
+    """`readers_of` gathers the chains on a thread to answer `parties_of`.
+    It used to filter with `actor_chain.is_not(None)`, which does not mean
+    what it reads as: the column is JSON, so a Python `None` is stored as
+    JSON `null` rather than SQL NULL and the filter matches it — as it
+    matches `[]`, which no such filter catches either. `verify_chain` then
+    raised `InvalidChain("empty actor chain")`, and while that answer still
+    gated every read, one such row made the whole thread unreadable (#270).
 
     The doors refuse a chainless write to a bound thread, so this row is one
     door away rather than impossible; the record has to be total on its own.
@@ -167,18 +156,16 @@ async def test_a_chainless_run_on_a_bound_thread_does_not_break_every_read(fundu
             )
         await session.commit()
 
-    got = await A2AAdapter(funduq).get_task(
-        served.agents["trusted"], task.id, reader=head.public_key
-    )
-    assert got is not None, "the head is in the circle and a chainless sibling run must not hide it"
+    assert await A2AAdapter(funduq).get_task(served.agents["trusted"], task.id) is not None
+    assert await funduq.parties_of(stored.thread_id), "a chainless sibling must not empty the answer"
 
 
 async def test_parties_of_answers_without_deciding(funduq, bound, new_identity):
     """Core is the only party that can compute the set — the chains are here
     and only here are they verified — so it publishes the answer separately
-    from `as_reader`'s use of it. A gateway that owns authorisation asks
-    this instead of reaching into `repo`, or reading a silence that says
-    "not for you" and "nothing here" in the same word (#275)."""
+    from anything that acts on it. A gateway that owns authorisation asks
+    this instead of reaching into `repo` — and since #275 there is nothing
+    else to ask: core itself no longer decides reads."""
     served, head, middle, task = bound
     async with funduq.session() as session:
         stored = await repo.get_run(session, task.id)
