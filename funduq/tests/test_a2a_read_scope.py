@@ -171,3 +171,33 @@ async def test_a_chainless_run_on_a_bound_thread_does_not_break_every_read(fundu
         served.agents["trusted"], task.id, reader=head.public_key
     )
     assert got is not None, "the head is in the circle and a chainless sibling run must not hide it"
+
+
+async def test_parties_of_answers_without_deciding(funduq, bound, new_identity):
+    """Core is the only party that can compute the set — the chains are here
+    and only here are they verified — so it publishes the answer separately
+    from `as_reader`'s use of it. A gateway that owns authorisation asks
+    this instead of reaching into `repo`, or reading a silence that says
+    "not for you" and "nothing here" in the same word (#275)."""
+    served, head, middle, task = bound
+    async with funduq.session() as session:
+        stored = await repo.get_run(session, task.id)
+
+    parties = await funduq.parties_of(stored.thread_id)
+
+    assert parties is not None
+    assert {head.public_key, middle.public_key, served.identity.public_key} <= parties
+    assert new_identity().public_key not in parties
+
+
+async def test_parties_of_names_nobody_for_an_unbound_thread(funduq, serve):
+    """An unbound thread is readable by whoever holds its id, so there is no
+    party set to answer with — the same None `readers_of` returns, said out
+    loud rather than only implied by a read that succeeds."""
+    served = await serve(EchoAgent(), "open")
+    task = await A2AAdapter(funduq).send_task(served.agents["open"], _message("hi"))
+    async with funduq.session() as session:
+        stored = await repo.get_run(session, task.id)
+
+    assert await funduq.parties_of(stored.thread_id) is None
+    assert await funduq.parties_of("thread_nope") is None

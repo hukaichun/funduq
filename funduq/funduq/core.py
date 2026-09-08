@@ -774,8 +774,25 @@ class Funduq:
         async with self.session() as session:
             return await repo.get_thread(session, thread_id)
 
+    async def parties_of(self, thread_id: str) -> set[str] | None:
+        """Who is party to `thread_id` — its head, the provider serving its agent, and every key on its runs' chains — or None for a thread nobody bound, which names no parties at all.
+
+        The answer, separately from what anyone does with it. Deriving it is
+        core's alone: the chains are here and only here are they verified.
+        Deciding what follows is a deployment's, and usually its gateway's,
+        so a serving layer applying its own rule asks this rather than
+        reaching into `repo` — or reading `as_reader`'s silence, which says
+        "not for you" and "nothing here" in the same word. Note what the set
+        is drawn from: a chain records acts, and reading is not one (#275).
+        """
+        async with self.session() as session:
+            thread = await repo.get_thread(session, thread_id)
+            if thread is None:
+                return None
+            return await repo.readers_of(session, thread)
+
     def as_reader(self, key: str | None) -> Reader:
-        """The record as `key` may read it — the one surface every entrance reads through; `None` is nobody. The `get_*` methods below are the owner's, below that floor."""
+        """The record filtered to what `key` is party to — one policy, the default, and not the only way to read; `None` is nobody. The `get_*` methods below are the owner's, below that floor: a deployment whose gateway owns authorisation reads through those and asks `parties_of` for the answer this one applies."""
         return Reader(self, key)
 
     async def get_thread_messages(self, thread_id: str) -> list[dict[str, Any]]:
