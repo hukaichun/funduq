@@ -139,12 +139,11 @@ class A2AAdapter:
         agent: AgentRef,
         task_id: str,
         *,
-        reader: str | None,
         history_length: int | None = None,
         cancel_requested: bool = False,
     ) -> pb.Task | None:
-        """The task named `task_id` as `reader` may see it: its lineage's events in order, its tail's status, the lineage's messages as history. None if there is no such task for this reader."""
-        record = self._funduq.as_reader(reader)
+        """The task named `task_id`: its lineage's events in order, its tail's status, the lineage's messages as history. None if no such task is this agent's. Who may see it is not decided here — see `Funduq.parties_of` and #275."""
+        record = self._funduq
         lineage = await record.lineage(task_id)
         if not lineage or lineage[0].agent != agent:
             return None
@@ -152,7 +151,7 @@ class A2AAdapter:
         events: list[dict[str, Any]] = []
         tail_events: list[dict[str, Any]] = []
         for run in lineage:
-            tail_events = await record.events(run.run_id)
+            tail_events = await record.get_run_events(run.run_id)
             events.extend(tail_events)
         return build_task(
             task_id,
@@ -187,7 +186,7 @@ class A2AAdapter:
         if not return_immediately and is_live and self._funduq.broker.get(run_id) is not None:
             async for _ in self._funduq.broker.subscribe(run_id):
                 pass
-        return await self._task(agent, task_id, reader=presenter_key, history_length=history_length)
+        return await self._task(agent, task_id, history_length=history_length)
 
     async def send_task_streaming(
         self,
@@ -207,7 +206,7 @@ class A2AAdapter:
         events = self._funduq.broker.subscribe(run_id) if live else None
 
         async def results() -> AsyncIterator[Event]:
-            opening = await self._task(agent, task_id, reader=presenter_key)
+            opening = await self._task(agent, task_id)
             yield opening
             if not live:
                 stored = await self._funduq.get_run(run_id)
@@ -226,19 +225,17 @@ class A2AAdapter:
         self,
         agent: AgentRef,
         task_id: str,
-        *,
-        reader: str | None = None,
     ) -> AsyncIterator[Event]:
-        """Reattaches to a task's event stream as `reader`: the Task as it stands, then whatever its tail run still produces. A task the reader may not see is not found — existence is part of what is guarded; one in a terminal state has nothing left to stream and is refused, as A2A requires (§3.1.6)."""
-        opening = await self._task(agent, task_id, reader=reader)
+        """Reattaches to a task's event stream: the Task as it stands, then whatever its tail run still produces. A task in a terminal state has nothing left to stream and is refused, as A2A requires (§3.1.6). Who may reattach is the transport's to decide (#275)."""
+        opening = await self._task(agent, task_id)
         if opening is None:
             raise TaskNotFoundError(f"no task '{task_id}' for agent '{agent}'")
         if opening.status.state in TERMINAL_STATES:
             raise UnsupportedOperationError(f"task {task_id} has ended; there is nothing to subscribe to")
-        record = self._funduq.as_reader(reader)
+        record = self._funduq
         tail = (await record.lineage(task_id))[-1]
         try:
-            events = await record.subscribe(tail.run_id) if self._funduq.broker.get(tail.run_id) else None
+            events = record.subscribe(tail.run_id) if self._funduq.broker.get(tail.run_id) else None
         except StreamTaken as e:
             # A2A §3.5.2 leaves serving several streams a MAY; funduq serves one, so a second is refused rather than handed half the events.
             raise UnsupportedOperationError(str(e)) from e
@@ -264,10 +261,9 @@ class A2AAdapter:
         task_id: str,
         *,
         history_length: int | None = None,
-        reader: str | None = None,
     ) -> pb.Task | None:
-        """The current `Task` for `task_id` as `reader` may see it, or None: the task does not exist, belongs to another agent, or its thread is bound and the reader is not one of its parties. An unauthorized read looks like absence — existence is part of what is guarded."""
-        return await self._task(agent, task_id, reader=reader, history_length=history_length)
+        """The current `Task` for `task_id`, or None: the task does not exist or belongs to another agent. Whether this caller may see it is the transport's to decide, from `Funduq.parties_of` or a rule of its own (#275)."""
+        return await self._task(agent, task_id, history_length=history_length)
 
     async def cancel_task(
         self, agent: AgentRef, task_id: str, *, metadata: dict[str, Any] | None = None
@@ -276,7 +272,7 @@ class A2AAdapter:
         run = await self._run_of(agent, task_id)
         if run is None:
             return None
-        reader = authorize_cancel(run, metadata or {}) or None
+        authorize_cancel(run, metadata or {})
         lineage = await self._funduq.lineage(task_id)
         tail = lineage[-1]
         state = task_state_of(tail.status, await self._funduq.get_run_events(tail.run_id), tail.cancel_requested_by is not None)
@@ -285,21 +281,20 @@ class A2AAdapter:
                 f"task {task_id} has already ended and cannot be cancelled"
             )
         # Read before asking: the snapshot the request was made against, so the answer is the same whether the provider stops before or after we look.
-        as_it_stood = await self._task(agent, task_id, reader=reader, cancel_requested=True)
+        as_it_stood = await self._task(agent, task_id, cancel_requested=True)
         try:
             asked = await self._funduq.cancel_run(tail.run_id, metadata=metadata or {})
         except RunNotCancellable as e:
             raise TaskNotCancelableError(str(e)) from e
         if asked:
             return as_it_stood
-        return await self._task(agent, task_id, reader=reader)
+        return await self._task(agent, task_id)
 
     async def list_tasks(
         self,
         agent: AgentRef,
         *,
         context_id: str | None,
-        reader: str | None = None,
         status: int | None = None,
         page_size: int | None = None,
         page_token: str | None = None,
@@ -307,25 +302,25 @@ class A2AAdapter:
         status_timestamp_after: "datetime | None" = None,
         include_artifacts: bool = False,
     ) -> pb.ListTasksResponse:
-        """The tasks of one context as `reader` may see them (A2A §3.1.4), newest status first, cursor-paged.
+        """The tasks of one context (A2A §3.1.4), newest status first, cursor-paged.
 
         A `contextId` is required in practice: it is the id a caller holds, and
-        holding it is what makes a thread's tasks visible to anyone on an unbound
-        thread — the standing capability-by-identifier rule. Without one nothing
-        is visible, and the page is empty. On a bound thread the reader must be
-        a party, or the page is empty likewise: existence is part of what is
-        guarded.
+        holding it is what makes a thread's tasks addressable at all — the
+        standing capability-by-identifier rule. Without one nothing is named,
+        and the page is empty. Whether this caller may see what it names is
+        the transport's to decide, from `Funduq.parties_of` or a rule of its
+        own (#275).
         """
         size = page_size if page_size and page_size > 0 else 50
         empty = pb.ListTasksResponse(tasks=[], next_page_token="", page_size=0, total_size=0)
         if not context_id:
             return empty
-        record = self._funduq.as_reader(reader)
+        record = self._funduq
         tasks: list[pb.Task] = []
         for root in await record.root_runs(context_id):
             if root.agent != agent:
                 continue
-            task = await self._task(agent, root.run_id, reader=reader, history_length=history_length)
+            task = await self._task(agent, root.run_id, history_length=history_length)
             if task is None:
                 continue
             if status and task.status.state != status:
@@ -505,7 +500,6 @@ class A2ARequestHandler(RequestHandler):
             self._agent,
             params.id,
             history_length=params.history_length if params.HasField("history_length") else None,
-            reader=self._presenter_key(context),
         )
 
     @validate_request_params
@@ -522,7 +516,7 @@ class A2ARequestHandler(RequestHandler):
         self, params: pb.SubscribeToTaskRequest, context: ServerCallContext
     ) -> AsyncGenerator[Event]:
         stream = await self._adapter.resubscribe_task(
-            self._agent, params.id, reader=self._presenter_key(context)
+            self._agent, params.id
         )
         async for event in stream:
             yield event
@@ -562,7 +556,6 @@ class A2ARequestHandler(RequestHandler):
         return await self._adapter.list_tasks(
             self._agent,
             context_id=params.context_id or None,
-            reader=self._presenter_key(context),
             status=params.status or None,
             page_size=params.page_size if params.HasField("page_size") else None,
             page_token=params.page_token or None,

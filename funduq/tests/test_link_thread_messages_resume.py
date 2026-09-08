@@ -55,7 +55,7 @@ async def test_the_link_hands_back_enough_to_resume_a_paused_turn(funduq, serve)
 
     # The provider knows its thread id — the delivered run carries it — and
     # reads the record as itself, through the one surface every party reads.
-    dumped = await funduq.as_reader(served.identity.public_key).thread_messages(stream.thread_id)
+    dumped = await funduq.get_thread_messages(stream.thread_id)
 
     announced = {
         call["id"]: call["function"]["name"]
@@ -88,7 +88,7 @@ async def test_the_pull_agrees_with_what_funduq_recorded_as_pending(funduq, serv
     stream = await AGUIAdapter(funduq).run(served.agents["concierge"], _body())
     [_ async for _ in stream.events]
 
-    dumped = await funduq.as_reader(served.identity.public_key).thread_messages(stream.thread_id)
+    dumped = await funduq.get_thread_messages(stream.thread_id)
     announced = [c["id"] for m in dumped for c in (m.get("toolCalls") or [])]
     answered = {m["toolCallId"] for m in dumped if m.get("role") == "tool"}
     outstanding = [c for c in announced if c not in answered]

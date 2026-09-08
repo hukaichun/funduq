@@ -103,80 +103,6 @@ class RunHandle:
         return await self._funduq.cancel_run(self.run_id)
 
 
-class Reader:
-    """The record, read as one key.
-
-    Reading is one surface: a thread's messages, a run, its events, its
-    lineage, its live stream. One rule decides what a reader sees. A thread
-    nobody bound is readable by whoever holds its id. A bound thread is
-    readable by its parties — the head, the provider serving its agent, every
-    key on its runs' chains — and to anyone else it does not exist: every
-    read answers absence. How the transport established the key is its own
-    business; core only ever sees the key, or `None` for nobody.
-    """
-
-    def __init__(self, funduq: "Funduq", key: str | None) -> None:
-        self._funduq = funduq
-        self.key = key
-
-    async def _may_read(self, session: AsyncSession, thread_id: str) -> bool:
-        thread = await repo.get_thread(session, thread_id)
-        if thread is None:
-            return False
-        circle = await repo.readers_of(session, thread)
-        return circle is None or self.key in circle
-
-    async def thread_messages(self, thread_id: str) -> list[dict[str, Any]]:
-        async with self._funduq.session() as session:
-            if not await self._may_read(session, thread_id):
-                return []
-            return await repo.get_thread_messages(session, thread_id)
-
-    async def run(self, run_id: str) -> RunRecord | None:
-        async with self._funduq.session() as session:
-            stored = await repo.get_run(session, run_id)
-            if stored is None or not await self._may_read(session, stored.thread_id):
-                return None
-            return stored
-
-    async def events(self, run_id: str) -> list[dict[str, Any]]:
-        async with self._funduq.session() as session:
-            stored = await repo.get_run(session, run_id)
-            if stored is None or not await self._may_read(session, stored.thread_id):
-                return []
-            return await repo.get_run_events(session, run_id)
-
-    async def lineage(self, run_id: str) -> list[RunRecord]:
-        """Every run descending from `run_id` by `parentRunId`, root first — an A2A task. Empty if the reader may not see it."""
-        async with self._funduq.session() as session:
-            stored = await repo.get_run(session, run_id)
-            if stored is None or not await self._may_read(session, stored.thread_id):
-                return []
-            return await repo.lineage(session, run_id)
-
-    async def task_messages(self, run_id: str) -> list[dict[str, Any]]:
-        """The messages of the lineage rooted at `run_id` — carried in and produced — in thread order."""
-        async with self._funduq.session() as session:
-            stored = await repo.get_run(session, run_id)
-            if stored is None or not await self._may_read(session, stored.thread_id):
-                return []
-            lineage = await repo.lineage(session, run_id)
-            return await repo.messages_of_runs(session, [r.run_id for r in lineage])
-
-    async def root_runs(self, thread_id: str) -> list[RunRecord]:
-        """The tasks on a thread — the runs that start a lineage — newest first; empty if the reader may not see the thread."""
-        async with self._funduq.session() as session:
-            if not await self._may_read(session, thread_id):
-                return []
-            return await repo.root_runs_in_thread(session, thread_id)
-
-    async def subscribe(self, run_id: str) -> AsyncIterator[Any] | None:
-        """The live stream of a run the reader may see; None if there is no such run for this reader (the run may exist and be somebody else's)."""
-        if await self.run(run_id) is None:
-            return None
-        return self._funduq.broker.subscribe(run_id)
-
-
 class _Roster(abc.ABC):
     """One live roster of served names, stated once for both vocabularies."""
 
@@ -774,9 +700,20 @@ class Funduq:
         async with self.session() as session:
             return await repo.get_thread(session, thread_id)
 
-    def as_reader(self, key: str | None) -> Reader:
-        """The record as `key` may read it — the one surface every entrance reads through; `None` is nobody. The `get_*` methods below are the owner's, below that floor."""
-        return Reader(self, key)
+    async def parties_of(self, thread_id: str) -> set[str] | None:
+        """Who is party to `thread_id` — its head, the provider serving its agent, and every key on its runs' chains — or None for a thread nobody bound, which names no parties at all.
+
+        The answer, and only the answer. Deriving it is core's alone — the
+        chains are here and only here are they verified — and what follows
+        from it is the wire's, where authorisation lives and usually a
+        different team owns it. Core does not decide reads: a chain records
+        acts, and reading is not one (#275).
+        """
+        async with self.session() as session:
+            thread = await repo.get_thread(session, thread_id)
+            if thread is None:
+                return None
+            return await repo.readers_of(session, thread)
 
     async def get_thread_messages(self, thread_id: str) -> list[dict[str, Any]]:
         async with self.session() as session:
@@ -810,6 +747,21 @@ class Funduq:
     async def get_run(self, run_id: str) -> RunRecord | None:
         async with self.session() as session:
             return await repo.get_run(session, run_id)
+
+    async def root_runs(self, thread_id: str) -> list[RunRecord]:
+        """The tasks on a thread — the runs that start a lineage — newest first."""
+        async with self.session() as session:
+            return await repo.root_runs_in_thread(session, thread_id)
+
+    async def task_messages(self, run_id: str) -> list[dict[str, Any]]:
+        """The messages of the lineage rooted at `run_id` — carried in and produced — in thread order."""
+        async with self.session() as session:
+            lineage = await repo.lineage(session, run_id)
+            return await repo.messages_of_runs(session, [r.run_id for r in lineage])
+
+    def subscribe(self, run_id: str) -> AsyncIterator[Any]:
+        """The live stream of a run in flight."""
+        return self.broker.subscribe(run_id)
 
     async def get_run_events(self, run_id: str, since_seq: int = 0) -> list[dict[str, Any]]:
         async with self.session() as session:

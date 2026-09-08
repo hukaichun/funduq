@@ -82,20 +82,23 @@ async def test_status_and_artifacts_are_honoured(funduq, serve):
     assert all(t.artifacts for t in with_art.tasks), "EchoAgent says 'done' on every task"
 
 
-async def test_a_bound_context_lists_only_for_its_parties(funduq, serve, new_identity):
+async def test_a_bound_context_lists_what_its_id_names(funduq, serve, new_identity):
+    """`contextId` is the id a caller holds, and holding it is what makes a
+    thread's tasks addressable — the capability-by-identifier rule. Since
+    #275 that is the whole of what this door decides: who may see what the
+    id names is the transport's, from `parties_of` or a rule of its own."""
     served = await serve(EchoAgent(), "bound")
     agent = served.agents["bound"]
-    head, stranger = new_identity(), new_identity()
+    head = new_identity()
     adapter = A2AAdapter(funduq)
     task = await adapter.send_task(
         agent, _message("hi"), actor_chain=[head.sign_chain_hop()], presenter_key=head.public_key
     )
 
-    assert list((await adapter.list_tasks(agent, context_id=task.context_id)).tasks) == [], "nobody"
-    assert list((await adapter.list_tasks(agent, context_id=task.context_id, reader=stranger.public_key)).tasks) == []
-    for party in (head, served.identity):
-        page = await adapter.list_tasks(agent, context_id=task.context_id, reader=party.public_key)
-        assert [t.id for t in page.tasks] == [task.id]
+    assert list((await adapter.list_tasks(agent, context_id=None)).tasks) == [], "no id names nothing"
+    page = await adapter.list_tasks(agent, context_id=task.context_id)
+    assert [t.id for t in page.tasks] == [task.id]
+    assert {head.public_key, served.identity.public_key} <= await funduq.parties_of(task.context_id)
 
 
 async def test_the_handler_reads_the_request_fields(funduq, serve):
