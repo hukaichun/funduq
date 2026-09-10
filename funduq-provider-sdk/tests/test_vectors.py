@@ -51,16 +51,37 @@ def test_this_side_reproduces_every_vector_it_has_a_builder_for():
     assert covered == len(BUILDERS)
 
 
-def test_the_delivered_run_frame_round_trips_through_the_declared_model():
+def test_the_delivered_run_model_round_trips_under_either_spelling():
+    """The model is the agreement; how a transport spells it is the
+    transport's (#282), so this asserts the model's own symmetry rather than
+    matching a published envelope.
+
+    `forwardedProps` is the case worth pinning: legitimately `null` and
+    required, so a dump that drops it turns a good run into a permanent
+    refusal instead of a loud error.
+    """
+    from ag_ui.core import RunAgentInput
+
     from funduq_provider_sdk import DeliveredRun
 
-    (frame,) = [w["frame"] for w in VECTORS["wire"] if w["kind"] == "delivered-run"]
+    run_input = RunAgentInput(
+        threadId="t-1",
+        runId="run-1",
+        state={},
+        messages=[{"id": "m1", "role": "user", "content": "hi"}],
+        tools=[],
+        context=[],
+        forwardedProps=None,
+    )
+    delivered = DeliveredRun(runId="run-1", agentName="translator", runInput=run_input)
 
-    model = DeliveredRun.model_validate(frame)
-
-    assert model.agent_name == frame["agentName"]
-    assert model.run_input.thread_id == frame["runInput"]["threadId"]
-    assert model.model_dump(mode="json", by_alias=True) == frame
+    for dumped in (
+        delivered.model_dump(mode="json"),
+        delivered.model_dump(mode="json", by_alias=True),
+    ):
+        assert DeliveredRun.model_validate(dumped) == delivered
+        carried = dumped.get("runInput", dumped.get("run_input"))
+        assert "forwardedProps" in carried or "forwarded_props" in carried
 
 
 def test_the_published_chain_verifies_here_too_and_can_be_reproduced():
@@ -87,23 +108,19 @@ def test_the_published_chain_verifies_here_too_and_can_be_reproduced():
     assert reproduced == vector["chain"][0]
 
 
-def test_every_funduq_invented_wire_structure_validates_with_this_packages_models():
-    """The SDK-side dual of the tag-scan guard: funduq puts nothing on the wire this package cannot validate.
+def test_the_props_twins_are_guarded_where_both_sides_are_importable():
+    """The SDK-side dual of the tag-scan guard used to read funduq's keys off a
+    published frame. It now lives in funduq's own suite
+    (`test_the_sdk_reads_every_key_funduq_actually_puts_under_its_own`), built
+    from `build_forwarded_props` instead of a frozen sample — the only place
+    both sides can be imported, and the only version that checks what funduq
+    emits today rather than what a json file remembered (#282).
 
     A hand-restated copy of these shapes drifted once on one field's
-    nullability and silently dropped verified caller identities; the twins
-    plus this frame are what make restating unnecessary.
+    nullability and silently dropped verified caller identities, so what is
+    kept here is that this package still exports the twins to guard.
     """
     from funduq_provider_sdk import KyokForwardedProps, verify_chain
 
-    (frame,) = [w["frame"] for w in VECTORS["wire"] if w["kind"] == "delivered-run"]
-    props = frame["runInput"]["forwardedProps"]["funduq"]
-
-    assert {"kyok", "actorChain"} <= props.keys(), (
-        "the published frame must carry every declared key, under funduq's one key"
-    )
-    parsed = KyokForwardedProps.model_validate(props["kyok"])
-    assert parsed.model_dump(mode="json", by_alias=True) == props["kyok"]
-    # The chain is the caller's own words, relayed verbatim — no digest of
-    # funduq's to validate; the agent verifies the chain itself.
-    assert verify_chain(props["actorChain"]).head
+    assert callable(verify_chain)
+    assert set(KyokForwardedProps.model_fields) == {"token"}

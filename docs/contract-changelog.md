@@ -28,6 +28,55 @@ entries below say what to change and not only what moved.
 
 ---
 
+## Revision 23 — 2026-09-11
+
+**The vectors publish only what a signature covers** (#282). `contract-vectors.json`
+had three kinds of entry and one was not like the others: the six payload
+families and the actor-chain hop form are bytes a signature is computed over,
+where being wrong by one colon means a signature does not verify — and two
+`wire` entries, `delivered-run` and `delivered-completion`, which nothing
+signs. What those pinned was how a model is spelled on a wire, down to the
+capitalisation of its field names.
+
+That is framing, and revision 11 is where framing stopped being this
+package's: the frame vocabulary and its codec left on the reasoning that a
+transport carries these and a transport decides how. The two envelopes were
+the part of that decision that did not leave.
+
+They had also drifted from the models they claimed to publish. `Shape`
+configures the way *in* symmetrically and the way *out* not at all, so
+`DeliveredRun(...).model_dump()` returns `run_id` while the published frame
+said `runId`. A reader who trusted the vector reached for `by_alias=True` to
+make its own model agree — and passing dump flags by hand is how the wrong
+one gets added: `exclude_none=True` strips `forwardedProps`, which is
+legitimately `null` and required, turning a good run into a permanent
+refusal rather than a loud error.
+
+- **The `wire` section is gone.** Nothing else in the file moved. The six
+  `vectors` and the one `chains` entry are unchanged, byte for byte.
+- **The rule the file keeps now**: an entry exists because getting it wrong
+  fails a signature check. A test asserts the file's own top-level shape, so
+  an unsigned section cannot quietly return.
+- **Field aliases are still contract.** They are declared on the crossing
+  shapes, exported from `funduq-contract`, and still part of the
+  fingerprinted surface. What changed is that they are *offered* rather than
+  mandated: the models validate under either spelling, and no published
+  artefact says which one a wire must use.
+
+We did not take the other available fix. Setting `serialize_by_alias=True`
+on `Shape` would have made `model_dump()` match the old vectors in one line
+and spared every downstream a flag — and would have settled naming for every
+transport there will ever be, from a package that gave that decision away
+two years of revisions ago.
+
+Migration: nothing, unless you were reading the `wire` section. If you were,
+your wire's field naming is yours to state; `model_validate` accepts both
+spellings, and `model_dump(by_alias=True)` still produces the camelCase form
+if that is what your transport carries — now because your transport says so,
+not because a vector did.
+
+---
+
 ## Revision 22 — 2026-09-08
 
 **Core does not decide who may read** (#275). Revision 21 named the line in

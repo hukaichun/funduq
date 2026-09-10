@@ -1,6 +1,6 @@
 """What both sides of funduq agree the bytes are."""
 
-CONTRACT_REVISION = 22
+CONTRACT_REVISION = 23
 """Which revision of funduq's contract this package implements."""
 
 from funduq_contract.chain import (
