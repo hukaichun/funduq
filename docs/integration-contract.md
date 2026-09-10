@@ -115,9 +115,11 @@ promise that replaces opt-in is threefold:
 1. **minimal** — funduq invents only where no standard exists, and the
    invented surface stays as small as the job allows;
 2. **published as data** — every payload, model and byte a provider must
-   produce or validate is exported by the provider SDK and pinned in
+   produce or validate is exported by the provider SDK, and the bytes a
+   signature covers are pinned in
    [`contract-vectors.json`](contract-vectors.json), replayable in any
-   language; an implementation never needs funduq's source;
+   language; an implementation never needs funduq's source. How those models
+   are spelled on a wire is the transport's, so no envelope is published;
 3. **guarded** — tests fail funduq's own CI when an invented surface goes
    unpublished, so the contract cannot silently grow a private corner.
 

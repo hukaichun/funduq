@@ -1,10 +1,10 @@
 {
   "contract": {
-    "revision": 22,
-    "fingerprint": "sha256:39bb447448b029933733acaf9b5361b93c8a0babd1218e58ba474d37328ffea2",
+    "revision": 23,
+    "fingerprint": "sha256:ca52638de523d811cf148094ab5725ff8b13ffd196e230ced4f5eb8a3cc57842",
     "note": "The revision an external implementation is written against, and a hash of the surface it depends on — the vectors below, plus what the contract_surface helper reads live from the code (CoreSettings fields and whether each is required, the provider link's verbs, every crossing shape funduq-contract defines, the A2A protocol's frames and every machine's verbs on both link kinds, the A2A protocol version and transport bindings, whether each package ships its PEP 561 marker, and every public name funduq_contract exports with the shape it exports it as). Prose (`note` and `comment` at any depth) is excluded, so rewording an explanation is not a contract change. A test recomputes the hash and fails when it differs from this one, so a contract change cannot land without bumping `revision` and adding a line to docs/contract-changelog.md. The fingerprint is not itself a compatibility statement: read the changelog to learn what moved."
   },
-  "comment": "Authoritative byte-level vectors for the payloads funduq verifies signatures over. funduq's own test suites consume this file, so it cannot drift from the implementation; an external implementation in any language replays it: build each payload from `inputs`, assert the exact `payload_utf8` bytes, and check `signature_hex` verifies (or, since Ed25519 is deterministic, reproduce it) under the published test key. The test key is for vectors only — never accept it in a real deployment.",
+  "comment": "Authoritative byte-level vectors for what a signature covers: the payload families funduq verifies signatures over, and the actor-chain hop form. Nothing unsigned belongs here — a crossing shape's spelling on a wire is framing, and framing is the transport's (revision 11). funduq's own test suites consume this file, so it cannot drift from the implementation; an external implementation in any language replays it: build each payload from `inputs`, assert the exact `payload_utf8` bytes, and check `signature_hex` verifies (or, since Ed25519 is deterministic, reproduce it) under the published test key. The test key is for vectors only — never accept it in a real deployment.",
   "test_key": {
     "algorithm": "Ed25519",
     "private_key_hex": "a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5",
@@ -76,70 +76,6 @@
       },
       "payload_utf8": "funduq-view:run_2c26b46b68ffc68ff99b453c:1755500000",
       "signature_hex": "08a8924d7dac66893c2c7338f5cb50daa4468d830197860e8ef4eb5dc5fd8c1eb3d9ad9038488d60c3e46414b0f565e2c7f9a66ecf2b817214442f12fbd9530f"
-    }
-  ],
-  "wire": [
-    {
-      "kind": "delivered-run",
-      "note": "the frame a transport carries for an offered run: DeliveredRun.model_dump(by_alias=True); rebuild with model_validate. everything funduq adds to forwardedProps sits under its one key, forwardedProps.funduq: the kyok grant (KyokForwardedProps; the token here is a fixed opaque example, real ones are minted per run) and the actorChain: the caller's own hops relayed unmodified, plus one hop funduq signs for the dispatch itself, naming the agent it went to under `dispatchedTo` — no funduq-authored digest exists and no hop is rewritten; the agent verifies the chain itself with funduq_provider_sdk.verify_chain. The two hops here are the caller (the test key) and funduq's own dispatch hop, signed by b6*32 standing in for a funduq identity, naming providerKey 25fc32c4… (the public key of e1*32) and the agent 'translator' — the same agent the frame is for. Hops carry no time; they were regenerated when a hop stopped carrying iat/exp.",
-      "frame": {
-        "runId": "run-1",
-        "agentName": "translator",
-        "runInput": {
-          "threadId": "t-1",
-          "runId": "run-1",
-          "parentRunId": null,
-          "state": {},
-          "messages": [
-            {
-              "id": "m1",
-              "role": "user",
-              "content": "hi",
-              "name": null,
-              "encryptedValue": null
-            }
-          ],
-          "tools": [],
-          "context": [],
-          "forwardedProps": {
-            "funduq": {
-              "kyok": {
-                "token": "a2t0LXZlY3Rvci1ib2R5.0000000000000000000000000000000000000000000000000000000000000000"
-              },
-              "actorChain": [
-                "eyJhbGciOiJFZERTQSIsInR5cCI6IkpXVCJ9.eyJhY3RvclB1YmxpY0tleSI6IjI5ZTU4MzNhOTE1YTY0MjlhNGUzYTc5NDg0NzVjMzM4ZWY0MzZlYjgyYmU4OWM5MmYwNTk3MDQ0MDNkYjlkNTUiLCJwcmV2SGFzaCI6bnVsbH0.UdDNsBBdWnD09-_qQoH1SYv-APhcYZUCJS6gGml2YakXq-I3pLsHBn4zDmG0MZTFVLfZnEOj5XNiD_dTHPkLBg",
-                "eyJhbGciOiJFZERTQSIsInR5cCI6IkpXVCJ9.eyJhY3RvclB1YmxpY0tleSI6IjgwNTQ0MGVlNDgwNTFmYzgyZWE2NGQ5MDVhY2FiZmYwZDIxNzgwZjdmY2FiYTY5MDBlMGU0MTM4N2IxZDRhNTciLCJwcmV2SGFzaCI6ImUxYTliMmVhNjQ3ZWExNzFjOTNkMjhkMTc0ZmI0MzY0N2Q2ZGU1YmUyZmJiZWI4Y2RhYWNiN2IxY2Y0ZGUwM2QiLCJkaXNwYXRjaGVkVG8iOnsicHJvdmlkZXJLZXkiOiIyNWZjMzJjNDc4YTVhNGY4NGU0NTU3YTAzNDJlMDgyNzhjODgzNjQxYjYxNDliZGIwYjRhOTg2YWI2YzJjYjc4IiwibmFtZSI6InRyYW5zbGF0b3IifX0.diOeTiS2WvTiBEDPr_ZkpUBpfh0D_RFhR7UvHHnkvCROhWVsJEcTW7J1eTM3ZI64HQ8c4SSytmfwLK2USHq-DQ"
-              ]
-            }
-          },
-          "resume": null
-        },
-        "threadId": "t-1",
-        "metadata": {}
-      }
-    },
-    {
-      "kind": "delivered-completion",
-      "note": "the frame a transport carries for a KYOK completion: DeliveredCompletion.model_dump(by_alias=True); rebuild with model_validate",
-      "frame": {
-        "runId": "run-1",
-        "providerKey": "abababababababababababababababababababababababababababababababab",
-        "agentName": "translator",
-        "body": {
-          "model": "gpt-4",
-          "messages": [
-            {
-              "role": "user",
-              "content": "hi"
-            }
-          ]
-        },
-        "llmName": "gpt-4",
-        "context": {
-          "voucher": "v-1"
-        },
-        "actorChain": null
-      }
     }
   ],
   "chains": [

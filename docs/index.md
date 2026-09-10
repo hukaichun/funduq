@@ -31,8 +31,9 @@ the handshake, the requests, the acks. This is the settled design.
 wrote code against funduq, and **[releasing](releasing.md)** — how a version
 reaches PyPI.
 
-The byte-level authority behind all of it is
+The byte-level authority behind every signature is
 [`contract-vectors.json`](contract-vectors.json), consumed by funduq's own
-test suites and replayable by an implementation in any language. Serving —
+test suites and replayable by an implementation in any language; it holds
+only what a signature covers, never how a shape is spelled on a wire. Serving —
 HTTP, WebSockets, deployment — lives downstream in
 [funduq-server](https://github.com/hukaichun/funduq-server).

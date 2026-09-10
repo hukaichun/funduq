@@ -12,7 +12,8 @@ The agent provider's side of the agreement: the Ed25519 identity and
 everything it signs, the `FunduqLink` port a transport implements, the
 provider's own worker loop, the forwarded-props models, and the chain
 verifier — each an independent twin of funduq's
-implementation, pinned by the published vectors. The crossing shapes
+implementation, and what a signature covers is pinned by the published
+vectors. The crossing shapes
 themselves live in funduq-contract, defined once for both sides.
 → [Details](sdks/provider-sdk.md)
 
@@ -27,9 +28,9 @@ both kinds of provider at once.
 
 ## The wire, simulated without a transport
 
-Because the frame a transport carries is exactly
-`model_dump(by_alias=True)` of the delivered envelopes — and every signed
-payload is a pure function to bytes — the wire itself can be exercised
+Because a delivered envelope is a model a transport frames however it
+frames things — and every signed payload is a pure function to bytes — the
+wire itself can be exercised
 with no socket anywhere: serialize each crossing to JSON bytes, rebuild
 it on the far side from the published shape, and run the whole loop
 in-process. `funduq/tests/integration/test_wire_loopback.py` does exactly that, as a

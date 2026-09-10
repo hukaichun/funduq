@@ -21,12 +21,24 @@ def test_this_side_publishes_no_payload_of_its_own_any_more():
     assert not [name for name in dir(sdk) if name.endswith("_payload")]
 
 
-def test_the_delivered_completion_frame_round_trips_through_the_declared_model():
+def test_the_delivered_completion_model_round_trips_under_either_spelling():
+    """The model is the agreement; the envelope a transport frames it in is
+    the transport's (#282). So this asserts the model's own symmetry rather
+    than matching a published frame — including that the body survives a dump,
+    which is what its lazy-validator walk exists for."""
     from funduq_provider_sdk.llm import DeliveredCompletion
 
-    (frame,) = [w["frame"] for w in VECTORS["wire"] if w["kind"] == "delivered-completion"]
+    body = {"model": "gpt-4", "messages": [{"role": "user", "content": "hi"}]}
+    delivered = DeliveredCompletion(
+        runId="run-1",
+        providerKey="e1" * 32,
+        agentName="translator",
+        body=body,
+    )
 
-    model = DeliveredCompletion.model_validate(frame)
-
-    assert model.provider_key == frame["providerKey"]
-    assert model.model_dump(mode="json", by_alias=True) == frame
+    for dumped in (
+        delivered.model_dump(mode="json"),
+        delivered.model_dump(mode="json", by_alias=True),
+    ):
+        assert DeliveredCompletion.model_validate(dumped) == delivered
+        assert dumped["body"] == body

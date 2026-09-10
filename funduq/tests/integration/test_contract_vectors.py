@@ -75,23 +75,6 @@ def test_every_domain_tag_has_a_published_vector_family():
     )
 
 
-def test_the_published_wire_frames_are_what_the_ports_translate_to():
-    from funduq_provider_sdk.llm import DeliveredCompletion
-    from funduq_provider_sdk import DeliveredRun
-
-    (run_wire,) = [w["frame"] for w in VECTORS["wire"] if w["kind"] == "delivered-run"]
-    rebuilt = DeliveredRun.model_validate(run_wire)
-    assert rebuilt.model_dump(mode="json", by_alias=True) == run_wire
-
-    (completion_wire,) = [
-        w["frame"] for w in VECTORS["wire"] if w["kind"] == "delivered-completion"
-    ]
-    rebuilt_completion = DeliveredCompletion.model_validate(completion_wire)
-    assert (
-        rebuilt_completion.model_dump(mode="json", by_alias=True) == completion_wire
-    )
-
-
 def test_the_published_chain_verifies_and_names_exactly_the_published_actors():
     from funduq.identity import verify_chain
 
@@ -106,24 +89,64 @@ def test_the_published_chain_verifies_and_names_exactly_the_published_actors():
 def test_cross_party_formats_without_a_domain_tag_are_vectored_too():
     """The tag scan can't see formats that aren't tagged strings — this pins the rest by name."""
     assert {c["kind"] for c in VECTORS.get("chains", [])} == {"actor-chain"}
-    assert {w["kind"] for w in VECTORS.get("wire", [])} == {"delivered-run", "delivered-completion"}
 
 
-def test_both_sides_props_twins_validate_the_same_frame():
+def test_the_vectors_publish_nothing_a_signature_does_not_cover():
+    """The rule the file now keeps: a vector exists because getting it wrong
+    fails a signature check, never because a shape is spelled some way.
+
+    A frame's field names are framing, and revision 11 gave framing to the
+    transport. Two envelope entries stayed behind anyway, indistinguishable
+    from the six an implementation must match byte for byte — and they had
+    already drifted from the models they claimed to publish, so a reader who
+    trusted them passed a dump flag to make their own `model_dump` agree.
+    """
+    assert set(VECTORS) == {"contract", "comment", "test_key", "vectors", "chains"}
+
+
+def test_the_sdk_reads_every_key_funduq_actually_puts_under_its_own():
+    """funduq puts nothing under `forwardedProps.funduq` that the provider SDK
+    cannot read, and the twins on each side read it the same way.
+
+    Built from `build_forwarded_props` rather than from a frozen frame: the
+    guard is worth having against what the code emits today, and a published
+    sample is one more copy to drift — which is exactly how the envelope
+    vectors came to disagree with the models they claimed to publish (#282).
+    """
     from funduq_provider_sdk import KyokForwardedProps as SdkKyok
-    from funduq_provider_sdk import verify_chain
+    from funduq_provider_sdk import verify_chain as sdk_verify_chain
 
-    from funduq.identity import verify_chain
+    from funduq.identity import verify_chain as core_verify_chain
     from funduq.kyok import KyokForwardedProps
+    from funduq.models import AgentRef
+    from funduq.props import build_forwarded_props
 
-    (frame,) = [w["frame"] for w in VECTORS["wire"] if w["kind"] == "delivered-run"]
-    props = frame["runInput"]["forwardedProps"]["funduq"]
+    (chain_vector,) = [c for c in VECTORS["chains"] if c["kind"] == "actor-chain"]
+    props = build_forwarded_props(
+        "vectors-only-signing-secret",
+        "run-1",
+        AgentRef(provider_key="e1" * 32, name="translator"),
+        True,
+        None,
+        chain_vector["chain"],
+        addressed_run_id="run-0",
+    )["funduq"]
+
+    # Everything funduq can write under its own key, by name. A new one fails
+    # here rather than at an agent that has no idea what it is looking at.
+    assert set(props) == {"kyok", "addressedRunId", "actorChain"}
 
     ours = KyokForwardedProps.model_validate(props["kyok"]).model_dump(mode="json", by_alias=True)
     theirs = SdkKyok.model_validate(props["kyok"]).model_dump(mode="json", by_alias=True)
     assert ours == theirs == props["kyok"]
-    # The chain is relayed verbatim, not modeled: both verifiers must agree on it.
+
+    assert props["addressedRunId"] == "run-0"
+
+    # The chain is relayed verbatim, not modeled, so the two verifiers are the
+    # thing to compare — and they are two, which the earlier version of this
+    # assert lost to a shadowed import that compared one with itself.
     assert (
-        verify_chain(props["actorChain"]).actor_public_keys
-        == verify_chain(props["actorChain"]).actor_public_keys
+        core_verify_chain(props["actorChain"]).actor_public_keys
+        == sdk_verify_chain(props["actorChain"]).actor_public_keys
+        == chain_vector["actor_public_keys"]
     )
