@@ -19,7 +19,9 @@ unmodified, and every funduq invention on that side is opt-in.
 receives and sends, turn by turn.
 
 **[What a deployment has to know](operational-limits.md)** — the limits that
-are real today, measured rather than estimated.
+are real today, measured rather than estimated, and **[what a deployment
+owes](host-obligations.md)** — the duties that come with holding the library,
+each one marked as enforced by core or left to your honour.
 
 **[The SDKs](sdks.md)** — the packages providers build with, and what each
 publishes.

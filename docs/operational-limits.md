@@ -5,6 +5,10 @@ may assume — including what funduq does **not** do. Everything here is
 checked against the code; where a page elsewhere says it better, this one
 links rather than repeats.
 
+This page is what you have to plan around. [What a deployment
+owes](host-obligations.md) is what you have to discharge, and says of each
+duty whether core refuses without it or whether nothing will ever tell you.
+
 ## Core's caller doors are not independently safe
 
 This is the first entry because nothing else here is close.

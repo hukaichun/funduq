@@ -42,6 +42,7 @@ nav:
   - The integration contract: integration-contract.md
   - The agent loop: agent-loop.md
   - What a deployment has to know: operational-limits.md
+  - What a deployment owes: host-obligations.md
   - Contract changelog: contract-changelog.md
   - Releasing: releasing.md
   - SDKs:
