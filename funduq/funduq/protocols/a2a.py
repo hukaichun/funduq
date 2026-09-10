@@ -448,10 +448,11 @@ class A2ARequestHandler(RequestHandler):
         self._adapter = A2AAdapter(funduq)
         self._agent = agent
         # The transport is the party that authenticates whoever presents a
-        # request; this one hook is where it hands that key down — for writes
-        # (the chain's presenter) and reads (who is looking) alike. How it
-        # established the key is its business: a session, mTLS, or a
-        # signature over `view_payload` for one read.
+        # request; this one hook is where it hands that key down. Writes only,
+        # since revision 22 — reads answer to nothing here, and a serving layer
+        # that wants a rule for them keeps it in one place of its own. How the
+        # key was established is the transport's business: a session, mTLS, or
+        # a signature over `view_payload`.
         self._presenter_key_of = presenter_key_of
 
     def _presenter_key(self, context: ServerCallContext) -> str | None:

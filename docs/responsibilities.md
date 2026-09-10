@@ -69,3 +69,7 @@ contract-coupled, not code-coupled.
 **Neither owns a socket.** Listening, dialling, TLS, framing and the enrolment
 channel that carries a ticket to a provider belong to the serving layer, which
 is a different repository.
+
+That layer is the third half, and it is a role with duties rather than a gap
+in these two: [what a deployment owes](host-obligations.md) names them, and
+marks each as one core refuses without or one nothing will ever check.

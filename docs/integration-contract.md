@@ -10,7 +10,9 @@ that one.
 The contract splits by role, because the promises differ. Callers get
 standards, untouched. Providers speak standard *shapes*, and funduq opens
 the doors for them — with plumbing that is funduq's own, mandatory, and
-published so nobody has to read funduq's source to implement it.
+published so nobody has to read funduq's source to implement it. The host is
+the fourth role and the one nobody speaks *to*: it holds the library and owns
+every socket, and what it owes the other three is [its own page](host-obligations.md).
 
 | role | you speak | funduq provides | funduq-invented parts |
 |---|---|---|---|
@@ -18,6 +20,7 @@ published so nobody has to read funduq's source to implement it.
 | caller (agent-to-agent) | A2A, any standard client | the A2A endpoint, task lineage | all **opt-in** |
 | agent provider | AG-UI shapes: run input in, event stream out | AG-UI **and** A2A facades, both opened by funduq | mandatory, **published as data** |
 | LLM provider | OpenAI chat-completion shapes: requests in, chunks out | the OpenAI-compatible endpoint agents call | mandatory, **published as data** |
+| host (whoever deploys this) | Python — you hold the library, and every socket in front of it | `Funduq`, the doors, the record; no transport | mandatory, and split: [enforced or on your honour](host-obligations.md) |
 
 ## Callers: standards, and nothing else required
 
