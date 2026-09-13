@@ -213,9 +213,9 @@ CLAUDE.md 說「Verify by running something」。這一輪的對應版本是：
 
 ---
 
-## F. 重複一個關於自己程式碼的說法而沒有跑它(2026-08-26)
+## G. 重複一個關於自己程式碼的說法而沒有跑它(2026-08-26)
 
-### F1 「那支 probe 至今仍紅」
+### G1 「那支 probe 至今仍紅」
 
 **寫了什麼。** 草稿三處、以及好幾輪對話裡,都說 `probe_a_chain_can_be_
 branched.py` 至今仍紅,並把它當成「我們誠實地留著一個未關的缺陷」的證據。
@@ -245,3 +245,53 @@ every property holds (4 checked)
 **順帶。** 這個更正讓論文變**強**不變弱:一支綠的 probe 加一列寫明範圍的
 限制,比一支紅的 probe 更能支持「這是有理由的取捨」而不是「這是還沒補的
 洞」。錯誤的方向是**把自己講得太扁**,跟 E'1 同一族。
+
+---
+
+## H. 只讀 abstract 就判斷一個定理瞄準誰(2026-09-12)
+
+### H1 「Chain Verifiability Theorem 與 per-edge break 衝突」
+
+**寫了什麼。** `strengths-and-gaps.md` B7 從 2026-08-21 起就寫著:
+`2603.14332` 證了「鏈上一個不可驗證的中間節點會破壞所有下游節點的端到端
+驗證」,而責任鏈的 per-edge break **刻意製造**這種節點;因此欠一個把 break
+說成「被宣告的邊界而非驗證失敗」的命題。這條掛了三週,被列為論文最大的
+未處理張力。
+
+**為什麼錯。** 讀全文之後,那個「不可驗證節點」不是我們以為的東西:
+
+> **Definition 8 (Chain Verifiability Depth).** CVD(vₙ) = min{ j ≥ 1 : v_j is
+> an agent with ρ_{v_j}.level = *none* }
+
+ρ 是 **Definition 6 (Reproducibility Commitment)**,`level ∈ {full,
+statistical, none}`,而 full 的定義是
+`∀(context, seed): O_v(context,seed) = O_v^replay(context,seed)`。
+
+**他們的不可驗證 ＝ 這個 agent 不承諾自己的模型可被重跑比對輸出。** 那是
+計算忠實性(他們的 G2),不是委派紀錄。break 不會讓任何節點的計算變得不可
+重跑。定理要碰得到我們,前提是我們主張 end-to-end behavioral verification
+——而 rule zero 與 observed-outcomes-only 正好是不主張它。
+
+真正貼著我們的是同一篇 §5.5 的 **Property 2 / Definition 12 (Chain
+Auditability)**,而那一條的分界線畫在 `record ... absent from ℒ`——**被宣告
+的 break 不是 absent**,邊界本身是一筆紀錄。所以它讀出來是「追溯止於被宣告
+的邊界」,是 §4.2 的同義複述,不是反例。收據見
+`refs/chain-verifiability/notes.md`。
+
+**這條跟前面十五條不同的地方。** A 族是壓縮別人的結論,E′ 與 G 是相信一份
+落後的文件或不跑自己的程式碼。這一條兩者都不是:**abstract 是準確的,錯的是
+把 abstract 裡的名詞當成我們的名詞。** 「unverifiable node」「chain」
+「downstream」三個詞在兩篇論文裡都出現,而且都指涉真實的東西——只是指涉的
+不是同一個東西。**術語撞名不等於題目撞車**,而摘要的體裁保證你看不出差別:
+定義在正文裡。
+
+**判準。** 任何一句「某篇的定理與我們衝突/支持我們」,出處必須是**該定理所
+依賴的定義的原文**,不是定理敘述,更不是 abstract。定理敘述用的是它自己
+定義過的詞;沒有讀到定義之前,你讀到的是一個同形異義字。
+
+**順帶,方向又是把自己講得太扁**——跟 E′1、G1 同一族。B7 掛了三週,期間它
+在 `strengths-and-gaps.md` 裡被當成「最可能被審稿人打死的一格」。實際上那
+一篇不但沒瞄準我們,它的 §8.7 還自己承認 ledger operator 是集中的,而它的
+ledger 只保 integrity 與 ordering、不判誰對——**是一個不裁決的見證者先例**,
+比 §5 目前靠的 fair-exchange lineage 更近,而且不會把 adjudicator 帶進門。
+一條被誤判為威脅的文獻,實際上是 §5 的可用材料。

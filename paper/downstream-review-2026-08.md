@@ -632,7 +632,7 @@ bundle 層級識別。
 - `arXiv:2608.07556` MasDrift — **見 §2，AIP 差異化的實證彈藥**
 - `arXiv:2512.06914` SoK: Trust-Authorization Mismatch in LLM Agent Interactions（survey 200+ 篇）— 提 Belief-Intention-Permission 框架，主張各種威脅共同根因是「動態信任狀態與靜態授權邊界失同步」。SoK 級引用
 - `arXiv:2605.08460` When Child Inherits: Modeling and Exploiting Subagent Spawn — 子 agent 繼承：不安全的記憶繼承、弱資源控制、post-spawn stale state、**improper termination authority**。最後一項跟我們的取消語意直接相關
-- `arXiv:2603.14332` Governing Dynamic Capabilities — 證了 **Chain Verifiability Theorem**：鏈上任一個不可驗證的中間 agent 會破壞其所有下游節點的端到端驗證。這條定理跟責任鏈的 per-edge break/extend 有直接張力，**要正面處理**
+- `arXiv:2603.14332` Governing Dynamic Capabilities — **【2026-09-12 全文讀畢，本行原本的判斷是錯的】** 曾寫成「Chain Verifiability Theorem 跟 per-edge break 有直接張力，要正面處理」。該定理的「不可驗證節點」是 `ρ.level = none`（Reproducibility Commitment，即模型可否被重跑比對輸出），與委派紀錄無關，碰不到我們。真正相關的是同篇 §5.5 的 **Chain Auditability**，而它對我們有利。見 `refs/chain-verifiability/notes.md` 與 `retractions.md` §H1
 - `arXiv:2606.30970` AgentBound: Behavioral Governance — 三個獨立權威（delegated authorization / owner-signed behavioral constitution / site action contract）保守合成，產生密碼學可驗證的 governance receipt
 - `arXiv:2605.25376` KYA (Know Your Agents) — only-tighten composition algebra、跨 human/agent/service account 的統一 principal schema、**two-axis delegation attribution**（對高風險 delegate 收靜態溢價 + 對實際失當收 runtime debit）。跟我們的 funding attribution 是同一個問題的不同解
 - `arXiv:2607.21325` Cryptographically Verifiable Agent Authorization — 形式化 identity binding / request binding / execution context 三者的結構分離
@@ -691,8 +691,9 @@ discovery 的當代對照——跟 memory 裡 `funduq-anp-applicability-conditio
   **`strengths-and-gaps.md` 的 A1／A3／A4**，附原句出處。
 - 「down-flow vs up-flow 整條撤掉」「bibliography-notes 有兩處要改」
   → 已執行完畢；撤回的理由與判準見 **`retractions.md` §A1**。
-- 「`2603.14332` 的 Chain Verifiability Theorem 要正面處理」→ 仍未處理，
-  列在 **`strengths-and-gaps.md` B7**（該篇只讀過 abstract）。
+- 「`2603.14332` 的 Chain Verifiability Theorem 要正面處理」→ **2026-09-12
+  讀完全文後撤回**：那條定理沒有瞄準我們（`retractions.md` §H1）。
+  B7 已關閉，收據在 `refs/chain-verifiability/`。
 
 **這一節不再維護，以 `strengths-and-gaps.md` 為準。**
 

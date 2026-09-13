@@ -31,14 +31,16 @@
 > RAILS (2606.08790) ✅、Stop Means Stop (2607.14166) ✅、Governance at the
 > Boundary (2608.16055) ✅、MasDrift (2608.07556) ✅，皆 2026-08-21；
 > `draft-liu-oauth-chain-delegation-00` ✅、HDP (2604.04522) ✅，
-> 2026-08-25，兩者的引文皆逐字比對過原文。
+> 2026-08-25，兩者的引文皆逐字比對過原文；Governing Dynamic Capabilities
+> (2603.14332) ✅ 2026-09-12，**全文 PDF 在 `refs/chain-verifiability/`**，
+> 讀完後撤回 B7（`retractions.md` §H1）。
 > **§1 必讀清單已清空**；原有的三個 read-before-writing 旗標仍未讀
 > （2604.00892 / 2606.06460 / 2603.25100）。
 >
 > 結算與待決事項：**`strengths-and-gaps.md`**（11 條已知優勢附原句出處、
 > 11 條已知缺口、4 題待使用者決定）。
 > 兩模式模型與 deferred call 路由：**`input-required-routing.md`**（只放結論）。
-> 這一輪寫下又被推翻的十三條說法（五種形態）：**`retractions.md`**。
+> 寫下又被推翻的說法（目前十六條，八種形態）：**`retractions.md`**。
 
 ## §2.1 Agent interoperability protocols and surveys
 
@@ -75,6 +77,7 @@ The likely reviewer community; this section is the handshake with it.
 | Blaze, Feigenbaum, Lacy, *PolicyMaker* (IEEE S&P 1996); KeyNote | Decentralized trust management precursors |
 | **Pagnia & Gärtner, *On the Impossibility of Fair Exchange without a Trusted Third Party*** (TUD-BS-1999-02, TU Darmstadt, 1999-03); Even & Yacobi (1980); Zhou & Gollmann, fair non-repudiation | **Lineage and contrast for §4.5 — cite it to say what we are *not*.** It proves strong fair exchange is impossible without a TTP, and in that literature **the TTP is a judge**: the protocols carry abort and recovery sub-protocols plus a dispute-resolution policy specifying how a judge settles. Citing it as our necessity argument would import an adjudicator and contradict rule zero — a reviewer who knows this line would say their third party judges, ours refuses to, so the theorem does not reach us. We also do not attempt fair exchange: a provider declining to extend is a boundary, not an unfair abort. **What we borrow is the shape, not the conclusion.** Our property is *distinguishability* (declined-to-extend versus erased hop), which is strictly weaker than fairness and needs a party that **sees both edges**, not one that may rule — hence *witness*, not arbiter, and the weaker requirement is the deployability argument. Verify the exact report number and date before it ships |
 | **AIP** — [arXiv:2603.24775](https://arxiv.org/abs/2603.24775) v1, 2026-03-25 (+ same author's LDP, Provenance Paradox) | The near neighbor. **Full text read 2026-08-21; the earlier "AIP governs down-flow, we govern up-flow" slogan was wrong and is retired** — §3.2's Completion block (result hash, verification status, resource consumption, cost) is appended back onto the same token, and §3.3 defines three trust levels (self-reported / counter-signed / third-party attested). AIP *does* have an up-flow. The differentiation that survives the full text, per lane: **escalation path — absent; visibility — absent; blame — raw material only, signed by the party being judged; funding attribution — raw material only, budget is a per-token ceiling, never a running balance** (§3.4: "Aggregate spend enforcement is the runtime's responsibility, not the token's" — funduq is that runtime). So AIP's up-flow is *a self-report with no observer*, and its own Limitations concede the point, citing the Provenance Paradox: self-claimed quality "systematically selects the worst delegates"; counter-signing and third-party attestation "exist as trust escalation options but are not enforced in v1". **Argue the differentiation out of AIP's own limitations section, never out of a down/up dichotomy.** Also verified: no break concept (§3.7 is attenuation-only + bounded depth, default 3); no HITL/interrupt/cancel content anywhere; no revocation (§7: sub-hour TTL, CRL endpoint is MAY and no reference implementation checks it) — contrasts with rule zero. Weight it accordingly: single author (ISB India), self-citing trilogy, evaluation is single-machine localhost with no production deployment, by its own admission |
+| **Governing Dynamic Capabilities** — [arXiv:2603.14332](https://arxiv.org/abs/2603.14332) v2, 2026-03-19, cs.CR (single author, Ziling Zhou) | **Full text read 2026-09-12; the earlier "its Chain Verifiability Theorem collides with per-edge break" judgement is retired** (`retractions.md` §H1). Its unverifiable node is Definition 8's `ρ.level = none`, and ρ is Definition 6's **Reproducibility Commitment** — whether an agent commits to its declared model being re-run and its output compared. That is computational fidelity (their G2), not a delegation record; a break makes no node's computation unreplayable, and the theorem only reaches a system claiming end-to-end behavioral verification, which rule zero declines to claim. **The result that does touch us is §5.5's Property 2 / Definition 12 (Chain Auditability)**, and it helps: `CAD = min{ j : record for v_{j-1} → v_j absent from ℒ }` — a *declared* break is not absent, the boundary is itself a record, so Property 2 reads on responsibility chains as "tracing stops at the declared boundary", which is §4.2 restated in their vocabulary. **Discipline that comes with it**: the alignment holds only while the draft never claims provenance past a break — sweep §4.2 and §5 before submission. **Second use, in §5**: its §8.7 concedes "the current G3 instantiation assumes a centralized operator honest for availability and ordering", and that ledger enforces integrity and ordering only — it does not rule. **A non-adjudicating witness precedent**, closer than the fair-exchange lineage and without importing an adjudicator; whether §5's necessity argument should lean here instead is open. Cite with care: its G3 requires bilateral signatures on every edge into one ledger ℒ — unobtainable across trust boundaries, which is exactly why our guarantee is weaker, so quote that requirement alongside the theorem |
 | IETF drafts: AIMS, WIMSE, Agentic JWT, SCIM-for-agents | Industry standardization pulse. **Superseded in specificity by §2.7** — that section names the drafts that actually carry delegation chains |
 | **HDP** — [arXiv:2604.04522](https://arxiv.org/abs/2604.04522), Helixar (single author, NZ), 2026-03; also `draft-helixar-hdp-agentic-delegation-00` | **Full text read 2026-08-25 (PDF text extracted, quotes matched character for character). The closest thing to our mechanism, and it says our sentence**: §4.2.3 "Semantic validation of agent actions against declared scope is an application-layer concern; **HDP provides the record, not the enforcement**." The line must be drawn on *what is recorded*, not on record-versus-enforce, or a reviewer will say it is already said. Three differences, all from its own text: (1) **§7.1** — "HDP v0.1 uses the issuer's key for all hop signatures, meaning agents do not sign with their own keys… hop signatures attest that **a hop was recorded at the issuer**, not that the specific agent produced it"; per-agent keys are a v0.2 plan. (2) It records scope — a free-text `intent`, `authorized_tools`, `data_classification`, `network_egress`, `persistence`, `max_hops` — and pushes checking to the application layer (§7.2). (3) Time and session: `expires_at` defaults to 24h and a `session_id` bound out of band; replay defence is expiry plus session binding, with **no possession check**. Its §5.4 concedes the semantic boundary: a legitimate agent recording a genuine hop with a misleading `action_summary` "is not detectable by the protocol alone" |
 | **SentinelAgent** — [arXiv:2604.02767](https://arxiv.org/html/2604.02767v1) | The adjudicator row's contemporary instance: a central Delegation Authority Service issues, intercepts and **blocks**, with NIST 800-53 controls inside the token and an intent vector per hop. Self-reported weakness worth quoting: 13% TPR against adversarial intent paraphrasing. `[待逐字查證 — currently a summary]` |
@@ -157,15 +160,16 @@ SMTP, XMPP, Matrix, ActivityPub — outbound-connection + federated-identity pre
 
 ## Where the receipts live
 
-`reference/` — one file per source: who wrote it, when, **how far it has
+`refs/` — one folder per source (full text + `notes.md`): who wrote it, when, **how far it has
 actually been read**, and **the exact strings the draft quotes**, each with
 the section it appears in and the claim it carries. This file is the map;
 that directory is the receipt, and the split exists because "HDP concedes
 single-key signing" is not checkable by anyone and the sentence with its
 section number is.
 
-Its status table is the honest count: **five of eleven sources are not yet
-safe to ship**, including the one the introduction opens on.
+Its status table is the honest count: **seven of twelve sources are not yet
+safe to ship** (five `summary` plus two `unread`), including the one the
+introduction opens on and the one §5's necessity argument rests on.
 
 ## Pre-writing checklist
 
