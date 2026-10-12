@@ -189,7 +189,7 @@ explicit constructor argument, never the environment (core reads none):
 
 | | default | what it bounds |
 |---|---|---|
-| `deliver_timeout_seconds` | 5.0 | waiting for a provider to take an offered run |
+| `deliver_timeout_seconds` | 5.0 | waiting for a provider to answer an offer; past it the run fails `provider_did_not_answer` |
 | `unserved_timeout_seconds` | 45.0 | how long a run stays queued with nobody serving it |
 | `undelivered_window_seconds` | 1800.0 | the window in the section above |
 

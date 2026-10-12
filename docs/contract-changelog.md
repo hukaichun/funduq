@@ -28,6 +28,20 @@ entries below say what to change and not only what moved.
 
 ---
 
+## Revision 25 — 2026-10-12
+
+**An unanswered offer fails the run** (#288). A provider that misses the delivery
+window (`deliver_timeout_seconds`, 5s by default) used to have the run taken back
+and offered again. Now the run fails with `provider_did_not_answer`, and the miss
+still counts against the provider's `unanswered`. The same applies when handing
+the offer over raises. An interjection follows the same path, and a run already
+asked to cancel still ends cancelled.
+
+Migration for a provider: if you took a run and lost your answer, you used to get
+the run offered again and could accept it again. That no longer happens. Answer
+inside the window, which is an intake decision and never waits on running
+anything. A declined offer is unchanged: it still goes back to the queue.
+
 ## Revision 24 — 2026-10-12
 
 **AG-UI 1.0** (#290). All three packages now require `ag-ui-protocol>=1.0,<2`.

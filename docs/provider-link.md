@@ -49,11 +49,12 @@ connection than the request went down.
 An acknowledgement is an intake decision, answered from state the provider
 already holds — never gated on running anything. That is why the delivery
 timeout is short: missing it means the link or the provider is broken, not
-that it is thinking. funduq takes the run back and re-offers it; an
+that it is thinking. funduq fails the run (`provider_did_not_answer`) and
+counts the miss against the provider; the run is not offered again. An
 acknowledgement that arrives after that matches nothing and is answered
 false, which is a guard, not a path. A provider that had actually taken the
-run and lost its answer sees the same run offered again and simply accepts
-again.
+run and lost its answer has lost the run with it: the window is the whole
+of the time it has to say so.
 
 **A verdict cannot be outrun.** A provider may accept and start streaming
 in the same breath — write the verdict and its first events in one burst —

@@ -295,7 +295,7 @@ class _ThreadHandler:
     queue: deque[Run] = field(default_factory=deque)
     live: dict[str, Run] = field(default_factory=dict)
     task: asyncio.Task | None = None
-    # Set after a declined or unanswered offer: don't re-offer the same head
+    # Set after a declined offer: don't re-offer the same head
     # until something changes (a poke, a new run) — retrying into the same
     # answer is noise, not persistence.
     resting: bool = False
@@ -678,14 +678,13 @@ class RunBroker:
             await self._record(run, RequestCancel())
             await self._settle(handler, run)
             return
-        await self._record(run, Requeue())
-        if run.is_interjection:
-            self._requeue_interjection(handler, run)
-        else:
-            self._rest(handler)
+        # Missing the window means the link or the provider is broken (#288):
+        # the run ends here rather than waiting to be offered into the same breakage.
+        await self._record(run, Fail("provider_did_not_answer"))
+        await self._settle(handler, run)
 
     def _rest(self, handler: _ThreadHandler) -> None:
-        """After a declined or unanswered offer: pause, then look again. The retry is the handler's own clock, not a broadcast it hopes to catch."""
+        """After a declined offer: pause, then look again. The retry is the handler's own clock, not a broadcast it hopes to catch."""
         handler.resting = True
         self._spawn(
             self._retry_later(handler), name=f"retry:{handler.thread_id}"
@@ -767,7 +766,7 @@ class RunBroker:
         handler.inbox.put_nowait(_OfferLapsed(run_id, offer_id))
 
     def _requeue_interjection(self, handler: _ThreadHandler, run: Run) -> None:
-        """A declined or unanswered interjection simply becomes the thread's next turn."""
+        """A declined interjection simply becomes the thread's next turn."""
         if run.is_interjection:
             run.is_interjection = False
             handler.queue.insert(min(1, len(handler.queue)), run)

@@ -182,10 +182,10 @@ async def test_a_verdict_after_funduq_moved_on_lands_nowhere(broker):
     await provider.saw.wait()
     # Observe the state transition, then act — no sleeps guessed at.
     await _until(lambda: broker.quality()["pk_breath"].unanswered >= 1, timeout=2.0)
-    await _until(lambda: any(isinstance(c, Requeue) for c in record))
+    await _until(lambda: any(isinstance(c, Fail) for c in record))
 
     broker.answer_offer("run_1", True, provider_key="pk_breath")
     await asyncio.sleep(0.02)
-    assert broker.get("run_1").claimed_by is None, (
+    assert not any(isinstance(c, Claim) for c in record), (
         "an offer that lapsed cannot be claimed by answering it later"
     )
