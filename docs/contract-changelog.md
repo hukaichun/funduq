@@ -15,7 +15,7 @@ courtesy someone remembers.
 own code to keep up with: the vectors themselves, `CoreSettings` fields and
 whether each is required, the provider link's verbs, every crossing shape
 funduq-contract defines with its field aliases, the A2A protocol version
-and transport bindings, whether each package ships its PEP 561 marker, and
+and transport bindings, the AG-UI protocol version, whether each package ships its PEP 561 marker, and
 every public name `funduq_contract` exports with the shape it exports it
 as. Prose and internals are not in it — see `funduq/tests/contract_surface.py`, which
 reads every part of it live rather than from a copy.
@@ -27,6 +27,33 @@ onwards a stranger can install a version and be wrong about it, so the
 entries below say what to change and not only what moved.
 
 ---
+
+## Revision 24 — 2026-10-12
+
+**AG-UI 1.0** (#290). All three packages now require `ag-ui-protocol>=1.0,<2`.
+Before this they had a lower bound and no upper bound, so a fresh install
+already resolved 1.0. The protocol a run input speaks was never in the surface,
+so nothing recorded that change. The AG-UI protocol version is in the surface
+now, beside A2A's.
+
+What an agent provider receives changes in two ways:
+
+- **`protocolVersion: "1.0"` is on every run input**, and on the `RUN_STARTED`
+  funduq writes for a run nobody is serving. 1.0 makes it a producer's MUST,
+  and funduq produces both. The `RUN_STARTED` an agent writes is the agent's to
+  version.
+- **An optional field with no value is absent, never `null`.** That is 1.0's
+  rule, and the 1.0 models already serialise that way. A `RunAgentInput` with
+  no `forwardedProps` arrives without the key. AG-UI 0.1's model required that
+  key, so a provider still validating against 0.1 refuses the run.
+
+An AG-UI caller may now leave out `tools` and `context`, which 1.0 made
+optional. The AG-UI door used to fail on such an input.
+
+Migration for a provider on `funduq-provider-sdk`: upgrade it, and AG-UI 1.0
+comes with it. A provider implementing the link itself moves to AG-UI 1.0. Note
+that 1.0 removed `THINKING_*` outright, so an agent still emitting those events
+must switch to `REASONING_*`.
 
 ## Revision 23 — 2026-09-11
 

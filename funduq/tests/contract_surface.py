@@ -119,6 +119,16 @@ def _a2a_surface() -> list[str]:
     return [f"protocol_version:{PROTOCOL_VERSION}", *sorted(f"binding:{b}" for b in _BINDINGS)]
 
 
+def _agui_surface() -> list[str]:
+    """The AG-UI protocol version funduq states on the input it delivers.
+    Read from `ag-ui-protocol` rather than written here, the way the A2A
+    version is: a run input is AG-UI's shape, so a provider pinned to another
+    major cannot read it, and that has to move this fingerprint (#290)."""
+    from ag_ui.core import PROTOCOL_VERSION
+
+    return [f"protocol_version:{PROTOCOL_VERSION}"]
+
+
 def _typing_surface() -> list[str]:
     """Whether each distributed package still ships its PEP 561 marker.
 
@@ -237,6 +247,7 @@ def surface() -> dict[str, Any]:
         "link": _link_surface(),
         "shapes": _shapes_surface(),
         "a2a": _a2a_surface(),
+        "agui": _agui_surface(),
         "typing": _typing_surface(),
     }
 
