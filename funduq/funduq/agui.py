@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from ag_ui.core import EventType, RunAgentInput
+from ag_ui.core import PROTOCOL_VERSION, EventType, RunAgentInput
 from pydantic import ValidationError
 
 from funduq.ids import new_id
@@ -37,10 +37,11 @@ def build_run_agent_input(
     resume: list[dict[str, Any]] | None = None,
     parent_run_id: str | None = None,
 ) -> dict[str, Any]:
-    """Builds and validates a wire-format AG-UI `RunAgentInput` dict from the given fields, raising `ValueError` if the assembled input fails AG-UI's own validation."""
+    """Builds and validates a wire-format AG-UI `RunAgentInput` dict from the given fields, raising `ValueError` if the assembled input fails AG-UI's own validation. funduq is the producer of the input an agent receives, so it states the protocol version itself."""
     try:
         model = RunAgentInput.model_validate(
             {
+                "protocolVersion": PROTOCOL_VERSION,
                 "threadId": thread_id,
                 "runId": run_id,
                 "state": state,

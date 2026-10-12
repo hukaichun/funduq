@@ -78,7 +78,7 @@ hooks … to send a retry prompt back to the model asking it to try again」。
 
 ## AG-UI 的操作點
 
-以 `ag-ui-protocol 0.1.19` 的型別為準——funduq 自己釘的那一版，每一列都是對著
+以 `ag-ui-protocol 0.1.19` 的型別為準——funduq 當時釘的那一版（#290 起改釘 1.0，本節未重新對照），每一列都是對著
 安裝好的套件讀出來的。
 
 | 操作 | 落點 |

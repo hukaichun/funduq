@@ -5,7 +5,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Literal
 
 from funduq import repo
-from ag_ui.core import RunErrorEvent, RunStartedEvent
+from ag_ui.core import PROTOCOL_VERSION, RunErrorEvent, RunStartedEvent
 
 from funduq.agui import build_run_agent_input
 from funduq.ids import new_id
@@ -249,7 +249,9 @@ async def open_run(
 
 async def offline_events(thread_id: str, run_id: str) -> AsyncIterator[dict[str, Any]]:
     """The stream a run gets when its agent is registered but nobody is serving it."""
-    yield RunStartedEvent(thread_id=thread_id, run_id=run_id).model_dump(
+    yield RunStartedEvent(
+        thread_id=thread_id, run_id=run_id, protocol_version=PROTOCOL_VERSION
+    ).model_dump(
         mode="json", by_alias=True, exclude_none=True
     )
     yield RunErrorEvent(message="agent is currently offline").model_dump(
