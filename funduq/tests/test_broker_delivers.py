@@ -289,7 +289,7 @@ async def test_a_provider_that_never_answers_is_not_waited_on_forever(broker):
     _enqueue(broker, "run_1")
 
     await _until(lambda: broker.quality()["pk_silent"].unanswered >= 1, timeout=2.0)
-    assert broker.get("run_1").claimed_by is None
+    await _until(lambda: broker.get("run_1") is None, timeout=2.0)
 
     working = Recording(key="pk_working")
     broker.register_provider({OTHER: working})
@@ -333,37 +333,35 @@ async def test_a_reconnecting_provider_keeps_its_bucket(broker):
     assert broker.quality()["pk_provider"].in_flight == 1
 
 
-async def test_missing_the_window_is_breakage_answered_by_a_fresh_offer(broker):
+async def test_missing_the_window_fails_the_run(broker):
     """An acknowledgement is an intake decision; missing the window means the
-    link or the provider is broken, not that it is thinking. funduq counts it,
-    takes the run back, and offers it again — a provider that had actually
-    taken the run and lost its answer sees the same run offered again and
-    simply accepts again. There is no late-claim path."""
+    link or the provider is broken, not that it is thinking. funduq counts it
+    and fails the run (#288). It is not offered again, so a provider that had
+    taken the run and lost its answer does not get a second chance at it, and
+    a late answer claims nothing."""
 
-    class LostFirstAnswer(Recording):
-        def __init__(self) -> None:
-            super().__init__()
-            self.calls = 0
-
+    class NeverAnswers(Recording):
         async def deliver(self, run) -> None:
-            self.calls += 1
             self.offered.append(run.run_id)
-            if self.calls == 1:
-                await asyncio.Event().wait()
-            _CURRENT_BROKER.answer_offer(run.run_id, True, provider_key=self.public_key)
+            await asyncio.Event().wait()
 
-    provider = LostFirstAnswer()
-    # Its own broker: the retry rides the sweep, so the sweep must cycle fast.
+    provider = NeverAnswers()
+    # Its own broker, so a re-offer riding the sweep would have time to show.
     b = _own_broker(deliver_timeout_seconds=0.05, unserved_timeout_seconds=0.1)
     try:
         b.register_provider({AGENT: provider})
-        b.enqueue_run("run_1", AGENT, "thread_run_1", _valid_input("run_1", "thread_run_1"), {})
-        await _until(lambda: b.quality()["pk_provider"].unanswered >= 1, timeout=2.0)
-        assert b.get("run_1").claimed_by is None, "no answer, no claim"
+        failed: list = []
 
-        await _until(lambda: b.get("run_1").claimed_by == "pk_provider", timeout=2.0)
-        assert provider.offered == ["run_1", "run_1"], "the same run, offered afresh"
-        assert not hasattr(b, "accept_late_ack"), "the late-claim path is gone"
+        async def _record_fail(run, cmd) -> None:
+            failed.append((run.run_id, cmd.reason))
+
+        b.enqueue_run("run_1", AGENT, "t1", _valid_input("run_1", "t1"), {Fail: _record_fail})
+        await _until(lambda: failed == [("run_1", "provider_did_not_answer")], timeout=2.0)
+        assert b.quality()["pk_provider"].unanswered == 1
+
+        await asyncio.sleep(0.3)
+        assert provider.offered == ["run_1"], "offered once, never again"
+        assert b.get("run_1") is None, "the run is over"
     finally:
         b.stop()
 
