@@ -53,11 +53,6 @@ class Offer:
 
 
 @dataclass
-class Requeue:
-    """The offer was not accepted, so the run goes back where it came from."""
-
-
-@dataclass
 class Claim:
     pass
 
@@ -84,7 +79,7 @@ class Fail:
     reason: str
 
 
-Command = Offer | Requeue | Claim | RelayEvent | FinishStream | RequestCancel | Fail
+Command = Offer | Claim | RelayEvent | FinishStream | RequestCancel | Fail
 
 HandlerMap = dict[type, Callable[["Run", Any], Awaitable[None]]]
 
@@ -295,10 +290,6 @@ class _ThreadHandler:
     queue: deque[Run] = field(default_factory=deque)
     live: dict[str, Run] = field(default_factory=dict)
     task: asyncio.Task | None = None
-    # Set after a declined offer: don't re-offer the same head
-    # until something changes (a poke, a new run) — retrying into the same
-    # answer is noise, not persistence.
-    resting: bool = False
 
 
 class RunBroker:
@@ -494,8 +485,6 @@ class RunBroker:
                 self._threads.pop(handler.thread_id, None)
 
     async def _on_message(self, handler: _ThreadHandler, message: _Message) -> None:
-        if isinstance(message, (_Queued, _Poke)):
-            handler.resting = False
         if isinstance(message, _Queued):
             await self._on_queued(handler, message.run)
         elif isinstance(message, _Answered):
@@ -555,12 +544,11 @@ class RunBroker:
                 await self._record(run, RequestCancel())
                 await self._settle(handler, run)
                 return
-            await self._record(run, Requeue())
             self._note_misdeclared(run, msg.provider_key)
-            if run.is_interjection:
-                self._requeue_interjection(handler, run)
-            else:
-                self._rest(handler)
+            # Whether to try again is the host's call: funduq ends the run and
+            # never offers it a second time on its own.
+            await self._record(run, Fail("provider_declined"))
+            await self._settle(handler, run)
             return
 
         # Accepted: the claim is written here, by the run's one owner, and it
@@ -683,24 +671,13 @@ class RunBroker:
         await self._record(run, Fail("provider_did_not_answer"))
         await self._settle(handler, run)
 
-    def _rest(self, handler: _ThreadHandler) -> None:
-        """After a declined offer: pause, then look again. The retry is the handler's own clock, not a broadcast it hopes to catch."""
-        handler.resting = True
-        self._spawn(
-            self._retry_later(handler), name=f"retry:{handler.thread_id}"
-        )
-
-    async def _retry_later(self, handler: _ThreadHandler) -> None:
-        await asyncio.sleep(self.sweep_interval_seconds)
-        handler.inbox.put_nowait(_Poke())
-
     # ---- offers ---------------------------------------------------------
 
     async def _advance(self, handler: _ThreadHandler) -> None:
         """Offers the head of the queue if the turn is free and a connection with room is present."""
         while handler.queue and handler.queue[0].settled.is_set():
             handler.queue.popleft()
-        if not handler.queue or handler.resting:
+        if not handler.queue:
             return
         run = handler.queue[0]
         if run.claimed_by is not None or run.verdict_open or run.offered_to is not None:
@@ -764,12 +741,6 @@ class RunBroker:
     ) -> None:
         await asyncio.sleep(self.deliver_timeout_seconds)
         handler.inbox.put_nowait(_OfferLapsed(run_id, offer_id))
-
-    def _requeue_interjection(self, handler: _ThreadHandler, run: Run) -> None:
-        """A declined interjection simply becomes the thread's next turn."""
-        if run.is_interjection:
-            run.is_interjection = False
-            handler.queue.insert(min(1, len(handler.queue)), run)
 
     async def _release_interjections(self, handler: _ThreadHandler, head: Run) -> None:
         """Pull every queued run addressed to the claimed head and offer it now, beside the turn it joins."""

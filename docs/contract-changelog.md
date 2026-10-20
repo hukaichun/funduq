@@ -28,6 +28,22 @@ entries below say what to change and not only what moved.
 
 ---
 
+## Revision 26 — 2026-10-20
+
+**A declined offer fails the run** (#288's other half). A provider that
+answered an offer `False` used to have the run put back at the head of its
+thread and offered again later. Now the run fails with `provider_declined`. A
+decline while funduq believed the provider had room still counts against its
+`misdeclared`. A run already asked to cancel still ends cancelled.
+
+funduq now offers no run twice for any reason. Whether a failed run is worth
+another attempt is the host's call, made by opening a new run
+([What a deployment owes](host-obligations.md)).
+
+Migration for a provider: a decline used to mean "not now", and now it means
+the run is gone. Decline only when you will not take the run. If you declared
+your capacity honestly, funduq does not offer you a run you have no room for.
+
 ## Revision 25 — 2026-10-12
 
 **An unanswered offer fails the run** (#288). A provider that misses the delivery

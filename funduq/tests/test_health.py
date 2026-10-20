@@ -17,6 +17,7 @@ async def _make_paused_run(session, agent, thread_id, seconds_stale: int) -> str
     await session.commit()
     run_id = created["run_id"]
     # The legal road to a pause: a run is claimed (running) before it can ask.
+    await repo.mark_run_status(session, run_id, "offering")
     await repo.mark_run_status(session, run_id, "running")
     await repo.append_run_event(session, run_id, 1, {"type": "RUN_STARTED", "threadId": thread_id, "runId": run_id})
     await repo.append_run_event(
@@ -132,6 +133,7 @@ async def test_orphans_reaped_at_start_get_terminal_events(settings, session, ne
     await session.commit()
     run_id = created["run_id"]
     # Held by the previous process: only a run somebody had in hand is an orphan.
+    await repo.mark_run_status(session, run_id, "offering")
     await repo.mark_run_status(session, run_id, "running")
 
     reborn = Funduq(settings)

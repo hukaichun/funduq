@@ -23,7 +23,6 @@ from funduq.broker import (
     FinishStream,
     Offer,
     RelayEvent,
-    Requeue,
     RunBroker,
 )
 from funduq.models import AgentRef
@@ -56,7 +55,6 @@ def _recording_handlers(record: list) -> dict:
 
     return {
         Offer: note,
-        Requeue: note,
         Claim: note,
         RelayEvent: note,
         FinishStream: note,
@@ -132,7 +130,7 @@ async def test_a_declined_offer_buys_no_voice(broker):
         _recording_handlers(record),
     )
 
-    await _until(lambda: any(isinstance(c, Requeue) for c in record))
+    await _until(lambda: any(isinstance(c, Fail) for c in record))
     assert not any(isinstance(c, RelayEvent) for c in record), (
         "declining and then talking records the decline and none of the talk"
     )

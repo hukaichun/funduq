@@ -648,24 +648,12 @@ async def record_cancel_request(
 # The run-status state machine: which statuses each `mark_run_status` write may legally come from.
 LEGAL_STATUS_TRANSITIONS: dict[str, tuple[str, ...]] = {
     "offering": ("queued",),
-    # "queued" as well as "offering": an offer that was declined, went unanswered, or failed puts the run back in the queue (`Requeue`).
-    "running": ("queued", "offering"),
+    "running": ("offering",),
     "cancelling": ("running",),
     "completed": ("running", "cancelling"),
     "cancelled": ("queued", "offering", "running", "cancelling"),
     "failed": ("queued", "offering", "running", "cancelling"),
 }
-
-
-async def return_run_to_queue(session: AsyncSession, run_id: str) -> bool:
-    """Puts a run whose offer was not accepted back to "queued", and returns whether it applied."""
-    result = await session.execute(
-        update(runs)
-        .where(runs.c.run_id == str(run_id), runs.c.status == "offering")
-        .values(status="queued", last_activity_at=_utcnow())
-    )
-    await session.commit()
-    return result.rowcount > 0
 
 
 async def mark_run_status(session: AsyncSession, run_id: str, status: str) -> bool:

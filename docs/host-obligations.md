@@ -138,6 +138,15 @@ method-to-endpoint mapping would be a wire authored here. **What you may call
 survives a carrier swap and belongs here; how a call becomes an endpoint does
 not and belongs to you.**
 
+### Decide whether a failed run is tried again
+
+Core never offers a run twice. A provider that declines, refuses, misses the
+delivery window or leaves while holding the run ends it, with a reason that
+says which. Whether that is worth another attempt is a policy, and policies
+are yours: try again by opening a new run.
+
+A deployment that keeps no rule of its own retries nothing.
+
 ### Keep the record
 
 Core never deletes a run, a thread or an event. Your own operations can —

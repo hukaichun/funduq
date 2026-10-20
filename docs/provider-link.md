@@ -56,6 +56,11 @@ false, which is a guard, not a path. A provider that had actually taken the
 run and lost its answer has lost the run with it: the window is the whole
 of the time it has to say so.
 
+Every verdict but an acceptance ends the run. A refusal fails it with the
+provider's reason; a decline fails it with `provider_declined`. Neither is
+offered again: whether to try a run again is the host's call, made by opening
+a new one, never funduq's.
+
 **A verdict cannot be outrun.** A provider may accept and start streaming
 in the same breath — write the verdict and its first events in one burst —
 and none of it is lost: everything a connection says about a run, the

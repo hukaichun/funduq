@@ -16,6 +16,7 @@ async def test_native_ag_ui_interrupt_outcome_pauses_a_run(session, funduq, new_
     thread_b = await repo.create_thread(session, agent_b)
     created = await repo.create_run(session, thread_b, agent_b, {})
     await session.commit()
+    await repo.mark_run_status(session, created["run_id"], "offering")
     await repo.mark_run_status(session, created["run_id"], "running")
     run_id = created["run_id"]
     await session.commit()
@@ -50,6 +51,7 @@ async def test_native_ag_ui_success_outcome_completes_a_run_normally(session, fu
     thread_b = await repo.create_thread(session, agent_b)
     created = await repo.create_run(session, thread_b, agent_b, {})
     await session.commit()
+    await repo.mark_run_status(session, created["run_id"], "offering")
     await repo.mark_run_status(session, created["run_id"], "running")
     run_id = created["run_id"]
     await session.commit()
@@ -76,6 +78,7 @@ async def test_a_run_that_finished_asking_is_not_active_on_its_thread(session, n
     thread_c = await repo.create_thread(session, agent_c)
     run_c = await repo.create_run(session, thread_c, agent_c, {})
     await session.commit()
+    await repo.mark_run_status(session, run_c["run_id"], "offering")
     await repo.mark_run_status(session, run_c["run_id"], "running")
     await repo.append_run_event(session, run_c["run_id"], 1, {"type": "RUN_STARTED"})
     await repo.append_run_event(
@@ -142,6 +145,7 @@ async def test_an_unanswered_tool_call_pauses_a_run_that_reported_success(
     thread_b = await repo.create_thread(session, agent_b)
     created = await repo.create_run(session, thread_b, agent_b, {})
     await session.commit()
+    await repo.mark_run_status(session, created["run_id"], "offering")
     await repo.mark_run_status(session, created["run_id"], "running")
     run_id = created["run_id"]
     await session.commit()
@@ -181,6 +185,7 @@ async def test_a_run_whose_every_tool_call_was_answered_still_completes(
     thread_b = await repo.create_thread(session, agent_b)
     created = await repo.create_run(session, thread_b, agent_b, {})
     await session.commit()
+    await repo.mark_run_status(session, created["run_id"], "offering")
     await repo.mark_run_status(session, created["run_id"], "running")
     run_id = created["run_id"]
     await session.commit()
@@ -214,6 +219,7 @@ async def test_an_interrupt_and_an_unanswered_call_are_recorded_in_one_pause(
     thread_b = await repo.create_thread(session, agent_b)
     created = await repo.create_run(session, thread_b, agent_b, {})
     await session.commit()
+    await repo.mark_run_status(session, created["run_id"], "offering")
     await repo.mark_run_status(session, created["run_id"], "running")
     run_id = created["run_id"]
     await session.commit()
