@@ -56,10 +56,9 @@ def test_the_delivered_run_model_round_trips_under_either_spelling():
     transport's (#282), so this asserts the model's own symmetry rather than
     matching a published envelope.
 
-    `forwardedProps` is the case worth pinning. Under AG-UI 0.1 it was
-    required and legitimately `null`, so a dump that dropped it refused a
-    good run. AG-UI 1.0 made it optional and made absence the only spelling
-    of "none" (#290): the dump leaves it out, and the run still round-trips.
+    `forwardedProps` is the case worth pinning: legitimately `null` and
+    required, so a dump that drops it turns a good run into a permanent
+    refusal instead of a loud error.
     """
     from ag_ui.core import RunAgentInput
 
@@ -82,7 +81,7 @@ def test_the_delivered_run_model_round_trips_under_either_spelling():
     ):
         assert DeliveredRun.model_validate(dumped) == delivered
         carried = dumped.get("runInput", dumped.get("run_input"))
-        assert "forwardedProps" not in carried and "forwarded_props" not in carried
+        assert "forwardedProps" in carried or "forwarded_props" in carried
 
 
 def test_the_published_chain_verifies_here_too_and_can_be_reproduced():

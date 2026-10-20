@@ -73,7 +73,7 @@ async def test_a_run_reports_every_status_it_moves_through(funduq: Funduq, attac
 
 class _Decliner:
     """A provider with no room right now: it answers every offer "not me, not
-    yet" — the answer that sends a run back to the queue."""
+    yet" — the answer that ends the run, since retrying is the host's call."""
 
     public_key = "pk_decliner"
     max_concurrent_runs = None
@@ -88,11 +88,10 @@ class _Decliner:
 
     async def cancel(self, run_id: str) -> bool:
         return True
-async def test_a_declined_run_is_reported_back_where_it_came_from(funduq: Funduq) -> None:
+async def test_a_declined_run_is_reported_failed(funduq: Funduq) -> None:
     """The dispatch window has two ends and the record follows both. A run
-    handed to a provider is "offering"; a provider that declines it leaves it
-    exactly where it was, and saying so is the only way a reader can tell an
-    offer still out from one that came back."""
+    handed to a provider is "offering"; a provider that declines it ends it,
+    and a reader hears that the run failed rather than that it is still out."""
     seen: list = []
     funduq.on_change(lambda e: seen.append(e.status) if isinstance(e, RunStatusChanged) else None)
 
@@ -101,9 +100,9 @@ async def test_a_declined_run_is_reported_back_where_it_came_from(funduq: Funduq
     funduq.broker.register_provider({agent: provider})
     handle = await funduq.start_run(agent, {"messages": []})
 
-    await _until(lambda: seen[:2] == ["offering", "queued"])
+    await _until(lambda: seen[:2] == ["offering", "failed"])
     run = await funduq.get_run(handle.run_id)
-    assert run.status == "queued"
+    assert run.status == "failed"
     assert provider.offered == [handle.run_id]
 
 

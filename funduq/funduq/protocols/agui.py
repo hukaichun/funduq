@@ -101,9 +101,8 @@ class AGUIAdapter:
                 actor_chain=relayed_chain(funduq, actor_chain, agent),
                 kyok=kyok,
                 state=body.state,
-                # Optional since AG-UI 1.0: a caller may leave either out.
-                tools=[t.model_dump(mode="json", by_alias=True) for t in body.tools or []],
-                context=[c.model_dump(mode="json", by_alias=True) for c in body.context or []],
+                tools=[t.model_dump(mode="json", by_alias=True) for t in body.tools],
+                context=[c.model_dump(mode="json", by_alias=True) for c in body.context],
                 resume=resume,
                 # The caller's own parentRunId, relayed verbatim unless this input answers the thread's asks — then funduq names the run that asked.
                 parent_run_id=body.parent_run_id,

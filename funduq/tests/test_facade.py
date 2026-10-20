@@ -328,6 +328,7 @@ async def test_start_reconciles_what_the_last_process_left_behind(own_funduq, ne
     async with own_funduq.session() as session:
         thread_id = await repo.create_thread(session, agent_id)
         held = (await repo.create_run(session, thread_id, agent_id, {"messages": []}))["run_id"]
+        await repo.mark_run_status(session, held, "offering")
         await repo.mark_run_status(session, held, "running")
         waiting = (await repo.create_run(session, thread_id, agent_id, {"messages": []}))["run_id"]
         await session.commit()

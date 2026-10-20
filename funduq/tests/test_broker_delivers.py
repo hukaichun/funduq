@@ -152,16 +152,24 @@ async def test_a_run_is_delivered_exactly_once(broker):
     assert sorted(provider.offered) == [f"run_{i}" for i in range(5)]
 
 
-async def test_a_decline_leaves_the_run_queued(broker):
-    provider = Recording(answers=[False, False], default=False)
+async def test_a_decline_ends_the_run(broker):
+    """Whether to try again is the host's call, so funduq does not offer a
+    declined run a second time: the run fails, and says why."""
+    provider = Recording(default=False)
     broker.register_provider({AGENT: provider})
-    _enqueue(broker, "run_1")
+    failed: list = []
 
-    await _until(lambda: bool(provider.offered))
+    async def _record_fail(run, cmd) -> None:
+        failed.append((run.run_id, cmd.reason))
+
+    broker.enqueue_run("run_1", AGENT, "t1", _valid_input("run_1", "t1"), {Fail: _record_fail})
+
+    await _until(lambda: failed == [("run_1", "provider_declined")])
+    await _until(lambda: broker.get("run_1") is None)
     await asyncio.sleep(0.05)
-
-    assert broker.get("run_1").claimed_by is None
+    assert provider.offered == ["run_1"], "offered once, never again"
     assert broker.quality()["pk_provider"].in_flight == 0
+    assert broker.quality()["pk_provider"].misdeclared == 1, "one event, one count"
 
 
 async def test_a_provider_past_its_abnormality_allowance_is_withdrawn():
@@ -175,21 +183,22 @@ async def test_a_provider_past_its_abnormality_allowance_is_withdrawn():
         provider = Recording(answers=[False, False], default=True)
         b.register_provider({AGENT: provider})
         _enqueue(b, "run_1")
+        _enqueue(b, "run_2")
 
         # Each decline-with-room spends allowance; at 2 of 2 the provider is out.
         await _until(lambda: b.serving(AGENT) is None, timeout=3.0)
         assert b.quality()["pk_provider"].misdeclared == 2
         offered_when_withdrawn = list(provider.offered)
 
-        _enqueue(b, "run_2")  # queued, but withdrawn means not serving: it waits
-        await asyncio.sleep(0.2)
+        _enqueue(b, "run_3")  # queued, but withdrawn means not serving: it waits
+        await asyncio.sleep(0.05)
         assert provider.offered == offered_when_withdrawn, (
             "withdrawn means withdrawn — no more offers"
         )
 
         # The front door works: re-registering restores service.
         b.register_provider({AGENT: provider})
-        await _until(lambda: b.get("run_1") is None or b.get("run_1").is_claimed, timeout=3.0)
+        await _until(lambda: b.get("run_3") is not None and b.get("run_3").is_claimed, timeout=3.0)
     finally:
         b.stop()
 
@@ -204,10 +213,12 @@ async def test_below_the_allowance_an_abnormal_event_is_tolerated():
         b.register_provider({AGENT: provider})
         _enqueue(b, "run_1")
         await _until(lambda: provider.offered == ["run_1"])
+        await _until(lambda: b.get("run_1") is None)
 
         assert b.serving(AGENT) is provider, "one event is within the allowance"
+        _enqueue(b, "run_2")
         await _until(
-            lambda: b.get("run_1") is not None and b.get("run_1").is_claimed, timeout=3.0
+            lambda: b.get("run_2") is not None and b.get("run_2").is_claimed, timeout=3.0
         )
         assert b.quality()["pk_provider"].misdeclared == 1
     finally:
@@ -229,8 +240,12 @@ async def test_runs_of_a_withdrawn_provider_expire_on_the_ordinary_road():
             failed.append((run.run_id, cmd.reason))
 
         b.enqueue_run("run_1", AGENT, "t1", _valid_input("run_1", "t1"), {Fail: _record_fail})
-        await _until(lambda: provider.offered == ["run_1"])
-        await _until(lambda: failed == [("run_1", "no_provider_took_it")], timeout=2.0)
+        await _until(lambda: failed == [("run_1", "provider_declined")])
+        assert b.serving(AGENT) is None, "the one decline spent the allowance"
+
+        b.enqueue_run("run_2", AGENT, "t2", _valid_input("run_2", "t2"), {Fail: _record_fail})
+        await _until(lambda: failed[1:] == [("run_2", "no_provider_took_it")], timeout=2.0)
+        assert provider.offered == ["run_1"]
     finally:
         b.stop()
 
@@ -481,7 +496,7 @@ def test_a_broker_can_be_built_outside_a_loop_and_started_in_two(caplog):
 async def test_a_queued_run_waits_as_long_as_its_agent_is_served():
     b = _own_broker(deliver_timeout_seconds=0.02, unserved_timeout_seconds=0.05)
     try:
-        b.register_provider({AGENT: Recording(max_concurrent_runs=1, default=False)})
+        b.register_provider({AGENT: Recording(max_concurrent_runs=0)})
         _enqueue(b, "run_1")
         await asyncio.sleep(0.25)
         run = b.get("run_1")
@@ -493,7 +508,7 @@ async def test_a_queued_run_waits_as_long_as_its_agent_is_served():
 async def test_losing_the_provider_starts_the_clock_that_fails_the_run():
     b = _own_broker(deliver_timeout_seconds=0.02, unserved_timeout_seconds=0.05)
     try:
-        b.register_provider({AGENT: Recording(max_concurrent_runs=1, default=False)})
+        b.register_provider({AGENT: Recording(max_concurrent_runs=0)})
         _enqueue(b, "run_1")
         await asyncio.sleep(0.25)
         assert b.get("run_1") is not None
@@ -507,11 +522,11 @@ async def test_losing_the_provider_starts_the_clock_that_fails_the_run():
 async def test_a_provider_returning_within_the_window_keeps_the_run():
     b = _own_broker(deliver_timeout_seconds=0.02, unserved_timeout_seconds=0.3)
     try:
-        b.register_provider({AGENT: Recording(max_concurrent_runs=1, default=False)})
+        b.register_provider({AGENT: Recording(max_concurrent_runs=0)})
         _enqueue(b, "run_1")
         b.unregister_provider([AGENT])
         await asyncio.sleep(0.05)
-        b.register_provider({AGENT: Recording(max_concurrent_runs=1, default=False)})
+        b.register_provider({AGENT: Recording(max_concurrent_runs=0)})
         await asyncio.sleep(0.6)
         assert b.get("run_1") is not None
     finally:
@@ -537,19 +552,13 @@ async def test_a_threads_next_run_waits_for_the_turn_to_finish(broker):
     assert provider.offered == ["run_1", "run_2"]
 
 
-async def test_a_declined_head_is_not_overtaken_by_its_sibling(broker):
-    """Arrival order is the one sequencing funduq does own: while the head of
-    the queue stands declined, a later utterance of the same thread must not
-    reach the provider first — offers resume (head first) as capacity
-    frees.
-
-    The provider declares no limit on purpose. With a declared one, a decline
-    is additionally treated as reaching it, and *that* is what would hold the
-    sibling back — the test would pass without arrival order existing at all.
-    """
+async def test_a_declined_head_ends_and_its_sibling_goes_next(broker):
+    """Arrival order is the one sequencing funduq does own. A declined head is
+    not retried, so it does not hold the thread: it ends, and the thread's
+    next utterance is offered after it, never before."""
     from funduq.broker import FinishStream
 
-    provider = Recording(answers=[True, False, True, True])
+    provider = Recording(answers=[True, False, True])
     broker.register_provider({AGENT: provider})
     _enqueue(broker, "run_1", thread_id="thread_shared")
     _enqueue(broker, "run_2", thread_id="thread_shared")
@@ -557,17 +566,9 @@ async def test_a_declined_head_is_not_overtaken_by_its_sibling(broker):
 
     await _until(lambda: broker.get("run_1").is_claimed)
     broker.push("run_1", FinishStream())
-    await _until(lambda: provider.offered.count("run_2") >= 1, timeout=2.0)
-    await asyncio.sleep(0.1)
-    assert "run_3" not in provider.offered, "run_3 must not overtake the declined run_2"
-
-    await _until(lambda: broker.get("run_2") and broker.get("run_2").is_claimed, timeout=2.0)
-    broker.push("run_2", FinishStream())
-    await _until(lambda: "run_3" in provider.offered, timeout=2.0)
-    assert provider.offered == ["run_1", "run_2", "run_2", "run_3"], (
-        "the declined head is retried before its sibling is offered at all"
-    )
-
+    await _until(lambda: broker.get("run_3") and broker.get("run_3").is_claimed, timeout=2.0)
+    assert broker.get("run_2") is None
+    assert provider.offered == ["run_1", "run_2", "run_3"]
 
 async def test_a_paused_run_does_not_hold_back_its_siblings(broker):
     """A pause is between the provider and the asker; the thread's next
@@ -585,29 +586,6 @@ async def test_a_paused_run_does_not_hold_back_its_siblings(broker):
 
     _enqueue(broker, "run_2", thread_id="t-paused")
     await _until(lambda: provider.offered == ["run_1", "run_2"], timeout=2.0)
-
-
-async def test_an_unlimited_provider_that_declines_is_not_asked_again(broker):
-    """funduq#128: declaring no limit is a declaration like any other, and a
-    decline contradicts it. The contradiction is recorded once and offers
-    stop — not re-asked every sweep, which only inflated `misdeclared` into
-    noise — until the provider next does something observable."""
-    provider = Recording(default=False)
-    broker.register_provider({AGENT: provider})
-    _enqueue(broker, "run_1")
-
-    await _until(lambda: provider.offered == ["run_1"])
-    await asyncio.sleep(0.2)
-    assert provider.offered == ["run_1"], "one decline, no more offers"
-    assert broker.quality()["pk_provider"].misdeclared == 1, "one event, one count"
-
-    # Reconnecting is the provider acting; the withhold lifts.
-    provider._default = True
-    broker.register_provider({AGENT: provider})
-    await _until(lambda: provider.offered == ["run_1", "run_1"], timeout=2.0)
-    await _until(lambda: broker.get("run_1").is_claimed)
-
-
 
 
 async def _recorder(seen: list[str], name: str):
@@ -665,7 +643,7 @@ async def test_an_unaccepted_offer_gives_back_the_place_it_took(patient_broker):
 
     await _until(lambda: provider.offered == ["run_1"])
     await _until(lambda: patient_broker.quality()["pk_provider"].in_flight == 0)
-    assert patient_broker.get("run_1").is_offered is False
+    await _until(lambda: patient_broker.get("run_1") is None)
 
 
 async def test_a_cancel_inside_the_dispatch_window_waits_for_the_answer(patient_broker):

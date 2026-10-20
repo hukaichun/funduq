@@ -120,13 +120,15 @@ def _a2a_surface() -> list[str]:
 
 
 def _agui_surface() -> list[str]:
-    """The AG-UI protocol version funduq states on the input it delivers.
-    Read from `ag-ui-protocol` rather than written here, the way the A2A
-    version is: a run input is AG-UI's shape, so a provider pinned to another
-    major cannot read it, and that has to move this fingerprint (#290)."""
-    from ag_ui.core import PROTOCOL_VERSION
+    """The AG-UI release line a run input is shaped by. Read from the
+    installed `ag-ui-protocol` rather than written here, the way the A2A
+    version is: a run input is AG-UI's shape, so a provider on another line
+    cannot read it, and that has to move this fingerprint (#290). The 0.1
+    line names no protocol version of its own, so the package's major.minor
+    stands in; a patch release does not move it."""
+    from importlib.metadata import version
 
-    return [f"protocol_version:{PROTOCOL_VERSION}"]
+    return [f"release_line:{'.'.join(version('ag-ui-protocol').split('.')[:2])}"]
 
 
 def _typing_surface() -> list[str]:

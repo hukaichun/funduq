@@ -2,9 +2,9 @@
 
 One thread has one active run. The next utterance of a conversation is
 handed over when the one before it **finishes** — not when it is answered,
-and not when it is claimed. An unanswered offer holds it; a declined offer
-holds it; a claimed run still running holds it. Nothing wider than the one
-conversation waits.
+and not when it is claimed. An unanswered offer holds it; a claimed run still
+running holds it. A declined offer ends its run, and that is a finish too.
+Nothing wider than the one conversation waits.
 
 Measured rather than reasoned about, and the first two attempts measured the
 harness instead — see the note on `_settle`.
@@ -134,12 +134,11 @@ async def test_an_unanswered_offer_holds_its_own_conversation_and_nothing_else(
         await runtime.aclose(cancel_in_flight=True)
 
 
-async def test_a_decline_answers_promptly_and_holds_the_conversation_anyway(
+async def test_a_decline_ends_the_turn_and_the_next_utterance_follows_it(
     funduq: Funduq,
 ) -> None:
-    """A declined run goes back to `queued` at the head of its thread, so the
-    utterance behind it keeps waiting — the order is the thing being
-    protected."""
+    """A declined run is not retried, so it does not hold its thread: it fails,
+    and the utterance behind it is offered next — after it, never before."""
     link, runtime, agent = await _serving(funduq)
     link.verdict = False
     try:
@@ -148,10 +147,8 @@ async def test_a_decline_answers_promptly_and_holds_the_conversation_anyway(
         behind = await funduq.start_run(agent, {"messages": []}, thread_id=first.thread_id)
         await _settle()
 
-        assert first.run_id in link.offered
-        assert behind.run_id not in link.offered
-        assert (await funduq.get_run(first.run_id)).status == "queued"
-        assert (await funduq.get_run(behind.run_id)).status == "queued"
+        assert link.offered == [first.run_id, behind.run_id]
+        assert (await funduq.get_run(first.run_id)).status == "failed"
     finally:
         funduq.detach_all_for(link.public_key)
         await runtime.aclose(cancel_in_flight=True)

@@ -17,7 +17,6 @@ from funduq.broker import (
     HandlerMap,
     Offer,
     RelayEvent,
-    Requeue,
     RequestCancel,
     Run,
 )
@@ -42,12 +41,6 @@ async def _handle_offer(funduq: "Funduq", run: Run, cmd: Offer) -> None:
     """Mark the run "offering" as it is handed to a provider that has not answered yet."""
     async with funduq.session() as session:
         await funduq.mark_run_status(session, run.run_id, "offering")
-
-
-async def _handle_requeue(funduq: "Funduq", run: Run, cmd: Requeue) -> None:
-    """Put a run back to "queued" after an offer it was dispatched on was declined, went unanswered, or failed."""
-    async with funduq.session() as session:
-        await funduq.return_run_to_queue(session, run.run_id)
 
 
 async def _handle_claim(funduq: "Funduq", run: Run, cmd: Claim) -> None:
@@ -157,7 +150,6 @@ def make_handlers(funduq: "Funduq") -> HandlerMap:
     """Build the broker's command-type-to-handler map, bound to this `funduq` instance."""
     return {
         Offer: partial(_handle_offer, funduq),
-        Requeue: partial(_handle_requeue, funduq),
         Claim: partial(_handle_claim, funduq),
         RelayEvent: partial(_handle_relay, funduq),
         FinishStream: partial(_handle_finish, funduq),
