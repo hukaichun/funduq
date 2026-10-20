@@ -15,7 +15,7 @@ courtesy someone remembers.
 own code to keep up with: the vectors themselves, `CoreSettings` fields and
 whether each is required, the provider link's verbs, every crossing shape
 funduq-contract defines with its field aliases, the A2A protocol version
-and transport bindings, the AG-UI protocol version, whether each package ships its PEP 561 marker, and
+and transport bindings, the AG-UI release line, whether each package ships its PEP 561 marker, and
 every public name `funduq_contract` exports with the shape it exports it
 as. Prose and internals are not in it — see `funduq/tests/contract_surface.py`, which
 reads every part of it live rather than from a copy.
@@ -29,6 +29,28 @@ entries below say what to change and not only what moved.
 ---
 
 ## Revision 26 — 2026-10-20
+
+Two changes for an agent provider.
+
+**Back to AG-UI 0.1** (#290 reopened). Revision 24 moved all three packages to
+`ag-ui-protocol>=1.0,<2`. pydantic-ai's AG-UI extra still requires
+`ag-ui-protocol<1`, so a provider built on it could not install
+`funduq-provider-sdk`. A run input in 1.0's shape also could not be read by an
+agent still on 0.1, because 0.1's model requires `forwardedProps`. All three
+packages now require `>=0.1,<1` (`funduq` and `funduq-provider-sdk`
+`>=0.1.19,<1`). The ceiling stays, so a fresh install no longer drifts onto 1.0.
+
+What an agent provider receives is what it received before revision 24:
+
+- No `protocolVersion` on the run input, or on the `RUN_STARTED` funduq writes
+  for a run nobody is serving.
+- `forwardedProps` is present, as `null` when there is no value.
+
+The surface still records the AG-UI line, as `release_line:0.1`. The 0.1 line
+names no protocol version of its own, so the package's major.minor stands in.
+
+Migration for a provider: if you moved to AG-UI 1.0 for revision 24, move back
+to 0.1. Revision 24's note on `THINKING_*` no longer applies.
 
 **A declined offer fails the run** (#288's other half). A provider that
 answered an offer `False` used to have the run put back at the head of its

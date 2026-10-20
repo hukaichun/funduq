@@ -39,7 +39,7 @@ dependencies = [
     "cryptography>=42.0",
     # Actor-chain hops are JWTs. Signing, not transport.
     "pyjwt[crypto]>=2.9",
-    "ag-ui-protocol>=1.0,<2",
+    "ag-ui-protocol>=0.1.19,<1",
     # Direct since the protocol frames are models: the wire form is
     # `model_dump(by_alias=True)` and `model_validate`, so pydantic is
     # something this package programs against rather than something it happens
