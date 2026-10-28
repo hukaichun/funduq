@@ -59,7 +59,7 @@ async def test_core_does_not_decide_who_may_read(funduq, bound, new_identity):
     adapter = A2AAdapter(funduq)
 
     assert await adapter.get_task(served.agents["trusted"], task.id) is not None
-    assert await funduq.get_thread_messages(task.context_id)
+    assert await funduq.thread_runs(task.context_id)
     assert await funduq.get_run(task.id) is not None
     assert await funduq.lineage(task.id)
 
@@ -128,7 +128,7 @@ async def test_an_unbound_run_stays_as_public_as_its_id(funduq, serve):
     task = await adapter.send_task(served.agents["open"], _message("hi"))
 
     assert await adapter.get_task(served.agents["open"], task.id) is not None
-    assert await funduq.get_thread_messages(task.context_id)
+    assert await funduq.thread_runs(task.context_id)
 
 
 async def test_a_chainless_run_on_a_bound_thread_does_not_break_every_read(funduq, bound):

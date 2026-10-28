@@ -709,14 +709,6 @@ class Funduq:
                 return None
             return await repo.readers_of(session, thread)
 
-    async def get_thread_messages(self, thread_id: str) -> list[dict[str, Any]]:
-        async with self.session() as session:
-            return await repo.get_thread_messages(session, thread_id)
-
-    async def get_thread_snapshot(self, thread_id: str) -> dict[str, Any] | None:
-        async with self.session() as session:
-            return await repo.get_thread_snapshot(session, thread_id)
-
     async def get_thread_tree(self, thread_id: str) -> dict[str, Any] | None:
         """Return `thread_id` and its descendant threads nested as `children`, or None if it doesn't exist."""
         async with self.session() as session:
@@ -741,6 +733,17 @@ class Funduq:
     async def get_run(self, run_id: str) -> RunRecord | None:
         async with self.session() as session:
             return await repo.get_run(session, run_id)
+
+    async def thread_runs(self, thread_id: str) -> list[RunRecord]:
+        """Every run on a thread, oldest first."""
+        async with self.session() as session:
+            return await repo.runs_in_thread(session, thread_id)
+
+    async def get_run_input(self, run_id: str) -> dict[str, Any] | None:
+        """The `RunAgentInput` the run's provider receives, or None if `run_id` names no run."""
+        async with self.session() as session:
+            run = await repo.get_run(session, run_id)
+            return await repo.run_input_of(session, run) if run is not None else None
 
     async def root_runs(self, thread_id: str) -> list[RunRecord]:
         """The tasks on a thread — the runs that start a lineage — newest first."""
