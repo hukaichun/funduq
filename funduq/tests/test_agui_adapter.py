@@ -146,7 +146,7 @@ def test_ag_uis_own_encoder_cannot_be_applied_blindly_downstream():
         encoder.encode({"type": "AGENT_ABSORBED_INTERJECTION", "runId": "r"})
 
 
-async def test_a_provider_can_read_the_history_its_run_input_does_not_carry(funduq, serve):
+async def test_thread_messages_are_what_each_run_carried_in(funduq, serve):
     served = await serve(None, "solo")
     agent = served.agents["solo"]
     adapter = AGUIAdapter(funduq)
@@ -158,24 +158,7 @@ async def test_a_provider_can_read_the_history_its_run_input_does_not_carry(fund
 
     history = await funduq.get_thread_messages(first.thread_id)
 
-    assert [m["role"] for m in history] == ["user", "assistant", "user", "assistant"]
-    assert [m["content"] for m in history if m["role"] == "user"] == ["one", "two"]
-
-
-async def test_limit_keeps_the_most_recent(funduq, serve):
-    served = await serve(None, "solo")
-    agent = served.agents["solo"]
-    adapter = AGUIAdapter(funduq)
-
-    thread_id = None
-    for text in ("one", "two", "three"):
-        result = await adapter.run(agent, _body(thread_id or "t-1", text))
-        thread_id = result.thread_id
-        [_ async for _ in result.events]
-
-    history = await funduq.get_thread_messages(thread_id)
-    assert len(history) == 6
-    assert [m["content"] for m in history[-2:]] == ["three", "done"]
+    assert [(m["role"], m["content"]) for m in history] == [("user", "one"), ("user", "two")]
 
 
 async def test_an_unknown_thread_is_empty_rather_than_an_error(funduq, serve):

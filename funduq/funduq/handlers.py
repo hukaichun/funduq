@@ -9,7 +9,6 @@ from ag_ui.core import Event, EventType, RunErrorEvent
 from pydantic import TypeAdapter, ValidationError
 
 from funduq import repo
-from funduq.agui_reduce import reduce_events_to_messages
 from funduq.broker import (
     Claim,
     Fail,
@@ -79,7 +78,7 @@ async def _handle_relay(funduq: "Funduq", run: Run, cmd: RelayEvent) -> None:
 
 
 async def _handle_finish(funduq: "Funduq", run: Run, cmd: FinishStream) -> None:
-    """Settle the run's final status and, when it completed, fold its events into thread messages. A run that finished asking is completed — AG-UI's own reading; that the thread is now waiting is read from its events, not written here."""
+    """Settle the run's final status. A run that finished asking is completed — AG-UI's own reading; that the thread is now waiting is read from its events, not written here."""
     async with funduq.session() as session:
         if run.saw_run_finished:
             status = "completed"
@@ -95,16 +94,7 @@ async def _handle_finish(funduq: "Funduq", run: Run, cmd: FinishStream) -> None:
             else None
         )
 
-        settled = await funduq.mark_run_status(session, run.run_id, status)
-        if settled and status == "completed":
-            round_events = await repo.get_run_events(
-                session, run.run_id, since_seq=run.round_starting_seq
-            )
-            reply_messages = reduce_events_to_messages(round_events)
-            if reply_messages:
-                await repo.append_thread_messages(
-                    session, run.thread_id, run.run_id, repo.stamp_messages(reply_messages), origin="agent"
-                )
+        await funduq.mark_run_status(session, run.run_id, status)
         if failure_event is not None:
             run.seq += 1
             await repo.append_run_event(session, run.run_id, run.seq, failure_event)

@@ -34,6 +34,17 @@ class ReplaysARealDeferringTurn:
             yield event
 
 
+def _tool_calls(events: list[dict]) -> tuple[dict[str, str], dict[str, str], set[str]]:
+    """What a provider folds out of a run's events to resume it: each call's name, its arguments, and which calls already have a result."""
+    names = {e["toolCallId"]: e["toolCallName"] for e in events if e["type"] == "TOOL_CALL_START"}
+    arguments = {call: "" for call in names}
+    for e in events:
+        if e["type"] == "TOOL_CALL_ARGS":
+            arguments[e["toolCallId"]] += e["delta"]
+    answered = {e["toolCallId"] for e in events if e["type"] == "TOOL_CALL_RESULT"}
+    return names, arguments, answered
+
+
 def _body(text: str = "Weather, a flight, and a payment.") -> RunAgentInput:
     return RunAgentInput(
         thread_id="t-defer", run_id="caller-said-this", state={},
@@ -53,16 +64,9 @@ async def test_the_link_hands_back_enough_to_resume_a_paused_turn(funduq, serve)
     assert (await funduq.get_run(stream.run_id)).status == "completed"
     assert open_asks(events), "finished asking"
 
-    # The provider knows its thread id — the delivered run carries it — and
-    # reads the record as itself, through the one surface every party reads.
-    dumped = await funduq.get_thread_messages(stream.thread_id)
-
-    announced = {
-        call["id"]: call["function"]["name"]
-        for message in dumped
-        for call in (message.get("toolCalls") or [])
-    }
-    answered = {m["toolCallId"] for m in dumped if m.get("role") == "tool"}
+    # The provider knows its run id — the delivered run carries it — and
+    # reads the run's events back, the record funduq keeps of what it said.
+    announced, arguments, answered = _tool_calls(events)
 
     assert set(announced.values()) == {"get_weather", "book_flight", "send_money"}, (
         "the assistant turn comes back whole: every tool call the model made, with the "
@@ -73,26 +77,22 @@ async def test_the_link_hands_back_enough_to_resume_a_paused_turn(funduq, serve)
         "deferred are still open, which is what makes this a resumable turn rather than "
         "a finished one"
     )
-    assert all(
-        json.loads(call["function"]["arguments"])
-        for message in dumped
-        for call in (message.get("toolCalls") or [])
-    ), "arguments survive as parseable JSON, not as the deltas they arrived in"
+    assert all(json.loads(args) for args in arguments.values()), (
+        "the deltas join into parseable JSON"
+    )
 
 
 async def test_the_pull_agrees_with_what_funduq_recorded_as_pending(funduq, serve):
-    """Two readings of one fact: the provider pulls the messages, funduq wrote the
+    """Two readings of one fact: the provider folds the events, funduq wrote the
     pause. They must name the same outstanding calls, or one of them is lying."""
     served = await serve(ReplaysARealDeferringTurn(), "concierge")
 
     stream = await AGUIAdapter(funduq).run(served.agents["concierge"], _body())
     [_ async for _ in stream.events]
 
-    dumped = await funduq.get_thread_messages(stream.thread_id)
-    announced = [c["id"] for m in dumped for c in (m.get("toolCalls") or [])]
-    answered = {m["toolCallId"] for m in dumped if m.get("role") == "tool"}
+    events = await funduq.get_run_events(stream.run_id)
+    announced, _, answered = _tool_calls(events)
     outstanding = [c for c in announced if c not in answered]
 
-    events = await funduq.get_run_events(stream.run_id)
     assert unanswered_tool_calls(events) == outstanding
     assert len(interrupts_of(events)) == 1, "the approval, which AG-UI does name"

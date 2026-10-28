@@ -499,20 +499,13 @@ async def get_thread_children(session: AsyncSession, thread_id: str) -> list[dic
     return [dict(row) for row in rows]
 
 
-def stamp_messages(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """The messages as funduq will store and deliver them: each under an id funduq minted, whatever the caller sent. Pure, so the ids can be named in a run's input before any row exists."""
-    return [{**message, "id": new_id("msg")} for message in messages]
-
-
 async def append_thread_messages(
     session: AsyncSession,
     thread_id: str,
     run_id: str,
     messages: list[dict[str, Any]],
-    *,
-    origin: str,
 ) -> None:
-    """Writes `messages` — already stamped — to the thread under `run_id`, saying who said them: `"caller"` (carried in by the run; part of its `RunAgentInput`) or `"agent"` (produced by the run). Not committed."""
+    """Writes the messages `run_id` carried in — its `RunAgentInput.messages`, as the caller sent them — to the thread. What the agent said back is the run's events, not a thread message. Not committed."""
     for message in messages:
         await session.execute(
             insert(thread_messages).values(
@@ -521,7 +514,6 @@ async def append_thread_messages(
                 message_id=message["id"],
                 message_json=message,
                 metadata=message.get("metadata", {}),
-                origin=origin,
             )
         )
 
@@ -569,25 +561,11 @@ async def create_run(
 
 
 async def messages_of_run(session: AsyncSession, run_id: str) -> list[dict[str, Any]]:
-    """The messages this run carried in — the caller's, in order; what the agent said in reply is on the thread under the same run but is not the run's input."""
+    """The messages this run carried in, in order."""
     rows = (
         await session.execute(
             select(thread_messages.c.message_json)
-            .where(thread_messages.c.run_id == run_id, thread_messages.c.origin == "caller")
-            .order_by(thread_messages.c.id)
-        )
-    ).all()
-    return [row.message_json for row in rows]
-
-
-async def messages_of_runs(session: AsyncSession, run_ids: list[str]) -> list[dict[str, Any]]:
-    """Every thread message the given runs carried in or produced, in thread order — a task's history when `run_ids` is a lineage."""
-    if not run_ids:
-        return []
-    rows = (
-        await session.execute(
-            select(thread_messages.c.message_json)
-            .where(thread_messages.c.run_id.in_(run_ids))
+            .where(thread_messages.c.run_id == run_id)
             .order_by(thread_messages.c.id)
         )
     ).all()

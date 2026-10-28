@@ -62,39 +62,13 @@ async def test_create_run_assigns_a_database_generated_run_id(session, new_ident
     assert second["run_id"] != first["run_id"]
 
 
-async def test_stamping_discards_any_caller_supplied_id():
-    stamped = repo.stamp_messages(
-        [{"id": "whatever-the-caller-made-up", "role": "user", "content": "hi"}]
-    )
-    assert stamped[0]["id"] != "whatever-the-caller-made-up"
-    assert stamped[0]["id"].startswith("msg_")
-
-
-async def test_a_message_is_stored_under_the_id_it_was_stamped_with(session, new_identity):
+async def test_a_message_is_stored_under_the_id_it_carried(session, new_identity):
     identity = new_identity()
     registered = await repo.register_agents(session, identity.public_key, [Registration(name="a")])
     thread_id = await repo.create_thread(session, registered["a"])
     run = await repo.create_run(session, thread_id, registered["a"], {})
     await session.commit()
 
-    stamped = repo.stamp_messages([{"role": "user", "content": "hi"}])
-    await repo.append_thread_messages(session, thread_id, run["run_id"], stamped, origin="caller")
+    await repo.append_thread_messages(session, thread_id, run["run_id"], [{"id": "client-1", "role": "user", "content": "hi"}])
 
-    persisted = await repo.get_thread_messages(session, thread_id)
-    assert persisted[0]["id"] == stamped[0]["id"]
-
-
-async def test_stamping_never_deduplicates_by_content(session, new_identity):
-    identity = new_identity()
-    registered = await repo.register_agents(session, identity.public_key, [Registration(name="a")])
-    thread_id = await repo.create_thread(session, registered["a"])
-    run = await repo.create_run(session, thread_id, registered["a"], {})
-    await session.commit()
-
-    same_content = [{"role": "user", "content": "hi"}]
-    await repo.append_thread_messages(session, thread_id, run["run_id"], repo.stamp_messages(same_content), origin="caller")
-    await repo.append_thread_messages(session, thread_id, run["run_id"], repo.stamp_messages(same_content), origin="caller")
-
-    persisted = await repo.get_thread_messages(session, thread_id)
-    assert len(persisted) == 2
-    assert persisted[0]["id"] != persisted[1]["id"]
+    assert [m["id"] for m in await repo.messages_of_run(session, run["run_id"])] == ["client-1"]
