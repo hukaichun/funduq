@@ -78,20 +78,18 @@ def test_funduq_cannot_be_built_without_being_told():
 
 
 def test_the_brokers_waits_are_settings_and_reach_the_broker():
-    """The three waits are embedder policy: told to `CoreSettings` like
+    """The two waits are embedder policy: told to `CoreSettings` like
     everything else, they must arrive on the broker `Funduq` builds."""
     settings = CoreSettings(
         token_signing_secret="s",
         identity_private_key="a" * 64,
         deliver_timeout_seconds=0.5,
         unserved_timeout_seconds=9,
-        undelivered_window_seconds=60,
     )
     funduq = Funduq(settings)
 
     assert funduq.broker.deliver_timeout_seconds == 0.5
     assert funduq.broker.unserved_timeout_seconds == 9.0
-    assert funduq.broker.undelivered_window_seconds == 60.0
 
 
 def test_a_bare_broker_and_a_settings_built_one_agree_on_the_defaults():
@@ -103,4 +101,3 @@ def test_a_bare_broker_and_a_settings_built_one_agree_on_the_defaults():
     fields = CoreSettings.model_fields
     assert bare.deliver_timeout_seconds == fields["deliver_timeout_seconds"].default
     assert bare.unserved_timeout_seconds == fields["unserved_timeout_seconds"].default
-    assert bare.undelivered_window_seconds == fields["undelivered_window_seconds"].default

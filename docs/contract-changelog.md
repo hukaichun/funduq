@@ -28,6 +28,26 @@ entries below say what to change and not only what moved.
 
 ---
 
+## Revision 27 — 2026-10-28
+
+**The undelivered clock is the host's.** `CoreSettings.undelivered_window_seconds`
+is gone, and so is the broker's own timer for it: funduq no longer counts a
+provider **undelivered** because a run it accepted outlived a window funduq
+chose. How long a run may take is the host's policy. When the host's clock
+says a provider has held a run too long, it calls
+`Funduq.note_undelivered(run_id)`, and one **undelivered** is counted against
+that provider, once per run, with the run left alone. `provider_quality_tolerance`
+still withdraws a provider whose count reaches it.
+
+Migration for a host: drop `undelivered_window_seconds` from the
+`CoreSettings` you construct. To keep counting slow providers, run your own
+clock over the runs you hand out and call `note_undelivered` when it fires.
+A host that does neither counts no provider as undelivered.
+
+Nothing changes for an agent provider.
+
+---
+
 ## Revision 26 — 2026-10-20
 
 Two changes for an agent provider.

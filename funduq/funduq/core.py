@@ -322,7 +322,6 @@ class Funduq:
             quality_tolerance=self.settings.provider_quality_tolerance,
             unserved_timeout_seconds=self.settings.unserved_timeout_seconds,
             deliver_timeout_seconds=self.settings.deliver_timeout_seconds,
-            undelivered_window_seconds=self.settings.undelivered_window_seconds,
         )
         self.kyok_relay = KyokRelay()
         self.broker.add_forget_listener(self.kyok_relay.discard)
@@ -548,6 +547,10 @@ class Funduq:
         the verdict and cannot outrun it.
         """
         return self.broker.answer_offer(run_id, accepted, provider_key=provider_key)
+
+    def note_undelivered(self, run_id: str) -> bool:
+        """The host's clock says the provider that accepted `run_id` has held it too long without delivering it: one `undelivered` is counted against that provider, once per run, and the run is left alone. False for an unknown run. funduq keeps no such clock — how long is too long is the host's to decide."""
+        return self.broker.note_undelivered(run_id)
 
     def report_event(self, run_id: str, event: Any, *, claimed_by: str) -> bool:
         """Post `event` into the run's stream, attributed to `claimed_by`; False for an unknown run. Whether that key holds the run is judged by the run's owner, not at this door."""

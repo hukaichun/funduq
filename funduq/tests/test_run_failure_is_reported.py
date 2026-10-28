@@ -419,9 +419,10 @@ async def test_a_provider_that_delivers_nothing_is_counted_not_cut_off(settings:
     want the work has two honest answers already in the protocol, decline
     and refuse; choosing *accepted* says it has taken it. So the count
     lands on the provider, and the run is left alone: funduq still does not
-    decide how long anyone may hold one.
+    decide how long anyone may hold one. That is the host's clock; funduq
+    keeps none, and counts when the host says so.
     """
-    funduq = Funduq(settings, broker=RunBroker(undelivered_window_seconds=0.05))
+    funduq = Funduq(settings)
     await funduq.start()
     runtime = None
     try:
@@ -436,6 +437,8 @@ async def test_a_provider_that_delivers_nothing_is_counted_not_cut_off(settings:
         await asyncio.wait_for(provider.started.wait(), 5)
         await _until_async(lambda: _status_is(funduq, handle.run_id, "running"))
 
+        assert funduq.note_undelivered(handle.run_id) is True
+        assert funduq.note_undelivered(handle.run_id) is True, "said twice"
         await _until(lambda: funduq.broker.quality()[identity.public_key].undelivered >= 1)
 
         # Give anything the observation might have queued time to land, so
@@ -449,6 +452,7 @@ async def test_a_provider_that_delivers_nothing_is_counted_not_cut_off(settings:
         assert [e["type"] for e in await funduq.get_run_events(handle.run_id)] == [
             "RUN_STARTED"
         ], "nothing was appended to the caller's stream on its behalf"
+        assert funduq.broker.quality()[identity.public_key].undelivered == 1, "counted once"
         assert funduq.broker.quality()[identity.public_key].abandoned == 0, (
             "and it is the observed counter, not the certain one"
         )
@@ -467,7 +471,7 @@ async def test_one_run_never_counts_twice_against_its_provider(settings: CoreSet
     it — otherwise one incident reads as two, and the whole reason for keeping the counters
     apart (telling a provider that dropped three times from one that was slow three times)
     is lost."""
-    funduq = Funduq(settings, broker=RunBroker(undelivered_window_seconds=0.05))
+    funduq = Funduq(settings)
     await funduq.start()
     runtime = None
     try:
@@ -481,6 +485,8 @@ async def test_one_run_never_counts_twice_against_its_provider(settings: CoreSet
 
         handle = await funduq.start_run(agent, {"messages": []})
         await asyncio.wait_for(provider.started.wait(), 5)
+        await _until_async(lambda: _status_is(funduq, handle.run_id, "running"))
+        funduq.note_undelivered(handle.run_id)
         await _until(lambda: funduq.broker.quality()[identity.public_key].undelivered == 1)
 
         funduq.detach_provider(identity.public_key, link)
@@ -493,4 +499,13 @@ async def test_one_run_never_counts_twice_against_its_provider(settings: CoreSet
     finally:
         if runtime is not None:
             await runtime.aclose(cancel_in_flight=True)
+        await funduq.aclose()
+
+
+async def test_the_hosts_word_on_a_run_nobody_holds_counts_against_nobody(settings: CoreSettings):
+    funduq = Funduq(settings)
+    await funduq.start()
+    try:
+        assert funduq.note_undelivered("run_nobody_has") is False
+    finally:
         await funduq.aclose()

@@ -33,7 +33,6 @@ from pydantic import ValidationError
 
 from funduq.config import (
     DELIVER_TIMEOUT_SECONDS,
-    UNDELIVERED_WINDOW_SECONDS,
     UNSERVED_TIMEOUT_SECONDS,
 )
 from funduq.errors import StreamTaken
@@ -132,11 +131,18 @@ class _OfferLapsed:
 
 
 @dataclass
+class _Undelivered:
+    """The host's clock says the run's provider has held it too long without delivering it."""
+
+    run_id: str
+
+
+@dataclass
 class _Poke:
     """Something may have changed (a connection arrived, a place freed): look again."""
 
 
-_Message = _Queued | _Answered | _Said | _Trusted | _CancelAsked | _OfferLapsed | _Poke
+_Message = _Queued | _Answered | _Said | _Trusted | _CancelAsked | _OfferLapsed | _Undelivered | _Poke
 
 
 # ---- the provider seam ----------------------------------------------------
@@ -163,7 +169,7 @@ class ConnectedProvider(Protocol):
 
 @dataclass(frozen=True)
 class ProviderQuality:
-    """Per-provider counters of protocol violations observed while dispatching: declining an offer after claiming to have room (misdeclared), taking a run and never ending it (abandoned), taking one and not delivering it inside the window (undelivered), and not answering an offer within the delivery timeout (unanswered)."""
+    """Per-provider counters of protocol violations observed while dispatching: declining an offer after claiming to have room (misdeclared), taking a run and never ending it (abandoned), taking one and not delivering it, as the host's clock reports (undelivered), and not answering an offer within the delivery timeout (unanswered)."""
 
     in_flight: int
     declared: int | None
@@ -216,7 +222,6 @@ class Run:
     handover_task: asyncio.Task | None = None
     is_interjection: bool = False
     claimed_by: str | None = None
-    claimed_at: datetime | None = None
     noted_abnormal: bool = False
     # Set by a record handler that judged the content fatal; the owner ends the run with it.
     poison: str | None = None
@@ -301,7 +306,6 @@ class RunBroker:
         sweep_interval_seconds: float = 1.0,
         unserved_timeout_seconds: float = UNSERVED_TIMEOUT_SECONDS,
         deliver_timeout_seconds: float = DELIVER_TIMEOUT_SECONDS,
-        undelivered_window_seconds: float = UNDELIVERED_WINDOW_SECONDS,
         quality_tolerance: int | None = None,
     ) -> None:
         self._spawn = spawn or self._spawn_unsupervised
@@ -319,7 +323,6 @@ class RunBroker:
         self._handlers: dict[str, HandlerMap] = {}
         self._lane_tasks: set[asyncio.Task] = set()
         self.sweep_interval_seconds = sweep_interval_seconds
-        self.undelivered_window_seconds = undelivered_window_seconds
         self.unserved_timeout_seconds = unserved_timeout_seconds
         self.deliver_timeout_seconds = deliver_timeout_seconds
         self.quality_tolerance = quality_tolerance
@@ -345,18 +348,14 @@ class RunBroker:
             self._loop_task = None
 
     async def run_forever(self) -> None:
-        """Runs the two clocks funduq keeps — noting providers that have not delivered what they accepted, and giving up on queued runs whose agent has gone unserved for too long — and pokes every thread handler in case something it was blocked on has changed."""
+        """Runs the clock funduq keeps — giving up on queued runs whose agent has gone unserved for too long — and pokes every thread handler in case something it was blocked on has changed."""
         while True:
             try:
-                self.note_undelivered(self.undelivered_window_seconds)
                 self.expire_queued(self.unserved_timeout_seconds)
                 self._work_to_do.clear()
                 self._poke_threads()
                 with contextlib.suppress(TimeoutError):
-                    # Sleep no longer than the shortest window this loop observes.
-                    async with asyncio.timeout(
-                        min(self.unserved_timeout_seconds, self.undelivered_window_seconds)
-                    ):
+                    async with asyncio.timeout(self.unserved_timeout_seconds):
                         await self._work_to_do.wait()
             except asyncio.CancelledError:
                 raise
@@ -440,6 +439,10 @@ class RunBroker:
         """Puts a command on a run's record with funduq's own authority (no attribution to judge); False for an unknown run."""
         return self._post(run_id, _Trusted(run_id, command))
 
+    def note_undelivered(self, run_id: str) -> bool:
+        """Posts the host's word that the run's provider has held it too long without delivering it; False for an unknown run. funduq keeps no such clock: when is the host's to say."""
+        return self._post(run_id, _Undelivered(run_id))
+
     def request_cancel(self, run_id: str) -> bool:
         """Marks the run cancel-requested and posts the request to its owner."""
         run = self._runs.get(run_id)
@@ -495,6 +498,8 @@ class RunBroker:
             await self._on_cancel_asked(handler, message.run_id)
         elif isinstance(message, _OfferLapsed):
             await self._on_offer_lapsed(handler, message)
+        elif isinstance(message, _Undelivered):
+            self._on_undelivered(handler, message.run_id)
         await self._advance(handler)
 
     async def _on_queued(self, handler: _ThreadHandler, run: Run) -> None:
@@ -552,7 +557,6 @@ class RunBroker:
         # Accepted: the claim is written here, by the run's one owner, and it
         # was posted before anything the provider said next — order is the queue's.
         run.claimed_by = msg.provider_key
-        run.claimed_at = datetime.now(timezone.utc)
         run.cancel_notify = (
             run.offered_conn.cancel if run.offered_conn is not None else None
         )
@@ -635,6 +639,20 @@ class RunBroker:
             return
         await self._record(run, RequestCancel())
         await self._settle(handler, run)
+
+    def _on_undelivered(self, handler: _ThreadHandler, run_id: str) -> None:
+        """Counts one `undelivered` against the provider holding the run, once per run; the run itself is left alone."""
+        run = handler.live.get(run_id)
+        if run is None or run.claimed_by is None or run.noted_abnormal:
+            return
+        run.noted_abnormal = True
+        logger.warning(
+            "provider %s has not delivered run %s, the host says (%d so far)",
+            run.claimed_by[:16],
+            run.run_id,
+            self._provider(run.claimed_by).counters["undelivered"] + 1,
+        )
+        self._note_abnormal(run.claimed_by, "undelivered")
 
     async def _on_offer_lapsed(self, handler: _ThreadHandler, msg: _OfferLapsed) -> None:
         run = handler.live.get(msg.run_id)
@@ -902,28 +920,7 @@ class RunBroker:
         for handler in list(self._threads.values()):
             handler.inbox.put_nowait(_Poke())
 
-    # ---- the two clocks ------------------------------------------------
-
-    def note_undelivered(self, window_seconds: float) -> list[str]:
-        """Counts one `undelivered` against every provider still holding a run it accepted `window_seconds` ago and has not delivered, and returns those run ids."""
-        cutoff = datetime.now(timezone.utc) - timedelta(seconds=window_seconds)
-        noted: list[str] = []
-        for run in list(self._runs.values()):
-            if run.claimed_by is None or run.noted_abnormal or run.claimed_at is None:
-                continue
-            if run.claimed_at > cutoff:
-                continue
-            run.noted_abnormal = True
-            noted.append(run.run_id)
-            logger.warning(
-                "provider %s has not delivered run %s within %ss (%d so far)",
-                run.claimed_by[:16],
-                run.run_id,
-                window_seconds,
-                self._provider(run.claimed_by).counters["undelivered"] + 1,
-            )
-            self._note_abnormal(run.claimed_by, "undelivered")
-        return noted
+    # ---- the clock -----------------------------------------------------
 
     def expire_queued(self, timeout_seconds: float) -> list[str]:
         """Gives up on queued (unclaimed, unoffered) runs whose agent has had no serving provider for longer than `timeout_seconds`, failing each with `Fail("no_provider_took_it")`, and returns their run_ids."""

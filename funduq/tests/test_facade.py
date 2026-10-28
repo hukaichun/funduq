@@ -361,10 +361,9 @@ async def test_start_runs_no_clock_of_its_own(own_funduq):
     and the loop went with it, so funduq now starts dispatch and nothing else.
 
     The broker's own `broker-sweep` stays, and it is a different kind of
-    thing: its two clocks watch *providers* (accepted-but-undelivered, agent
-    gone unserved) and both only say what they observed into the run's own
-    lane. Neither settles a run, and neither reads a clock on an answer a
-    caller owes.
+    thing: its clock watches *providers* (agent gone unserved) and only says
+    what it observed into the run's own lane. It reads no clock on an
+    answer a caller owes.
 
     Asserted rather than deleted: a loop that reads a clock and settles runs
     is exactly the kind of thing that comes back by accident, and it would
