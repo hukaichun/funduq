@@ -6,7 +6,7 @@ from collections import deque
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
-from funduq_contract import DeliveredRun, Refusal
+from funduq_contract import DeliveredRun, FunduqProps, Refusal
 
 from funduq_provider_sdk.identity import ProviderIdentity
 from funduq_provider_sdk.provider import Provider
@@ -19,10 +19,7 @@ logger = logging.getLogger("funduq_provider_sdk.runtime")
 
 def _addressed_run_id(run: DeliveredRun) -> str | None:
     """The run this one declared it wants to join, read off what funduq wrote under `forwardedProps.funduq` — the one key of funduq's own, never the caller's."""
-    props = run.run_input.forwarded_props
-    ours = props.get("funduq") if isinstance(props, dict) else None
-    value = ours.get("addressedRunId") if isinstance(ours, dict) else None
-    return value if isinstance(value, str) else None
+    return FunduqProps.of(run.run_input.forwarded_props).addressed_run_id
 
 
 @dataclass

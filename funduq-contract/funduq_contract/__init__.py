@@ -1,6 +1,6 @@
 """What both sides of funduq agree the bytes are."""
 
-CONTRACT_REVISION = 27
+CONTRACT_REVISION = 28
 """Which revision of funduq's contract this package implements."""
 
 from funduq_contract.chain import (
@@ -36,6 +36,9 @@ from funduq_contract.shapes import (
     ConnectOk,
     DeliveredCompletion,
     DeliveredRun,
+    FunduqProps,
+    KyokForwardedProps,
+    OBSERVED_METADATA_KEY,
     Offer,
     Refusal,
     Registration,
@@ -64,6 +67,9 @@ __all__ = [
     "ConnectOk",
     "DeliveredCompletion",
     "DeliveredRun",
+    "FunduqProps",
+    "KyokForwardedProps",
+    "OBSERVED_METADATA_KEY",
     "Offer",
     "Refusal",
     "Registration",

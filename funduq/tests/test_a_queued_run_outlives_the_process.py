@@ -22,7 +22,8 @@ from funduq.broker import RunBroker
 from funduq.core import Funduq
 from funduq.models import LlmRef
 from funduq.pause import failure_reason_of
-from funduq.props import ADDRESSED_RUN_METADATA_KEY, observed_of
+from funduq_contract import FunduqProps
+from funduq.props import ADDRESSED_RUN_METADATA_KEY
 from funduq.protocols.a2a import A2AAdapter
 
 from tests.conftest import Identity, publish_agents, publish_llm
@@ -190,11 +191,11 @@ async def test_an_interjection_whose_target_died_fails_loudly(funduq, attach, se
     async def _queued_interjection():
         async with funduq.session() as session:
             rows = await repo.queued_runs(session)
-        return next((r for r in rows if observed_of(r.forwarded_props or {}).get("addressedRunId")), None)
+        return next((r for r in rows if FunduqProps.of(r.forwarded_props).addressed_run_id), None)
 
     await _until(lambda: _queued_interjection())
     interjection = await _queued_interjection()
-    assert observed_of(interjection.forwarded_props)["addressedRunId"] == busy.run_id
+    assert FunduqProps.of(interjection.forwarded_props).addressed_run_id == busy.run_id
 
     reborn = Funduq(settings)
     try:
