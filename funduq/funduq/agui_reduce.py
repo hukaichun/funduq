@@ -26,6 +26,12 @@ def reduce_events_to_messages(events: list[dict[str, Any]]) -> list[dict[str, An
         elif etype == EventType.TEXT_MESSAGE_CONTENT:
             assistant_message(event["messageId"])["content"] += event.get("delta", "")
 
+        elif etype == EventType.REASONING_MESSAGE_START:
+            assistant_message(event["messageId"], "reasoning")
+
+        elif etype == EventType.REASONING_MESSAGE_CONTENT:
+            assistant_message(event["messageId"], "reasoning")["content"] += event.get("delta", "")
+
         elif etype == EventType.TOOL_CALL_START:
             tool_call_id = event["toolCallId"]
             parent_id = event.get("parentMessageId") or tool_call_id
