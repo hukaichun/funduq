@@ -11,8 +11,6 @@ from ag_ui.core import AssistantMessage, EventType, UserMessage
 from funduq.pause import interrupt_outcome_of, open_asks
 from funduq.props import OBSERVED_METADATA_KEY
 
-_PLACEHOLDER_MESSAGE_ID = "unset"
-
 RUN_STATUS_TO_A2A_STATE = {
     "queued": pb.TaskState.TASK_STATE_SUBMITTED,
     # Submitted, not working: funduq has offered the run to a provider and is waiting for an answer, so nothing is being worked on yet.
@@ -97,10 +95,11 @@ def a2a_message_to_agui_messages(a2a_message: dict[str, Any]) -> list[dict[str, 
             f"this agent accepts text/plain parts only; the message carries {', '.join(str(k) for k in kinds)} part(s)"
         )
     text = "".join(part["text"] for part in parts)
+    message_id = str(a2a_message.get("messageId") or "")
     message = (
-        AssistantMessage(id=_PLACEHOLDER_MESSAGE_ID, content=text)
+        AssistantMessage(id=message_id, content=text)
         if raw_role in ("ROLE_AGENT", "AGENT")
-        else UserMessage(id=_PLACEHOLDER_MESSAGE_ID, content=text)
+        else UserMessage(id=message_id, content=text)
     )
     dumped = message.model_dump(mode="json", by_alias=True, exclude_none=True)
     # Message-level stays message-level: A2A's `Message.metadata` becomes the AG-UI message's `metadata` (the field AG-UI's newer revisions define; the model keeps it as an extra today). funduq reads nothing from it.

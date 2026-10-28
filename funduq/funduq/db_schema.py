@@ -2,7 +2,7 @@ DEFAULT_DB_SCHEMA = "public"
 
 DEFAULT_DATABASE_URL = "sqlite+aiosqlite:///./funduq.db"
 
-EXPECTED_SCHEMA_REVISION = "a1f4c9d27e3b"
+EXPECTED_SCHEMA_REVISION = "b5d2e8f0a7c4"
 
 
 def quoted_schema(db_schema: str) -> str:

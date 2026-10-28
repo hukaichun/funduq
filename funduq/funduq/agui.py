@@ -2,28 +2,8 @@ from __future__ import annotations
 
 from typing import Any
 
-from ag_ui.core import EventType, RunAgentInput
+from ag_ui.core import RunAgentInput
 from pydantic import ValidationError
-
-from funduq.ids import new_id
-
-_MESSAGE_ID_EVENT_TYPES = {
-    EventType.TEXT_MESSAGE_START,
-    EventType.TEXT_MESSAGE_CONTENT,
-    EventType.TEXT_MESSAGE_CHUNK,
-    EventType.TEXT_MESSAGE_END,
-}
-
-
-def rewrite_message_ids(event: dict[str, Any], id_map: dict[str, str]) -> dict[str, Any]:
-    """Replaces a text-message event's `messageId` with a funduq-issued id, reusing the same funduq id for every event sharing the original id (tracked in `id_map`)."""
-    if event.get("type") not in _MESSAGE_ID_EVENT_TYPES:
-        return event
-    original = event.get("messageId")
-    if not original:
-        return event
-    funduq_id = id_map.setdefault(original, new_id("msg"))
-    return {**event, "messageId": funduq_id}
 
 
 def build_run_agent_input(

@@ -8,7 +8,6 @@ from ag_ui.core import RunAgentInput
 
 from funduq import repo
 from funduq.models import AgentRef, LlmRef
-from funduq.agui import rewrite_message_ids
 from funduq.doors import (
     InboundRun,
     dispatch,
@@ -118,10 +117,5 @@ class AGUIAdapter:
 
         if not live:
             return EventStream(thread_id, run_id, offline_events(thread_id, run_id))
-        return EventStream(thread_id, run_id, _relay(funduq.broker.subscribe(run_id)))
+        return EventStream(thread_id, run_id, funduq.broker.subscribe(run_id))
 
-
-async def _relay(events: AsyncIterator[Any]) -> AsyncIterator[dict[str, Any]]:
-    message_id_map: dict[str, str] = {}
-    async for item in events:
-        yield rewrite_message_ids(item, message_id_map)

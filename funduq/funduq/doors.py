@@ -213,7 +213,10 @@ async def open_run(
         await repo.ensure_queue_room(session, thread_id, funduq.settings.thread_queue_limit)
 
     run_id = new_id("run")
-    messages = repo.stamp_messages(inbound.messages)
+    messages = inbound.messages
+    ids = [message.get("id") for message in messages]
+    if len(set(ids)) != len(ids):
+        raise InvalidRunInput("two messages in one input carry the same id")
     try:
         input_json = build_run_agent_input(
             thread_id,
