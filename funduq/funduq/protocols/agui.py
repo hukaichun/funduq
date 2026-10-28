@@ -8,15 +8,7 @@ from ag_ui.core import RunAgentInput
 
 from funduq import repo
 from funduq.models import AgentRef, LlmRef
-from funduq.doors import (
-    InboundRun,
-    dispatch,
-    offline_events,
-    open_run,
-    relayed_chain,
-    resolve_kyok,
-    verify_caller,
-)
+from funduq.doors import InboundRun, enter, read_caller, waiting_on
 from funduq.errors import AgentNotFound
 from funduq.pause import answered_asks, open_asks
 
@@ -59,19 +51,16 @@ class AGUIAdapter:
                 raise AgentNotFound(f"agent '{agent}' is not registered")
 
             # The caller's bag: declarations to funduq ride here, beside whatever it forwards to the agent.
-            props = body.forwarded_props if isinstance(body.forwarded_props, dict) else {}
+            caller = await read_caller(session, body.forwarded_props, presenter_key=presenter_key)
             resume = [r.model_dump(mode="json", by_alias=True) for r in body.resume] if body.resume else None
-
-            props, head_key, actor_chain = await verify_caller(session, props, presenter_key=presenter_key)
-            props, kyok = await resolve_kyok(session, props)
 
             thread_id = await repo.ensure_thread(
                 session,
                 agent,
                 body.thread_id,
-                metadata=props,
+                metadata=caller.props,
                 create_if_missing=True,
-                head_key=head_key,
+                head_key=caller.head_key,
             )
 
             # AG-UI declares its entrance in the body, two ways, because it has two carriers for the one thing.
@@ -82,11 +71,8 @@ class AGUIAdapter:
                 if resume or answers_a_tool_call
                 else None
             )
-            asks: set[str] = set()
-            events: list[dict] = []
-            if latest is not None and latest.status == "completed" and not latest.cancel_requested:
-                events = await repo.get_run_events(session, latest.run_id)
-                asks = open_asks(events)
+            events = (await waiting_on(session, latest) if latest is not None else None) or []
+            asks = open_asks(events)
             completes_the_ask = bool(asks) and asks <= answered_asks(messages, resume, events)
             if resume and not completes_the_ask:
                 # A result with no ask to land on: there was none, or it was already answered.
@@ -95,27 +81,22 @@ class AGUIAdapter:
             inbound = InboundRun(
                 agent=agent,
                 messages=messages,
-                head_key=head_key,
-                # Signed before the run is created, so the record keeps exactly what the agent receives.
-                actor_chain=relayed_chain(funduq, actor_chain, agent),
-                kyok=kyok,
+                head_key=caller.head_key,
+                actor_chain=caller.actor_chain,
+                kyok=caller.kyok,
                 state=body.state,
                 tools=[t.model_dump(mode="json", by_alias=True) for t in body.tools],
                 context=[c.model_dump(mode="json", by_alias=True) for c in body.context],
                 resume=resume,
                 # The caller's own parentRunId, relayed verbatim unless this input answers the thread's asks — then funduq names the run that asked.
                 parent_run_id=body.parent_run_id,
-                forwarded_props=props if isinstance(body.forwarded_props, dict) else body.forwarded_props,
+                forwarded_props=caller.forwarded_props,
             )
-            opened = await open_run(
+            entered = await enter(
                 funduq, session, inbound,
                 thread_id=thread_id,
                 answers=latest if completes_the_ask else None,
             )
-            run_id = opened.run_id
-            live = await dispatch(funduq, session, inbound, opened)
 
-        if not live:
-            return EventStream(thread_id, run_id, offline_events(thread_id, run_id))
-        return EventStream(thread_id, run_id, funduq.broker.subscribe(run_id))
+        return EventStream(entered.thread_id, entered.run_id, entered.events(funduq))
 

@@ -475,3 +475,23 @@ async def test_a_run_that_really_has_ended_still_answers_false(funduq, new_ident
     assert (await funduq.get_run(handle.run_id)).status == "completed"
 
     assert await funduq.cancel_run(handle.run_id) is False
+
+
+async def test_an_ask_already_answered_is_no_longer_waiting(funduq, new_identity, attach):
+    """Every door reads "waiting" the same way (`doors.waiting_on`): once a run answers the ask,
+    the asking run is not waiting any more — it cannot be answered again, and cancelling it has
+    nothing to close."""
+    identity = new_identity()
+    agent_id = await _register(funduq, "asker", identity)
+    await attach(identity, PausingProvider(), [agent_id.name])
+
+    asked = await funduq.start_run(agent_id, {"messages": [{"id": "m1", "role": "user", "content": "one"}]})
+    [_ async for _ in asked.events()]
+    await _until(lambda: asked.run_id not in funduq.active_runs())
+    answer = await funduq.resume_run(asked.run_id, {"resume": [{"interruptId": "int_1", "status": "resolved", "payload": "yes"}]})
+    [_ async for _ in answer.events()]
+
+    with pytest.raises(NoPendingAsk):
+        await funduq.resume_run(asked.run_id, {"resume": [{"interruptId": "int_1", "status": "resolved", "payload": "again"}]})
+    assert await funduq.cancel_run(asked.run_id) is False
+    assert not (await funduq.get_run(asked.run_id)).cancel_requested

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import AsyncIterator
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, Any, Literal
 
 from funduq import repo
@@ -28,16 +28,15 @@ if TYPE_CHECKING:
     from funduq.core import Funduq
 
 __all__ = [
+    "Caller",
+    "Entered",
     "InboundRun",
-    "Opened",
     "authorize_cancel",
-    "dispatch",
+    "enter",
     "head_key_of",
-    "offline_events",
-    "open_run",
-    "relayed_chain",
-    "resolve_kyok",
+    "read_caller",
     "verify_caller",
+    "waiting_on",
 ]
 
 
@@ -84,6 +83,35 @@ async def resolve_kyok(
     return props, opt_in
 
 
+@dataclass(frozen=True)
+class Caller:
+    """Who is at the door and what it declared: its bag with funduq's own key stripped, the head of its verified chain and the chain itself (None when it presented none), its KYOK opt-in, and the `forwardedProps` to relay — the stripped bag, or the caller's own non-dict value as it sent it."""
+
+    props: dict
+    head_key: str | None
+    actor_chain: Any
+    kyok: KyokOptIn | None
+    forwarded_props: Any
+
+
+async def read_caller(session: "AsyncSession", bag: Any, *, presenter_key: str | None) -> Caller:
+    """Reads the caller's declarations off its bag — `forwardedProps` on AG-UI and the facade, the request's `metadata` on A2A — verifying any chain against `presenter_key` and any KYOK opt-in against the roster."""
+    props = bag if isinstance(bag, dict) else {}
+    props, head_key, actor_chain = await verify_caller(session, props, presenter_key=presenter_key)
+    props, kyok = await resolve_kyok(session, props)
+    return Caller(props, head_key, actor_chain, kyok, props if isinstance(bag, dict) else bag)
+
+
+async def waiting_on(session: "AsyncSession", run: Any) -> list[dict[str, Any]] | None:
+    """The run's events if it is waiting for an answer — it finished asking (`completed` with asks open), no cancel closed the wait, and no run answers it yet — else None. The one reading of "waiting" every door uses."""
+    if run.status != "completed" or run.cancel_requested:
+        return None
+    if (await repo.lineage_tail(session, run.run_id)).run_id != run.run_id:
+        return None
+    events = await repo.get_run_events(session, run.run_id)
+    return events if open_asks(events) else None
+
+
 def head_key_of(run: Any) -> str | None:
     """The authority a run was opened under: the first hop of its chain, or None for an unbound run."""
     return verify_chain(run.actor_chain).head if run.actor_chain else None
@@ -91,7 +119,7 @@ def head_key_of(run: Any) -> str | None:
 
 @dataclass(frozen=True)
 class InboundRun:
-    """One run as a door has translated it, before funduq has decided anything."""
+    """One run as a door has translated it, before funduq has decided anything. `actor_chain` is the caller's, as presented; funduq's dispatch hop is added on the way in."""
 
     agent: AgentRef
     messages: list[dict[str, Any]]
@@ -245,6 +273,33 @@ async def open_run(
     await repo.append_thread_messages(session, thread_id, run_id, messages)
     await session.commit()
     return Opened(run_id=run_id, thread_id=thread_id, input_json=input_json)
+
+
+@dataclass(frozen=True)
+class Entered:
+    """A run a door opened: its ids, and whether anyone serves its agent (`live`)."""
+
+    run_id: str
+    thread_id: str
+    live: bool
+
+    def events(self, funduq: "Funduq") -> AsyncIterator[dict[str, Any]]:
+        """The run's one stream: the live one, or the offline one when nobody serves its agent. Taking it takes the run's stream."""
+        return funduq.broker.subscribe(self.run_id) if self.live else offline_events(self.thread_id, self.run_id)
+
+
+async def enter(
+    funduq: "Funduq",
+    session: "AsyncSession",
+    inbound: InboundRun,
+    *,
+    thread_id: str,
+    answers: Any = None,
+) -> Entered:
+    """The one way a run comes in: the caller's chain gains funduq's dispatch hop — signed before the run is written, so the record keeps exactly what the agent receives — then the run is opened and handed to the broker."""
+    inbound = replace(inbound, actor_chain=relayed_chain(funduq, inbound.actor_chain, inbound.agent))
+    opened = await open_run(funduq, session, inbound, thread_id=thread_id, answers=answers)
+    return Entered(opened.run_id, thread_id, await dispatch(funduq, session, inbound, opened))
 
 
 async def offline_events(thread_id: str, run_id: str) -> AsyncIterator[dict[str, Any]]:
