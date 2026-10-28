@@ -94,11 +94,11 @@ async def _handle_finish(funduq: "Funduq", run: Run, cmd: FinishStream) -> None:
             else None
         )
 
-        await funduq.mark_run_status(session, run.run_id, status)
         if failure_event is not None:
             run.seq += 1
             await repo.append_run_event(session, run.run_id, run.seq, failure_event)
-        await session.commit()
+        # One commit: the status and the event that explains it land together.
+        await funduq.mark_run_status(session, run.run_id, status)
     if failure_event is not None:
         await run.out_queue.put(failure_event)
 
@@ -132,6 +132,7 @@ async def _handle_fail(funduq: "Funduq", run: Run, cmd: Fail) -> None:
     run.seq += 1
     async with funduq.session() as session:
         await repo.append_run_event(session, run.run_id, run.seq, event)
+        # One commit: the status and the event that explains it land together.
         await funduq.mark_run_status(session, run.run_id, "failed")
     await run.out_queue.put(event)
 

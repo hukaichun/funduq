@@ -140,7 +140,6 @@ async def dispatch(
     ):
         funduq.kyok_relay.discard(opened.run_id)
         await funduq.mark_run_status(session, opened.run_id, "failed")
-        await session.commit()
         # The record keeps the terminal event too, not only the caller's stream: a failed run with no RUN_ERROR would have no reason.
         await close_with_terminal_event(funduq, opened.run_id, "agent_offline")
         return False

@@ -194,6 +194,7 @@ class _Roster(abc.ABC):
             )
         async with self._funduq.session() as session:
             registered = await store(session)
+            await session.commit()
         keep = {self.ref(connection.public_key, name) for name in registered}
         withdrawn = [
             ref
@@ -365,6 +366,7 @@ class Funduq:
         self._started = True
         async with self.session() as session:
             orphaned = await repo.fail_orphaned_runs(session)
+            await session.commit()
         for run_id in orphaned:
             await close_with_terminal_event(self, run_id, "orphaned_by_funduq_restart")
         if orphaned:
@@ -506,6 +508,7 @@ class Funduq:
                 )
             self._agent_roster.take_offline(connection, name)
             await repo.delete_agent(session, agent)
+            await session.commit()
         self._notify_change(RosterChanged())
 
     async def delete_llm_offering(self, connection: Any, name: str) -> None:
@@ -524,6 +527,7 @@ class Funduq:
                 )
             self._llm_roster.take_offline(connection, name)
             await repo.delete_llm_provider(session, ref)
+            await session.commit()
         self._notify_change(LlmRosterChanged())
 
     def answer_offer(self, run_id: str, accepted: Any, *, provider_key: str) -> bool:
@@ -622,8 +626,9 @@ class Funduq:
                 logger.exception("on_change subscriber raised for %r", event)
 
     async def mark_run_status(self, session: AsyncSession, run_id: str, status: str) -> bool:
-        """Applies the status transition (see `repo.LEGAL_STATUS_TRANSITIONS`) and notifies change subscribers only when it actually applied."""
+        """Applies the status transition (see `repo.LEGAL_STATUS_TRANSITIONS`), commits it with whatever the session already holds, and notifies change subscribers only when it actually applied — after the commit, so a subscriber that reads finds it."""
         applied = await repo.mark_run_status(session, run_id, status)
+        await session.commit()
         if applied:
             self._notify_change(RunStatusChanged(run_id=run_id, status=status))
         return applied
@@ -894,9 +899,11 @@ class Funduq:
                 return False
             async with self.session() as session:
                 await repo.record_cancel_request(session, run_id, requested_by=requested_by)
+                await session.commit()
             return True
         async with self.session() as session:
             await repo.record_cancel_request(session, run_id, requested_by=requested_by)
+            await session.commit()
         return self.broker.request_cancel(run_id)
 
 
