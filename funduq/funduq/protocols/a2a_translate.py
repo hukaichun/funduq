@@ -4,7 +4,7 @@ from datetime import datetime
 from typing import Any
 
 from a2a.types import a2a_pb2 as pb
-from a2a.utils.errors import ContentTypeNotSupportedError
+from a2a.utils.errors import ContentTypeNotSupportedError, InvalidParamsError
 from google.protobuf.json_format import MessageToDict
 from ag_ui.core import AssistantMessage, EventType, UserMessage
 
@@ -95,7 +95,9 @@ def a2a_message_to_agui_messages(a2a_message: dict[str, Any]) -> list[dict[str, 
             f"this agent accepts text/plain parts only; the message carries {', '.join(str(k) for k in kinds)} part(s)"
         )
     text = "".join(part["text"] for part in parts)
-    message_id = str(a2a_message.get("messageId") or "")
+    message_id = a2a_message.get("messageId")
+    if not message_id:
+        raise InvalidParamsError("an A2A message carries its messageId")
     message = (
         AssistantMessage(id=message_id, content=text)
         if raw_role in ("ROLE_AGENT", "AGENT")

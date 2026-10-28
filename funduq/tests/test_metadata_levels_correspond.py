@@ -9,6 +9,8 @@ funduq carries but never reads.
 
 from __future__ import annotations
 
+from uuid import uuid4
+
 from funduq import repo
 from funduq.doors import head_key_of
 from funduq.protocols.a2a import A2AAdapter
@@ -26,7 +28,7 @@ class Receives:
 
 
 def _message(text: str, **extra) -> dict:
-    return {"role": "user", "parts": [{"type": "text", "text": text}], **extra}
+    return {"messageId": uuid4().hex, "role": "user", "parts": [{"type": "text", "text": text}], **extra}
 
 
 async def test_the_requests_metadata_is_the_bag_and_the_messages_is_the_messages(funduq, serve):

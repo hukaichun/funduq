@@ -9,6 +9,8 @@ the doors. Every other key is the caller's and passes through untouched.
 
 from __future__ import annotations
 
+from uuid import uuid4
+
 from funduq import repo
 from funduq.protocols.a2a import A2AAdapter
 
@@ -25,7 +27,7 @@ def _message(
     """An A2A message. Its addressing rides on the message itself, because in A2A v1.0 that is
     the only place it exists — `SendMessageRequest` carries `message` and `metadata`, nothing
     else."""
-    message: dict = {"role": "user", "parts": [{"type": "text", "text": text}]}
+    message: dict = {"messageId": uuid4().hex, "role": "user", "parts": [{"type": "text", "text": text}]}
     if context_id is not None:
         message["contextId"] = context_id
     if task_id is not None:

@@ -132,8 +132,8 @@ def test_status_update_from_a_persisted_status_has_no_final_flag():
 
 def test_inbound_parts_are_read_under_every_spec_version():
     current = a2a_message_to_agui_messages({"messageId": "a1", "role": "ROLE_USER", "parts": [{"text": "hi"}]})
-    v0_3 = a2a_message_to_agui_messages({"role": "user", "parts": [{"kind": "text", "text": "hi"}]})
-    original = a2a_message_to_agui_messages({"role": "user", "parts": [{"type": "text", "text": "hi"}]})
+    v0_3 = a2a_message_to_agui_messages({"messageId": "a1", "role": "user", "parts": [{"kind": "text", "text": "hi"}]})
+    original = a2a_message_to_agui_messages({"messageId": "a1", "role": "user", "parts": [{"type": "text", "text": "hi"}]})
 
     as_content = [{"role": m["role"], "content": m["content"]} for m in (current[0], v0_3[0], original[0])]
     assert as_content == [{"role": "user", "content": "hi"}] * 3
@@ -141,8 +141,8 @@ def test_inbound_parts_are_read_under_every_spec_version():
 
 
 def test_an_agent_role_is_recognised_under_either_spelling():
-    assert a2a_message_to_agui_messages({"role": "ROLE_AGENT", "parts": []})[0]["role"] == "assistant"
-    assert a2a_message_to_agui_messages({"role": "agent", "parts": []})[0]["role"] == "assistant"
+    assert a2a_message_to_agui_messages({"messageId": "a1", "role": "ROLE_AGENT", "parts": []})[0]["role"] == "assistant"
+    assert a2a_message_to_agui_messages({"messageId": "a1", "role": "agent", "parts": []})[0]["role"] == "assistant"
 
 
 def test_build_task_merges_a_message_into_one_artifact():

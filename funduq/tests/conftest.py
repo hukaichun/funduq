@@ -172,9 +172,9 @@ class EchoAgent:
         self.seen_chain = ((run_input.forwarded_props or {}).get("funduq") or {}).get("actorChain")
         ids = {"threadId": run_input.thread_id, "runId": run_input.run_id}
         yield {"type": "RUN_STARTED", **ids}
-        yield {"type": "TEXT_MESSAGE_START", "messageId": "m1", "role": "assistant"}
-        yield {"type": "TEXT_MESSAGE_CONTENT", "messageId": "m1", "delta": "done"}
-        yield {"type": "TEXT_MESSAGE_END", "messageId": "m1"}
+        yield {"type": "TEXT_MESSAGE_START", "messageId": f"reply-{run_input.run_id}", "role": "assistant"}
+        yield {"type": "TEXT_MESSAGE_CONTENT", "messageId": f"reply-{run_input.run_id}", "delta": "done"}
+        yield {"type": "TEXT_MESSAGE_END", "messageId": f"reply-{run_input.run_id}"}
         yield {"type": "RUN_FINISHED", **ids}
 
 

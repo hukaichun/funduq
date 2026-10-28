@@ -408,7 +408,11 @@ class A2AAdapter:
                 metadata=props, head_key=head_key,
             )
 
-            messages = a2a_message_to_agui_messages(params.get("message", {}))
+            # An A2A caller sends only what is new; the agent is handed the conversation, as an AG-UI caller would send it: every completed run's messages on the thread, then this one.
+            completed = [run for run in await repo.runs_in_thread(session, thread_id) if run.status == "completed"]
+            messages = [
+                message for _, message in await repo.conversation_of(session, completed)
+            ] + a2a_message_to_agui_messages(params.get("message", {}))
             inbound = InboundRun(
                 agent=agent,
                 messages=messages,

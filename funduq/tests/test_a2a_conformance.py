@@ -23,6 +23,8 @@ static half of that rule scans `funduq/`, not `tests/`.
 
 from __future__ import annotations
 
+from uuid import uuid4
+
 import asyncio
 
 import pytest
@@ -35,7 +37,7 @@ from tests.conftest import EchoAgent
 
 
 def _message(text: str) -> dict:
-    return {"role": "user", "parts": [{"type": "text", "text": text}]}
+    return {"messageId": uuid4().hex, "role": "user", "parts": [{"type": "text", "text": text}]}
 
 
 def assemble(events) -> pb.Task:

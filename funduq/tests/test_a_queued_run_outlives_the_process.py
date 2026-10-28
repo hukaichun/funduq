@@ -10,6 +10,8 @@ claim, a cancel in flight — dies with it and is failed loudly, as before.
 
 from __future__ import annotations
 
+from uuid import uuid4
+
 import asyncio
 
 from funduq_provider_sdk import InProcessLink, ProviderRuntime
@@ -176,6 +178,7 @@ async def test_an_interjection_whose_target_died_fails_loudly(funduq, attach, se
         A2AAdapter(funduq).send_task(
             agent,
             {
+                "messageId": uuid4().hex,
                 "role": "user",
                 "parts": [{"type": "text", "text": "actually, in metric"}],
                 "contextId": busy.thread_id,
