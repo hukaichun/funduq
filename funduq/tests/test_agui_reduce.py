@@ -100,3 +100,46 @@ def test_reduces_a_reasoning_message_into_a_reasoning_role_message():
         {"id": "r1", "role": "reasoning", "content": "weighing the options"},
         {"id": "m1", "role": "assistant", "content": "the answer"},
     ]
+
+
+def test_an_encrypted_value_is_kept_on_the_message_it_names():
+    events = [
+        {"type": "REASONING_MESSAGE_START", "messageId": "r1", "role": "reasoning"},
+        {"type": "REASONING_MESSAGE_CONTENT", "messageId": "r1", "delta": "thinking"},
+        {"type": "REASONING_ENCRYPTED_VALUE", "subtype": "message", "entityId": "r1", "encryptedValue": "opaque-1"},
+        {"type": "REASONING_MESSAGE_END", "messageId": "r1"},
+    ]
+    assert reduce_events_to_messages(events) == [
+        {"id": "r1", "role": "reasoning", "content": "thinking", "encryptedValue": "opaque-1"}
+    ]
+
+
+def test_an_encrypted_value_is_kept_on_the_tool_call_it_names():
+    events = [
+        {"type": "TOOL_CALL_START", "toolCallId": "call_1", "toolCallName": "search", "parentMessageId": "m1"},
+        {"type": "REASONING_ENCRYPTED_VALUE", "subtype": "tool-call", "entityId": "call_1", "encryptedValue": "opaque-2"},
+        {"type": "TOOL_CALL_END", "toolCallId": "call_1"},
+    ]
+    assert reduce_events_to_messages(events) == [
+        {
+            "id": "m1",
+            "role": "assistant",
+            "content": "",
+            "toolCalls": [
+                {
+                    "id": "call_1",
+                    "type": "function",
+                    "function": {"name": "search", "arguments": ""},
+                    "encryptedValue": "opaque-2",
+                }
+            ],
+        }
+    ]
+
+
+def test_an_encrypted_value_naming_nothing_is_ignored():
+    events = [
+        {"type": "REASONING_ENCRYPTED_VALUE", "subtype": "message", "entityId": "nope", "encryptedValue": "x"},
+        {"type": "REASONING_ENCRYPTED_VALUE", "subtype": "tool-call", "entityId": "nope", "encryptedValue": "x"},
+    ]
+    assert reduce_events_to_messages(events) == []
