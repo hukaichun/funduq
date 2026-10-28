@@ -162,7 +162,7 @@ class A2AAdapter:
             # A2A's `history` is the task's, not the context's: the lineage's own messages.
             thread_messages=await record.task_messages(task_id),
             history_length=history_length,
-            cancel_requested=cancel_requested or tail.cancel_requested_by is not None,
+            cancel_requested=cancel_requested or tail.cancel_requested,
             tail_events=tail_events,
             status_at=tail.last_activity_at or tail.created_at,
         )
@@ -275,7 +275,7 @@ class A2AAdapter:
         authorize_cancel(run, metadata or {})
         lineage = await self._funduq.lineage(task_id)
         tail = lineage[-1]
-        state = task_state_of(tail.status, await self._funduq.get_run_events(tail.run_id), tail.cancel_requested_by is not None)
+        state = task_state_of(tail.status, await self._funduq.get_run_events(tail.run_id), tail.cancel_requested)
         if state in TERMINAL_STATES:
             raise TaskNotCancelableError(
                 f"task {task_id} has already ended and cannot be cancelled"
@@ -392,7 +392,7 @@ class A2AAdapter:
                 tail = await repo.lineage_tail(session, task_id)
                 if (
                     tail.status != "completed"
-                    or tail.cancel_requested_by is not None
+                    or tail.cancel_requested
                     or not open_asks(await repo.get_run_events(session, tail.run_id))
                 ):
                     raise UnsupportedOperationError(

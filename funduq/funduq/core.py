@@ -834,7 +834,7 @@ class Funduq:
                 tail is None
                 or tail.run_id != run_id
                 or stored.status != "completed"
-                or stored.cancel_requested_by is not None
+                or stored.cancel_requested
                 or not open_asks(events)
             ):
                 raise NoPendingAsk(f"run '{run_id}' is not waiting for a result")
@@ -890,13 +890,13 @@ class Funduq:
         if stored.status in ("failed", "cancelled"):
             return False
         if stored.status == "completed":
-            if stored.cancel_requested_by is not None or not open_asks(await self.get_run_events(run_id)):
+            if stored.cancel_requested or not open_asks(await self.get_run_events(run_id)):
                 return False
             async with self.session() as session:
-                await repo.record_cancel_request(session, run_id, requested_by=requested_by or "")
+                await repo.record_cancel_request(session, run_id, requested_by=requested_by)
             return True
         async with self.session() as session:
-            await repo.record_cancel_request(session, run_id, requested_by=requested_by or "")
+            await repo.record_cancel_request(session, run_id, requested_by=requested_by)
         return self.broker.request_cancel(run_id)
 
 

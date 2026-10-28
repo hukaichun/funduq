@@ -10,6 +10,13 @@ from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from funduq.errors import (
+    ProviderFingerprintTaken,
+    ThreadMembershipRequired,
+    ThreadNotFound,
+    ThreadOwnershipMismatch,
+    ThreadQueueFull,
+)
 from funduq.identity import provider_fingerprint, verify_chain
 from funduq.props import INTERJECTION_EXTENSION_URI
 from funduq.agui import build_run_agent_input
@@ -45,28 +52,8 @@ def _upsert(session: AsyncSession, table):
     return (pg_insert if is_postgres else sqlite_insert)(table)
 
 
-class ProviderFingerprintTaken(Exception):
-    """A provider's public key hashes to a fingerprint another registered public key already holds."""
-
-
 class RunRowMissing(Exception):
     pass
-
-
-class ThreadNotFound(Exception):
-    """`ensure_thread` was called on an unregistered thread id without `create_if_missing`."""
-
-
-class ThreadOwnershipMismatch(Exception):
-    pass
-
-
-class ThreadMembershipRequired(Exception):
-    """The thread is bound to a responsibility segment and the writer is not a member."""
-
-
-class ThreadQueueFull(Exception):
-    """The thread's pending-utterance buffer is at its limit; the message was NOT accepted."""
 
 
 async def get_schema_revision(session: AsyncSession) -> str | None:
@@ -599,11 +586,11 @@ async def run_input_of(session: AsyncSession, run: RunRecord) -> dict[str, Any]:
 async def record_cancel_request(
     session: AsyncSession, run_id: str, *, requested_by: str | None
 ) -> None:
-    """Notes that someone asked this run to stop, and who. The one state a run keeps beyond its status."""
-    if requested_by is None:
-        return
+    """Notes that someone asked this run to stop, and who — `requested_by` is the authority that signed, None on an unbound run. The one state a run keeps beyond its status."""
     await session.execute(
-        update(runs).where(runs.c.run_id == run_id).values(cancel_requested_by=requested_by)
+        update(runs)
+        .where(runs.c.run_id == run_id)
+        .values(cancel_requested=True, cancel_requested_by=requested_by)
     )
     await session.commit()
 

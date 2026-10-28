@@ -84,7 +84,7 @@ class AGUIAdapter:
             )
             asks: set[str] = set()
             events: list[dict] = []
-            if latest is not None and latest.status == "completed" and latest.cancel_requested_by is None:
+            if latest is not None and latest.status == "completed" and not latest.cancel_requested:
                 events = await repo.get_run_events(session, latest.run_id)
                 asks = open_asks(events)
             completes_the_ask = bool(asks) and asks <= answered_asks(messages, resume, events)

@@ -85,6 +85,7 @@ class RunRecord(BaseModel):
     forwarded_props: Any = None
     resume: list[dict[str, Any]] | None = None
     # state
+    cancel_requested: bool = False
     cancel_requested_by: str | None = None
 
     @property

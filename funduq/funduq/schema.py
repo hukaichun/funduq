@@ -5,11 +5,13 @@ from datetime import datetime, timezone
 from sqlalchemy import (
     JSON,
     BigInteger,
+    Boolean,
     CheckConstraint,
     Column,
     DateTime,
     ForeignKey,
     ForeignKeyConstraint,
+    false,
     Index,
     Integer,
     MetaData,
@@ -123,7 +125,8 @@ runs = Table(
     Column("forwarded_props", _JSON, nullable=True),
     Column("resume", _JSON, nullable=True),
     # --- state ---
-    # Someone asked this run to stop, and who; NULL = nobody has.
+    # Someone asked this run to stop; and who, when the run is bound to an authority (NULL for an unbound run, where nobody is anyone in particular).
+    Column("cancel_requested", Boolean, nullable=False, default=False, server_default=false()),
     Column("cancel_requested_by", String, nullable=True),
     CheckConstraint(RUN_STATUS_CHECK, name="ck_runs_status"),
     ForeignKeyConstraint(

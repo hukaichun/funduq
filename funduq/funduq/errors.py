@@ -1,13 +1,5 @@
 from __future__ import annotations
 
-from funduq.repo import (
-    ProviderFingerprintTaken,
-    ThreadNotFound,
-    ThreadOwnershipMismatch,
-    ThreadMembershipRequired,
-    ThreadQueueFull,
-)
-
 __all__ = [
     "AgentInUse",
     "AgentNotFound",
@@ -64,6 +56,26 @@ class KyokRejected(FunduqError):
         super().__init__(message)
         self.status = status
         self.refusal = refusal
+
+
+class ProviderFingerprintTaken(FunduqError):
+    """A provider's public key hashes to a fingerprint another registered public key already holds."""
+
+
+class ThreadNotFound(FunduqError):
+    """A thread id funduq never minted, where creating one was not asked for."""
+
+
+class ThreadOwnershipMismatch(FunduqError):
+    """The thread belongs to a different agent than the one addressed."""
+
+
+class ThreadMembershipRequired(FunduqError):
+    """The thread is bound to a responsibility segment and the writer is not a member."""
+
+
+class ThreadQueueFull(FunduqError):
+    """The thread's pending-utterance buffer is at its limit; the message was NOT accepted."""
 
 
 class RunNotCancellable(FunduqError):
