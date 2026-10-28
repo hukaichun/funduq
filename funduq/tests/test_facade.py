@@ -90,8 +90,8 @@ async def test_attach_start_and_read_back(funduq, new_identity, attach):
     run = await funduq.get_run(handle.run_id)
     assert run.status == "completed"
 
-    messages = await funduq.get_thread_messages(handle.thread_id)
-    assert messages[-1]["content"] == "echo: hi"
+    events = await funduq.get_run_events(handle.run_id)
+    assert [e["delta"] for e in events if e["type"] == "TEXT_MESSAGE_CONTENT"] == ["echo: hi"]
 
     assert len(await funduq.get_run_events(handle.run_id)) == len(events)
 

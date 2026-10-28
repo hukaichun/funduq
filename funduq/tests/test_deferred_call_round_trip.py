@@ -35,6 +35,7 @@ class DefersThenFinishes:
                     for m in (run_input.messages or [])
                 ],
                 "resume": run_input.resume,
+                "parentRunId": run_input.parent_run_id,
             }
         )
         ids = {"threadId": run_input.thread_id, "runId": run_input.run_id}
@@ -179,11 +180,11 @@ async def test_a_partial_answer_leaves_the_ask_standing(funduq, serve):
 
 
 async def test_after_the_round_trip_the_link_holds_the_whole_resumable_turn(funduq, serve):
-    """The provider is handed only what is new; everything else it pulls. This
-    is the join: `dispatch` writes the inbound messages to the thread before it
-    builds the provider's input, so by the time the resumed round runs, the
-    link holds the assistant turn *and* every result — the complete set a
-    stateless provider needs to take its next step."""
+    """The provider is handed only what is new; everything else it pulls. The
+    resumed run names the run that asked (`parentRunId`), and that run's events
+    hold the assistant turn and the result the provider gave itself — with the
+    new results in hand, the complete set a stateless provider needs to take its
+    next step."""
     provider, served, agent, first, events = await _pause(funduq, serve)
     pending = unanswered_tool_calls(events)
     tool_results, resume = _answers(events)
@@ -196,9 +197,10 @@ async def test_after_the_round_trip_the_link_holds_the_whole_resumable_turn(fund
     handed = {m["toolCallId"] for m in provider.rounds[1]["messages"] if m.get("role") == "tool"}
     assert handed == set(tool_results), "handed: only the new results"
 
-    pulled = await funduq.get_thread_messages(first.thread_id)
-    announced = {c["id"] for m in pulled for c in (m.get("toolCalls") or [])}
-    answered = {m["toolCallId"] for m in pulled if m.get("role") == "tool"}
+    assert provider.rounds[1]["parentRunId"] == first.run_id
+    pulled = await funduq.get_run_events(first.run_id)
+    announced = {e["toolCallId"] for e in pulled if e["type"] == "TOOL_CALL_START"}
+    answered = {e["toolCallId"] for e in pulled if e["type"] == "TOOL_CALL_RESULT"} | handed
     assert len(announced) == 3, "pulled: the assistant turn, whole"
     assert announced - answered == {p for p in pending if p not in tool_results}, (
         "pulled: a result for every call except the approved one, whose answer rides "

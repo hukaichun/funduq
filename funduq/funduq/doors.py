@@ -245,7 +245,7 @@ async def open_run(
         session, thread_id, inbound.agent, input_json,
         actor_chain=inbound.actor_chain, run_id=run_id,
     )
-    await repo.append_thread_messages(session, thread_id, run_id, messages, origin="caller")
+    await repo.append_thread_messages(session, thread_id, run_id, messages)
     await session.commit()
     return Opened(run_id=run_id, thread_id=thread_id, starting_seq=0, input_json=input_json)
 

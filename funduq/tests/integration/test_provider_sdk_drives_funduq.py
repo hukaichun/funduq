@@ -71,8 +71,8 @@ async def test_a_run_goes_all_the_way_out_and_all_the_way_back(funduq, runtimes)
     await _until(lambda: handle.run_id not in funduq.active_runs())
     async with funduq.session() as session:
         assert (await repo.get_run(session, handle.run_id)).status == "completed"
-        messages = await repo.get_thread_messages(session, handle.thread_id)
-    assert messages[-1]["content"] == "bonjour"
+        events = await repo.get_run_events(session, handle.run_id)
+    assert [e["delta"] for e in events if e["type"] == "TEXT_MESSAGE_CONTENT"] == ["bonjour"]
 
 
 async def test_funduq_asks_the_provider_that_took_the_run_to_stop(funduq, runtimes):

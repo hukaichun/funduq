@@ -206,7 +206,6 @@ class Run:
     input_json: dict[str, Any]
     queued_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
     seq: int = 0
-    round_starting_seq: int = 0
     # The run this one asked to join, verbatim from the caller's declaration.
     addressed_run_id: str | None = None
     offered_to: str | None = None
@@ -395,7 +394,6 @@ class RunBroker:
             thread_id=thread_id,
             input_json=input_json,
             seq=seq,
-            round_starting_seq=seq,
             addressed_run_id=addressed_run_id,
         )
         handler = self._thread_handler(thread_id, agent)
