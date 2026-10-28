@@ -37,6 +37,8 @@ from funduq.schema import (
 
 logger = logging.getLogger("funduq.repo")
 
+# No function here commits or rolls back: the caller owns the transaction, and a write is durable when the caller says so.
+
 
 # A run nobody has accepted yet: waiting in the queue, or handed to a provider that has not answered.
 PENDING_RUN_STATUSES = ["queued", "offering"]
@@ -75,9 +77,10 @@ async def ensure_provider(session: AsyncSession, public_key: str) -> None:
     )
     stmt = stmt.on_conflict_do_nothing(index_elements=[providers.c.public_key])
     try:
-        await session.execute(stmt)
+        # A savepoint, so a collision undoes this insert and nothing the caller wrote before it.
+        async with session.begin_nested():
+            await session.execute(stmt)
     except IntegrityError as e:
-        await session.rollback()
         raise ProviderFingerprintTaken(
             f"another provider already holds fingerprint {provider_fingerprint(public_key)}"
         ) from e
@@ -135,7 +138,6 @@ async def register_agents(
         await session.execute(stmt)
         registered[name] = AgentRef(provider_key=public_key, name=name)
 
-    await session.commit()
     return registered
 
 
@@ -171,7 +173,6 @@ async def register_llm_providers(
         )
         await session.execute(stmt)
         registered[name] = LlmRef(provider_key=public_key, name=name)
-    await session.commit()
     return registered
 
 
@@ -200,7 +201,6 @@ async def touch_llm_providers(
         )
         .values(last_seen_at=_utcnow())
     )
-    await session.commit()
 
 
 async def touch_agents(session: AsyncSession, provider_key: str, names: list[str]) -> None:
@@ -211,7 +211,6 @@ async def touch_agents(session: AsyncSession, provider_key: str, names: list[str
         .where(agents.c.provider_key == provider_key, agents.c.name.in_(names))
         .values(last_seen_at=_utcnow())
     )
-    await session.commit()
 
 
 async def get_agent(session: AsyncSession, agent: AgentRef) -> AgentRecord | None:
@@ -360,7 +359,6 @@ async def delete_llm_provider(session: AsyncSession, ref: LlmRef) -> bool:
             llm_providers.c.provider_key == ref.provider_key, llm_providers.c.name == ref.name
         )
     )
-    await session.commit()
     return result.rowcount > 0
 
 
@@ -370,7 +368,6 @@ async def delete_agent(session: AsyncSession, agent: AgentRef) -> bool:
             agents.c.provider_key == agent.provider_key, agents.c.name == agent.name
         )
     )
-    await session.commit()
     return result.rowcount > 0
 
 
@@ -473,7 +470,7 @@ async def append_thread_messages(
     run_id: str,
     messages: list[dict[str, Any]],
 ) -> None:
-    """Writes the messages `run_id` carried in — its `RunAgentInput.messages`, as the caller sent them — to the thread. What the agent said back is the run's events, not a thread message. Not committed."""
+    """Writes the messages `run_id` carried in — its `RunAgentInput.messages`, as the caller sent them — to the thread. What the agent said back is the run's events, not a thread message."""
     for message in messages:
         await session.execute(
             insert(thread_messages).values(
@@ -495,7 +492,7 @@ async def create_run(
     actor_chain: list[str] | None = None,
     run_id: str | None = None,
 ) -> dict[str, str]:
-    """Writes a new queued run: the `RunAgentInput` its provider will receive, one column per field (its messages are written to `thread_messages` by the caller), and the state funduq starts it in. A door mints `run_id` first so the input can name it; None mints one here. Not committed."""
+    """Writes a new queued run: the `RunAgentInput` its provider will receive, one column per field (its messages are written to `thread_messages` by the caller), and the state funduq starts it in. A door mints `run_id` first so the input can name it; None mints one here."""
     run_id = run_id or new_id("run")
     await session.execute(
         insert(runs).values(
@@ -592,7 +589,6 @@ async def record_cancel_request(
         .where(runs.c.run_id == run_id)
         .values(cancel_requested=True, cancel_requested_by=requested_by)
     )
-    await session.commit()
 
 
 # The run-status state machine: which statuses each `mark_run_status` write may legally come from.
@@ -629,7 +625,6 @@ async def mark_run_status(session: AsyncSession, run_id: str, status: str) -> bo
         .where(runs.c.run_id == str(run_id), runs.c.status.in_(legal_from))
         .values(**values)
     )
-    await session.commit()
     if result.rowcount > 0:
         return True
     current = (
@@ -805,7 +800,6 @@ async def _fail_runs(session: AsyncSession, where_clause) -> list[str]:
         )
         if result.rowcount > 0:
             run_ids.append(row.run_id)
-    await session.commit()
     return run_ids
 
 
@@ -835,7 +829,6 @@ async def append_run_event(session: AsyncSession, run_id: str, seq: int, event_j
     await session.execute(
         insert(run_events).values(run_id=run_id, seq=seq, event_json=event_json, created_at=_utcnow())
     )
-    await session.commit()
 
 
 async def get_run_events(session: AsyncSession, run_id: str, since_seq: int = 0) -> list[dict[str, Any]]:

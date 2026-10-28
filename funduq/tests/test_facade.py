@@ -58,6 +58,7 @@ class NeverFinishesProvider:
 async def _register(funduq, name: str, identity) -> str:
     async with funduq.session() as session:
         registered = await repo.register_agents(session, identity.public_key, [Registration(name=name)])
+        await session.commit()
     return registered[name]
 
 
