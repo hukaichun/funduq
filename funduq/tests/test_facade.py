@@ -76,7 +76,7 @@ async def test_attach_start_and_read_back(funduq, new_identity, attach):
     agent_id = await _register(funduq, "echo", identity)
     await attach(identity, EchoProvider(), [agent_id.name])
 
-    handle = await funduq.start_run(agent_id, {"messages": [{"role": "user", "content": "hi"}]})
+    handle = await funduq.start_run(agent_id, {"messages": [{"id": "m1", "role": "user", "content": "hi"}]})
 
     assert handle.run_id.startswith("run_")
     assert handle.thread_id.startswith("thread_")
@@ -258,7 +258,7 @@ async def test_a_deferred_calls_result_returns_to_the_run_it_suspended(
     provider = PausingProvider()
     await attach(identity, provider, [agent_id.name])
 
-    handle = await funduq.start_run(agent_id, {"messages": [{"role": "user", "content": "one"}]})
+    handle = await funduq.start_run(agent_id, {"messages": [{"id": "m2", "role": "user", "content": "one"}]})
     first_round = [e async for e in handle.events()]
     await _until(lambda: handle.run_id not in funduq.active_runs())
     assert (await funduq.get_run(handle.run_id)).status == "completed"
@@ -267,7 +267,7 @@ async def test_a_deferred_calls_result_returns_to_the_run_it_suspended(
     resumed = await funduq.resume_run(
         handle.run_id,
         {
-            "messages": [{"role": "user", "content": "two"}],
+            "messages": [{"id": "m3", "role": "user", "content": "two"}],
             "resume": [{"interruptId": "int_1", "status": "resolved", "payload": {"answer": 42}}],
         },
     )
@@ -293,7 +293,7 @@ async def test_a_result_offered_to_a_run_that_already_exited_is_refused(
     agent_id = await _register(funduq, "echo", identity)
     await attach(identity, EchoProvider(), [agent_id.name])
 
-    handle = await funduq.start_run(agent_id, {"messages": [{"role": "user", "content": "one"}]})
+    handle = await funduq.start_run(agent_id, {"messages": [{"id": "m4", "role": "user", "content": "one"}]})
     [_ async for _ in handle.events()]
     await _until(lambda: handle.run_id not in funduq.active_runs())
     assert (await funduq.get_run(handle.run_id)).status == "completed"
@@ -301,7 +301,7 @@ async def test_a_result_offered_to_a_run_that_already_exited_is_refused(
 
     with pytest.raises(NoPendingAsk):
         await funduq.resume_run(
-            handle.run_id, {"messages": [{"role": "user", "content": "two"}]}
+            handle.run_id, {"messages": [{"id": "m5", "role": "user", "content": "two"}]}
         )
 
     assert await funduq.get_run_events(handle.run_id) == settled, "nothing was appended"
@@ -406,7 +406,7 @@ async def test_an_exited_chained_run_is_told_it_exited_not_that_it_signed_wrong(
     agent_id = await _register(funduq, "chained", identity)
     await attach(identity, EchoProvider(), [agent_id.name])
 
-    handle = await funduq.start_run(agent_id, {"messages": [{"role": "user", "content": "one"}]})
+    handle = await funduq.start_run(agent_id, {"messages": [{"id": "m6", "role": "user", "content": "one"}]})
     [_ async for _ in handle.events()]
     await _until(lambda: handle.run_id not in funduq.active_runs())
 
@@ -436,7 +436,7 @@ async def test_cancelling_a_run_that_is_waiting_closes_the_ask(funduq, new_ident
     provider = PausingProvider()
     await attach(identity, provider, [agent_id.name])
 
-    handle = await funduq.start_run(agent_id, {"messages": [{"role": "user", "content": "one"}]})
+    handle = await funduq.start_run(agent_id, {"messages": [{"id": "m7", "role": "user", "content": "one"}]})
     [_ async for _ in handle.events()]
     await _until(lambda: handle.run_id not in funduq.active_runs())
     assert (await funduq.get_run(handle.run_id)).status == "completed"
@@ -453,7 +453,7 @@ async def test_cancelling_a_run_that_is_waiting_closes_the_ask(funduq, new_ident
         await funduq.resume_run(
             handle.run_id,
             {
-                "messages": [{"role": "user", "content": "two"}],
+                "messages": [{"id": "m8", "role": "user", "content": "two"}],
                 "resume": [{"interruptId": "int_1", "status": "resolved", "payload": {"answer": 42}}],
             },
         )
@@ -468,7 +468,7 @@ async def test_a_run_that_really_has_ended_still_answers_false(funduq, new_ident
     agent_id = await _register(funduq, "echo", identity)
     await attach(identity, EchoProvider(), [agent_id.name])
 
-    handle = await funduq.start_run(agent_id, {"messages": [{"role": "user", "content": "one"}]})
+    handle = await funduq.start_run(agent_id, {"messages": [{"id": "m9", "role": "user", "content": "one"}]})
     [_ async for _ in handle.events()]
     await _until(lambda: handle.run_id not in funduq.active_runs())
     assert (await funduq.get_run(handle.run_id)).status == "completed"

@@ -148,7 +148,7 @@ thread_messages = Table(
     # Who said it: the caller, whose run carried it in (so it is part of that run's `RunAgentInput`), or the agent, whose run produced it.
     Column("origin", String, nullable=False),
     CheckConstraint("origin IN ('caller', 'agent')", name="ck_thread_messages_origin"),
-    UniqueConstraint("thread_id", "message_id", name="uq_thread_messages_thread_message"),
+    UniqueConstraint("run_id", "message_id", name="uq_thread_messages_run_message"),
     Index("idx_thread_messages_thread", "thread_id", "id"),
 )
 

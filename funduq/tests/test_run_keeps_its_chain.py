@@ -107,7 +107,7 @@ async def test_a_resume_does_not_replace_the_chain_the_run_was_opened_under(
     opened_under = [caller.sign_chain_hop()]
     handle = await funduq.start_run(
         agent_id,
-        {"messages": [{"role": "user", "content": "one"}], "forwardedProps": {"actorChain": opened_under}},
+        {"messages": [{"id": "m1", "role": "user", "content": "one"}], "forwardedProps": {"actorChain": opened_under}},
         presenter_key=caller.public_key,
     )
     [_ async for _ in handle.events()]
@@ -116,7 +116,7 @@ async def test_a_resume_does_not_replace_the_chain_the_run_was_opened_under(
     resumed = await funduq.resume_run(
         handle.run_id,
         {
-            "messages": [{"role": "user", "content": "two"}],
+            "messages": [{"id": "m2", "role": "user", "content": "two"}],
             "resume": [{"interruptId": "int_1", "status": "resolved", "payload": {"answer": 42}}],
             "forwardedProps": {
                 "actorChain": [answerer.sign_chain_hop()],

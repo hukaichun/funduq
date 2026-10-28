@@ -131,13 +131,13 @@ def test_status_update_from_a_persisted_status_has_no_final_flag():
 
 
 def test_inbound_parts_are_read_under_every_spec_version():
-    current = a2a_message_to_agui_messages({"role": "ROLE_USER", "parts": [{"text": "hi"}]})
+    current = a2a_message_to_agui_messages({"messageId": "a1", "role": "ROLE_USER", "parts": [{"text": "hi"}]})
     v0_3 = a2a_message_to_agui_messages({"role": "user", "parts": [{"kind": "text", "text": "hi"}]})
     original = a2a_message_to_agui_messages({"role": "user", "parts": [{"type": "text", "text": "hi"}]})
 
     as_content = [{"role": m["role"], "content": m["content"]} for m in (current[0], v0_3[0], original[0])]
     assert as_content == [{"role": "user", "content": "hi"}] * 3
-    assert current[0]["id"] == "unset"
+    assert current[0]["id"] == "a1"
 
 
 def test_an_agent_role_is_recognised_under_either_spelling():
