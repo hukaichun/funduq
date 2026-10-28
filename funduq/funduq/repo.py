@@ -518,17 +518,6 @@ async def append_thread_messages(
         )
 
 
-async def get_thread_messages(session: AsyncSession, thread_id: str) -> list[dict[str, Any]]:
-    rows = (
-        await session.execute(
-            select(thread_messages.c.message_json)
-            .where(thread_messages.c.thread_id == thread_id)
-            .order_by(thread_messages.c.id)
-        )
-    ).all()
-    return [row.message_json for row in rows]
-
-
 async def create_run(
     session: AsyncSession,
     thread_id: str,
@@ -747,6 +736,18 @@ async def lineage_tail(session: AsyncSession, run_id: str) -> RunRecord | None:
     return None
 
 
+async def runs_in_thread(session: AsyncSession, thread_id: str) -> list[RunRecord]:
+    """Every run on `thread_id`, oldest first."""
+    rows = (
+        await session.execute(
+            select(runs)
+            .where(runs.c.thread_id == thread_id)
+            .order_by(runs.c.created_at, runs.c.run_id)
+        )
+    ).mappings().all()
+    return [RunRecord(**row) for row in rows]
+
+
 async def root_runs_in_thread(session: AsyncSession, thread_id: str) -> list[RunRecord]:
     """The runs that start a lineage on `thread_id` — the thread's tasks, as A2A counts them — newest first."""
     rows = (
@@ -789,18 +790,17 @@ async def lineage(session: AsyncSession, run_id: str) -> list[RunRecord]:
 
 
 async def get_thread_snapshot(session: AsyncSession, thread_id: str) -> dict[str, Any] | None:
-    """The thread's state as a caller may see it: its messages, and a summary of the run in flight."""
+    """The thread's state as a caller may see it: a summary of the run in flight."""
     thread = await get_thread(session, thread_id)
     if thread is None:
         return None
-    messages = await get_thread_messages(session, thread_id)
     active_run = await get_active_run_for_thread(session, thread_id)
     summary = (
         {"run_id": active_run["run_id"], "status": active_run["status"]}
         if active_run
         else None
     )
-    return {"thread_id": thread_id, "messages": messages, "active_run": summary}
+    return {"thread_id": thread_id, "active_run": summary}
 
 
 async def touch_run_activity(session: AsyncSession, run_id: str) -> None:

@@ -101,9 +101,9 @@ async def test_a_second_run_on_a_busy_thread_is_queued_behind_the_first(funduq, 
     assert second.run_id != first.run_id
     async with funduq.session() as session:
         stored = await repo.get_run(session, second.run_id)
-        messages = await repo.get_thread_messages(session, first.thread_id)
     assert stored.status == "queued", "it waits its turn behind the in-flight run"
-    assert "one more" in [m.get("content") for m in messages], "and its message is kept"
+    run_input = await funduq.get_run_input(second.run_id)
+    assert "one more" in [m.get("content") for m in run_input["messages"]], "and its message is kept"
 
 
 async def test_the_stream_carries_events_not_a_framing_of_them(funduq, serve):
@@ -146,7 +146,7 @@ def test_ag_uis_own_encoder_cannot_be_applied_blindly_downstream():
         encoder.encode({"type": "AGENT_ABSORBED_INTERJECTION", "runId": "r"})
 
 
-async def test_thread_messages_are_what_each_run_carried_in(funduq, serve):
+async def test_a_thread_is_read_run_by_run(funduq, serve):
     served = await serve(None, "solo")
     agent = served.agents["solo"]
     adapter = AGUIAdapter(funduq)
@@ -156,17 +156,17 @@ async def test_thread_messages_are_what_each_run_carried_in(funduq, serve):
     second = await adapter.run(agent, _body(first.thread_id, "two"))
     [_ async for _ in second.events]
 
-    history = await funduq.get_thread_messages(first.thread_id)
-
-    assert [(m["role"], m["content"]) for m in history] == [("user", "one"), ("user", "two")]
-
-
-async def test_an_unknown_thread_is_empty_rather_than_an_error(funduq, serve):
-    served = await serve(None, "solo")
-
-    assert await funduq.get_thread_messages("no-such-thread") == []
+    runs = await funduq.thread_runs(first.thread_id)
+    assert [r.run_id for r in runs] == [first.run_id, second.run_id]
+    inputs = [await funduq.get_run_input(r.run_id) for r in runs]
+    assert [[m["content"] for m in i["messages"]] for i in inputs] == [["one"], ["two"]]
+    replies = [await funduq.get_run_events(r.run_id) for r in runs]
+    assert all(any(e["type"] == "TEXT_MESSAGE_CONTENT" for e in events) for events in replies)
 
 
+async def test_an_unknown_thread_has_no_runs_and_an_unknown_run_no_input(funduq):
+    assert await funduq.thread_runs("no-such-thread") == []
+    assert await funduq.get_run_input("no-such-run") is None
 async def test_the_minted_id_rides_the_answer(funduq, serve):
     """Thread ids are funduq-minted; the caller's own string never addresses
     state. The real id is not hidden: it rides `RUN_STARTED.threadId` —
