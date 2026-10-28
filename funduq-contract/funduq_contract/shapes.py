@@ -49,6 +49,35 @@ class DeliveredRun(Shape):
     metadata: dict[str, Any] = Field(default_factory=dict)
 
 
+OBSERVED_METADATA_KEY = "funduq"
+"""The one key funduq writes under somebody else's metadata — a run's `forwardedProps`, an A2A task's or status update's `metadata` — for what funduq itself observed or added, never the caller's word."""
+
+
+class KyokForwardedProps(Shape):
+    """funduq's `forwardedProps.funduq.kyok` entry: the grant a KYOK-bound run's agent presents when calling for completions."""
+
+    token: str
+
+
+class FunduqProps(Shape):
+    """What funduq writes under `forwardedProps.funduq` on a run it delivers. Every field is absent when funduq has nothing to say."""
+
+    kyok: KyokForwardedProps | None = None
+    addressed_run_id: str | None = Field(default=None, alias="addressedRunId")
+    actor_chain: list[str] | None = Field(default=None, alias="actorChain")
+
+    @classmethod
+    def of(cls, forwarded_props: Any) -> "FunduqProps":
+        """What funduq wrote under `forwarded_props`, or an empty `FunduqProps` when it wrote nothing readable."""
+        ours = forwarded_props.get(OBSERVED_METADATA_KEY) if isinstance(forwarded_props, dict) else None
+        if not isinstance(ours, dict):
+            return cls()
+        try:
+            return cls.model_validate(ours)
+        except ValueError:
+            return cls()
+
+
 class Refusal(Shape):
     """A permanent decline of an offered run: never re-offer it, fail it."""
 

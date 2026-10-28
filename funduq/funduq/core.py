@@ -32,7 +32,7 @@ from funduq.doors import (
     resolve_kyok,
     verify_caller,
 )
-from funduq_contract import Registration
+from funduq_contract import FunduqProps, Registration
 
 from funduq.db_schema import DEFAULT_DB_SCHEMA, EXPECTED_SCHEMA_REVISION, quoted_schema
 from funduq.errors import (
@@ -55,7 +55,6 @@ from funduq.identity import (
 )
 from funduq.kyok import ConnectedLLMProvider, KyokBinding, KyokRelay, parse_kyok_opt_in
 from funduq.pause import open_asks
-from funduq.props import observed_of
 from funduq.models import AgentRecord, AgentRef, AgentSummary, LlmRef, LlmSummary, RunRecord
 
 logger = logging.getLogger("funduq.core")
@@ -387,7 +386,7 @@ class Funduq:
             for stored in waiting:
                 agent = AgentRef(provider_key=stored.provider_key, name=stored.agent_name)
                 bag = stored.forwarded_props if isinstance(stored.forwarded_props, dict) else {}
-                addressed = observed_of(bag).get("addressedRunId")
+                addressed = FunduqProps.of(bag).addressed_run_id
                 if addressed is not None and self.broker.get(addressed) is None:
                     # An interjection names the run it changes; that run died with the process, so the words have nowhere to go.
                     await self.mark_run_status(session, stored.run_id, "failed")

@@ -9,7 +9,7 @@ from collections.abc import AsyncIterator
 from dataclasses import dataclass
 from typing import Any, Protocol
 
-from funduq_contract import DeliveredCompletion
+from funduq_contract import DeliveredCompletion, KyokForwardedProps
 from openai.types.chat import ChatCompletionChunk
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
@@ -90,19 +90,9 @@ def parse_kyok_opt_in(metadata: dict) -> KyokOptIn | None:
         return None
 
 
-class KyokForwardedProps(BaseModel):
-    """funduq's `forwardedProps.funduq.kyok` entry: the grant a KYOK-bound run's agent presents when calling for completions."""
-
-    model_config = ConfigDict(frozen=True)
-
-    token: str
-
-
-def kyok_forwarded_props(run_id: str, agent: AgentRef, signing_secret: str) -> dict[str, Any]:
-    """Issue a KYOK token for the run and wrap it as the dict funduq sends under `forwardedProps.funduq.kyok`."""
-    return KyokForwardedProps(
-        token=issue_kyok_token(run_id, agent, signing_secret)
-    ).model_dump()
+def kyok_forwarded_props(run_id: str, agent: AgentRef, signing_secret: str) -> KyokForwardedProps:
+    """Issue a KYOK token for the run as the grant funduq sends under `forwardedProps.funduq.kyok`."""
+    return KyokForwardedProps(token=issue_kyok_token(run_id, agent, signing_secret))
 
 
 @dataclass(frozen=True)

@@ -28,6 +28,27 @@ entries below say what to change and not only what moved.
 
 ---
 
+## Revision 28 — 2026-10-28
+
+**What funduq writes under `forwardedProps.funduq` is one shape, defined once.**
+`funduq_contract` now exports it, so neither side spells the keys by hand:
+
+- `OBSERVED_METADATA_KEY`: the key itself (`"funduq"`).
+- `FunduqProps`: its fields `kyok`, `addressedRunId` and `actorChain`, each
+  absent when funduq has nothing to say. `FunduqProps.of(forwarded_props)`
+  reads it back, and is empty when nothing readable is there.
+- `KyokForwardedProps`: moved here from `funduq` and `funduq-provider-sdk`,
+  which each defined it. It now refuses unknown fields, like every other
+  crossing shape.
+
+The bytes on the wire are unchanged. `funduq_provider_sdk` re-exports
+`FunduqProps` and `KyokForwardedProps`.
+
+Migration for a provider that read `forwardedProps["funduq"]` by hand: read
+`FunduqProps.of(run_input.forwarded_props)` instead.
+
+---
+
 ## Revision 27 — 2026-10-28
 
 **The undelivered clock is the host's.** `CoreSettings.undelivered_window_seconds`
