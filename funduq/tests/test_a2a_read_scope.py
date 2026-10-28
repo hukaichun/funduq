@@ -11,6 +11,8 @@ guarded; an unbound run stays as public as its funduq-minted id.
 
 from __future__ import annotations
 
+from uuid import uuid4
+
 import time
 
 import pytest
@@ -27,7 +29,7 @@ from tests.conftest import EchoAgent
 
 
 def _message(text: str) -> dict:
-    return {"role": "user", "parts": [{"type": "text", "text": text}]}
+    return {"messageId": uuid4().hex, "role": "user", "parts": [{"type": "text", "text": text}]}
 
 
 @pytest.fixture

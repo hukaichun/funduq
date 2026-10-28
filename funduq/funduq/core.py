@@ -44,7 +44,6 @@ from funduq.errors import (
     LlmOfferingInUse,
     LlmProviderNotFound,
 )
-from funduq.agui_reduce import reduce_events_to_messages
 from funduq.handlers import close_with_terminal_event, make_handlers
 from funduq.identity import (
     FunduqIdentity,
@@ -751,14 +750,17 @@ class Funduq:
             return await repo.root_runs_in_thread(session, thread_id)
 
     async def task_messages(self, run_id: str) -> list[dict[str, Any]]:
-        """The messages of the lineage rooted at `run_id`, run by run: what each carried in, then — for a run that completed — what its events say the agent replied."""
+        """The messages of the lineage rooted at `run_id`: those that first appear in one of its runs — what it carried in, or for a run that completed, what it replied — in order. A run's input repeats the conversation before it; that part belongs to the runs it came from."""
         async with self.session() as session:
-            messages: list[dict[str, Any]] = []
-            for run in await repo.lineage(session, run_id):
-                messages += await repo.messages_of_run(session, run.run_id)
-                if run.status == "completed":
-                    messages += reduce_events_to_messages(await repo.get_run_events(session, run.run_id))
-            return messages
+            lineage = {run.run_id for run in await repo.lineage(session, run_id)}
+            if not lineage:
+                return []
+            thread_id = (await repo.get_run(session, run_id)).thread_id
+            runs = [
+                run for run in await repo.runs_in_thread(session, thread_id)
+                if run.status == "completed" or run.run_id in lineage
+            ]
+            return [message for source, message in await repo.conversation_of(session, runs) if source in lineage]
 
     def subscribe(self, run_id: str) -> AsyncIterator[Any]:
         """The live stream of a run in flight."""

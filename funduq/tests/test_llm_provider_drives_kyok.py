@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from uuid import uuid4
+
 import asyncio
 import hashlib
 import json
@@ -250,6 +252,7 @@ async def test_citing_a_bound_task_grants_the_citer_nothing(funduq, serve, llm):
     await A2AAdapter(funduq).send_task(
         citer_served.agents["unrelated-agent"],
         {
+            "messageId": uuid4().hex,
             "role": "user",
             "parts": [{"type": "text", "text": "I know a task id"}],
             "referenceTaskIds": [parent.run_id],
@@ -276,7 +279,7 @@ async def test_a_delegating_caller_funds_the_sub_agent_by_saying_so(funduq, serv
     chain = new_chain(delegator)
     await A2AAdapter(funduq).send_task(
         sub_served.agents["sub-agent"],
-        {"role": "user", "parts": [{"type": "text", "text": "delegated"}]},
+        {"messageId": uuid4().hex, "role": "user", "parts": [{"type": "text", "text": "delegated"}]},
         actor_chain=chain,
         presenter_key=delegator.public_key().public_bytes_raw().hex(),
         metadata={
@@ -317,7 +320,7 @@ async def test_an_a2a_caller_opts_in_with_metadata(funduq, serve, llm):
 
     await A2AAdapter(funduq).send_task(
         served.agents["a2a-kyok-agent"],
-        {"role": "user", "parts": [{"type": "text", "text": "hi"}]},
+        {"messageId": uuid4().hex, "role": "user", "parts": [{"type": "text", "text": "hi"}]},
         metadata={
             "kyok": {
                 "llmProvider": {"providerKey": ref.provider_key, "name": ref.name},
@@ -344,7 +347,7 @@ async def test_an_a2a_opt_in_naming_an_unknown_offering_is_refused(funduq, serve
     with pytest.raises(InvalidParamsError, match="no-such-model"):
         await A2AAdapter(funduq).send_task(
             served.agents["kyok-agent"],
-            {"role": "user", "parts": [{"type": "text", "text": "hi"}]},
+            {"messageId": uuid4().hex, "role": "user", "parts": [{"type": "text", "text": "hi"}]},
             metadata={
                 "kyok": {
                     "llmProvider": {

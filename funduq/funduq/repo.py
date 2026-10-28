@@ -13,6 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from funduq.identity import provider_fingerprint, verify_chain
 from funduq.props import INTERJECTION_EXTENSION_URI
 from funduq.agui import build_run_agent_input
+from funduq.agui_reduce import reduce_events_to_messages
 from funduq.ids import new_id
 from funduq_contract import Registration
 
@@ -559,6 +560,21 @@ async def messages_of_run(session: AsyncSession, run_id: str) -> list[dict[str, 
         )
     ).all()
     return [row.message_json for row in rows]
+
+
+async def conversation_of(session: AsyncSession, runs: list[RunRecord]) -> list[tuple[str, dict[str, Any]]]:
+    """Each message `runs` carried in or — for a run that completed — replied with, once: under the first of them it appears in, in order. A message is its id; a later copy is the same message and is skipped, never merged."""
+    seen: set[str] = set()
+    out: list[tuple[str, dict[str, Any]]] = []
+    for run in runs:
+        said = await messages_of_run(session, run.run_id)
+        if run.status == "completed":
+            said += reduce_events_to_messages(await get_run_events(session, run.run_id))
+        for message in said:
+            if message["id"] not in seen:
+                seen.add(message["id"])
+                out.append((run.run_id, message))
+    return out
 
 
 async def readers_of(session: AsyncSession, thread: dict[str, Any]) -> set[str] | None:

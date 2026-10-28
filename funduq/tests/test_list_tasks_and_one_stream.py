@@ -10,6 +10,8 @@ events.
 
 from __future__ import annotations
 
+from uuid import uuid4
+
 import asyncio
 
 import pytest
@@ -25,7 +27,7 @@ COMPLETED = pb.TaskState.TASK_STATE_COMPLETED
 
 
 def _message(text: str, **extra) -> dict:
-    return {"role": "user", "parts": [{"type": "text", "text": text}], **extra}
+    return {"messageId": uuid4().hex, "role": "user", "parts": [{"type": "text", "text": text}], **extra}
 
 
 async def _three_tasks(funduq, agent):
