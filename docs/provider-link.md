@@ -83,7 +83,6 @@ leaving the envelope to them standardizes nothing away.
 |---|---|---|
 | register | `list[Registration]`, and optionally a display name for the provider | that it happened, nothing more. The in-process call returns each agent's `AgentRef`, but that is `(provider key, name)` — two things the provider knew before it asked. A transport that answers success alone drops nothing. |
 | delete | the agent's name | that it happened |
-| thread messages | the thread id | the thread's messages, as AG-UI's own `Message` list — that package's vocabulary reused, never restated |
 | report | the run id and one AG-UI event | whether it landed — false means the run is not the reporter's to feed: taken back, or already gone |
 | finish | the run id | whether it landed, the same way |
 

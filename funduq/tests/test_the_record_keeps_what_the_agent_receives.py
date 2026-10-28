@@ -53,7 +53,7 @@ def _utterance(thread_id: str) -> RunAgentInput:
 
 async def _stored(funduq, run_id: str) -> dict:
     """The row's projection — the `RunAgentInput` the run is."""
-    return await funduq.run_input(run_id)
+    return await funduq.get_run_input(run_id)
 
 
 async def test_the_agui_door_stores_what_it_delivers(funduq, serve):

@@ -8,6 +8,7 @@ from funduq.protocols.a2a_translate import (
     a2a_message_to_agui_messages,
     agui_event_to_a2a_update,
     build_task,
+    history_of,
     state_for_run_status,
     status_update_for_run_status,
 )
@@ -260,3 +261,17 @@ def test_the_pending_cancel_marker_can_come_from_the_request_alone():
 
     plain = build_task("t1", "c1", "agent", "running", [])
     assert CANCEL_REQUESTED_METADATA_KEY not in funduq_metadata_of(plain)
+
+
+def test_history_carries_only_messages_with_text():
+    history = history_of(
+        [
+            {"id": "u1", "role": "user", "content": "find it"},
+            {"id": "a1", "role": "assistant", "content": "", "toolCalls": [{"id": "c1", "type": "function", "function": {"name": "search", "arguments": "{}"}}]},
+            {"id": "t1", "role": "tool", "content": "found", "toolCallId": "c1"},
+            {"id": "r1", "role": "reasoning", "content": "thinking"},
+            {"id": "a2", "role": "assistant", "content": "here it is"},
+        ],
+        "ctx",
+    )
+    assert [m.message_id for m in history] == ["u1", "a2"]

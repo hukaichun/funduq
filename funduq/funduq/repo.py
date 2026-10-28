@@ -200,15 +200,6 @@ async def get_llm_provider(session: AsyncSession, ref: LlmRef) -> dict[str, Any]
     return dict(row) if row else None
 
 
-async def get_llm_names_for_key(session: AsyncSession, public_key: str) -> set[str]:
-    rows = (
-        await session.execute(
-            select(llm_providers.c.name).where(llm_providers.c.provider_key == public_key)
-        )
-    ).scalars().all()
-    return set(rows)
-
-
 async def touch_llm_providers(
     session: AsyncSession, provider_key: str, names: list[str]
 ) -> None:
@@ -394,17 +385,6 @@ async def delete_agent(session: AsyncSession, agent: AgentRef) -> bool:
     )
     await session.commit()
     return result.rowcount > 0
-
-
-async def get_agent_name_for_public_key(session: AsyncSession, public_key: str) -> str | None:
-    return (
-        await session.execute(
-            select(agents.c.name)
-            .where(agents.c.provider_key == public_key)
-            .order_by(agents.c.joined_at)
-            .limit(1)
-        )
-    ).scalars().first()
 
 
 async def get_thread(session: AsyncSession, thread_id: str) -> dict[str, Any] | None:

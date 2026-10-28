@@ -188,7 +188,7 @@ def _status_update(
 def history_of(
     thread_messages: list[dict[str, Any]], context_id: str, *, limit: int | None = None
 ) -> list[pb.Message]:
-    """The Task's `history`: each stored user/assistant thread message becomes one A2A `Message` — the reverse of `a2a_message_to_agui_messages`. Other roles are funduq-internal machinery, not the conversation, and stay out. `limit` keeps the last N after that filter — `0` keeps none, which is what §3.2.4 says an explicit `historyLength: 0` asks for, and only an absent field (`None`) keeps all."""
+    """The Task's `history`: each user or assistant message that carries text becomes one A2A `Message` — the reverse of `a2a_message_to_agui_messages`. A2A's `Message` holds parts, not tool calls or reasoning, so those messages, and an assistant turn that only called tools, have nothing to carry and stay out. `limit` keeps the last N after that filter — `0` keeps none, which is what §3.2.4 says an explicit `historyLength: 0` asks for, and only an absent field (`None`) keeps all."""
     history = [
         pb.Message(
             message_id=str(message.get("id") or ""),
@@ -197,7 +197,7 @@ def history_of(
             parts=[pb.Part(text=str(message.get("content") or ""))],
         )
         for message in thread_messages
-        if message.get("role") in ("user", "assistant")
+        if message.get("role") in ("user", "assistant") and message.get("content")
     ]
     if limit is None:
         return history
@@ -217,7 +217,7 @@ def build_task(
     tail_events: list[dict[str, Any]] | None = None,
     status_at: "datetime | None" = None,
 ) -> pb.Task:
-    """Builds an A2A `Task` from a task's tail status and event history (`tail_events`, when the task is a lineage and `run_events` spans it), merging each message's text-content deltas (in event order) into one artifact per `messageId`, filling `history` from the thread's stored messages, and carrying every unmapped event, in order, under `metadata.funduq.agui_events`."""
+    """Builds an A2A `Task` from a task's tail status and event history (`tail_events`, when the task is a lineage and `run_events` spans it), merging each message's text-content deltas (in event order) into one artifact per `messageId`, filling `history` from the task's messages (`Funduq.task_messages`), and carrying every unmapped event, in order, under `metadata.funduq.agui_events`."""
     merged: dict[str, list[str]] = {}
     overflow: list[dict[str, Any]] = []
     for event in run_events:
