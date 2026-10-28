@@ -82,3 +82,21 @@ def test_ignores_lifecycle_and_state_events():
         {"type": "RUN_FINISHED", "threadId": "t1", "runId": "r1", "outcome": {"type": "success"}},
     ]
     assert reduce_events_to_messages(events) == []
+
+
+def test_reduces_a_reasoning_message_into_a_reasoning_role_message():
+    events = [
+        {"type": "REASONING_START", "messageId": "span1"},
+        {"type": "REASONING_MESSAGE_START", "messageId": "r1", "role": "reasoning"},
+        {"type": "REASONING_MESSAGE_CONTENT", "messageId": "r1", "delta": "weighing "},
+        {"type": "REASONING_MESSAGE_CONTENT", "messageId": "r1", "delta": "the options"},
+        {"type": "REASONING_MESSAGE_END", "messageId": "r1"},
+        {"type": "REASONING_END", "messageId": "span1"},
+        {"type": "TEXT_MESSAGE_START", "messageId": "m1", "role": "assistant"},
+        {"type": "TEXT_MESSAGE_CONTENT", "messageId": "m1", "delta": "the answer"},
+        {"type": "TEXT_MESSAGE_END", "messageId": "m1"},
+    ]
+    assert reduce_events_to_messages(events) == [
+        {"id": "r1", "role": "reasoning", "content": "weighing the options"},
+        {"id": "m1", "role": "assistant", "content": "the answer"},
+    ]
