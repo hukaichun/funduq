@@ -25,15 +25,7 @@ from a2a.utils.errors import (
 from google.protobuf.json_format import MessageToDict, ParseDict, ParseError
 
 from funduq import repo
-from funduq.doors import (
-    authorize_cancel,
-    InboundRun,
-    dispatch,
-    open_run,
-    relayed_chain,
-    resolve_kyok,
-    verify_caller,
-)
+from funduq.doors import InboundRun, authorize_cancel, enter, read_caller, waiting_on
 from funduq.errors import (
     StreamTaken,
     AgentNotFound,
@@ -43,7 +35,6 @@ from funduq.errors import (
     ThreadNotFound,
     ThreadOwnershipMismatch,
 )
-from funduq.pause import open_asks
 from funduq.props import ADDRESSED_RUN_METADATA_KEY
 from funduq.models import AgentRef
 from funduq.protocols.a2a_translate import (
@@ -374,8 +365,7 @@ class A2AAdapter:
                 raise AgentNotFound(f"agent '{agent}' is not registered")
 
             # The caller's bag: the request's metadata — request-level, like forwardedProps on AG-UI — where its declarations to funduq ride. The message's own metadata is the message's, and goes with it.
-            props = dict(params.get("metadata") or {})
-            props, kyok = await resolve_kyok(session, props)
+            caller = await read_caller(session, dict(params.get("metadata") or {}), presenter_key=presenter_key)
             parent_thread_id = await _lineage_parent(session, params)
 
             task_id = params.get("taskId")
@@ -390,22 +380,16 @@ class A2AAdapter:
                         f"contextId '{params['contextId']}' is not the context of task '{task_id}'"
                     )
                 tail = await repo.lineage_tail(session, task_id)
-                if (
-                    tail.status != "completed"
-                    or tail.cancel_requested
-                    or not open_asks(await repo.get_run_events(session, tail.run_id))
-                ):
+                if await waiting_on(session, tail) is None:
                     raise UnsupportedOperationError(
                         f"task '{task_id}' is not waiting for input; a message naming a task is its answer"
                     )
                 answers = tail
             context_id = params.get("contextId") or (root.thread_id if root is not None else None)
 
-            props, head_key, actor_chain = await verify_caller(session, props, presenter_key=presenter_key)
-
             thread_id = await repo.ensure_thread(
                 session, agent, context_id, parent_thread_id,
-                metadata=props, head_key=head_key,
+                metadata=caller.props, head_key=caller.head_key,
             )
 
             # An A2A caller sends only what is new; the agent is handed the conversation, as an AG-UI caller would send it: every completed run's messages on the thread, then this one.
@@ -416,18 +400,16 @@ class A2AAdapter:
             inbound = InboundRun(
                 agent=agent,
                 messages=messages,
-                head_key=head_key,
-                # Signed before the run is created, so the record keeps exactly what the agent receives.
-                actor_chain=relayed_chain(funduq, actor_chain, agent),
-                kyok=kyok,
+                head_key=caller.head_key,
+                actor_chain=caller.actor_chain,
+                kyok=caller.kyok,
                 # A declaration to funduq about this run, so it rides in the request's metadata like the rest of the bag.
-                addressed_run_id=props.get(ADDRESSED_RUN_METADATA_KEY),
-                forwarded_props=props,
+                addressed_run_id=caller.props.get(ADDRESSED_RUN_METADATA_KEY),
+                forwarded_props=caller.forwarded_props,
             )
-            opened = await open_run(funduq, session, inbound, thread_id=thread_id, answers=answers)
-            live = await dispatch(funduq, session, inbound, opened)
+            entered = await enter(funduq, session, inbound, thread_id=thread_id, answers=answers)
 
-        return opened.run_id, (root.run_id if root is not None else opened.run_id), live
+        return entered.run_id, (root.run_id if root is not None else entered.run_id), entered.live
 
 
 class A2ARequestHandler(RequestHandler):
