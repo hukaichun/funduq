@@ -66,20 +66,16 @@ free.
   answer, whenever it comes, is the next run. A thread can wait on a person
   for hours or days.
 - **Block inside the run.** The run is still one the provider accepted and
-  has not delivered, so `undelivered_window_seconds` (default 1800) applies:
-  when it passes, one **undelivered** is counted against the provider. At
-  `provider_quality_tolerance` counts (default 3) the provider is withdrawn
-  from service, taking every agent it serves with it.
+  has not delivered. funduq keeps no clock on that; the host does, and when
+  it calls `Funduq.note_undelivered(run_id)` one **undelivered** is counted
+  against the provider. At `provider_quality_tolerance` counts (default 3)
+  the provider is withdrawn from service, taking every agent it serves with
+  it.
 
 Two agents that behave identically from a user's seat are therefore
 completely different to funduq, and the difference is a declaration the
 agent makes. See provider quality counters for
 what each counter means and why delivery, not motion, is the measure.
-
-**Resuming restarts that clock rather than continuing it.** A resumed run
-is claimed afresh, so it gets a whole new window — a run paused for three
-hours resumes with the full 1800 seconds ahead of it, not with whatever was
-left.
 
 ## Declaring no concurrency limit means never declining
 
@@ -182,7 +178,7 @@ forever, because nothing keys off a node being gone.
 Those eight are the requirements list for the scaling work, whatever it is
 eventually built on.
 
-## The broker's three waits are settings
+## The broker's two waits are settings
 
 `CoreSettings` fields, told to funduq the way everything else is — an
 explicit constructor argument, never the environment (core reads none):
@@ -191,7 +187,6 @@ explicit constructor argument, never the environment (core reads none):
 |---|---|---|
 | `deliver_timeout_seconds` | 5.0 | waiting for a provider to answer an offer; past it the run fails `provider_did_not_answer` |
 | `unserved_timeout_seconds` | 45.0 | how long a run stays queued with nobody serving it |
-| `undelivered_window_seconds` | 1800.0 | the window in the section above |
 
 They model real waiting — detecting a provider that has stopped answering
 needs a clock — so they are embedder policy, the way

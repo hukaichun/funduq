@@ -147,6 +147,18 @@ are yours: try again by opening a new run.
 
 A deployment that keeps no rule of its own retries nothing.
 
+### Decide when a provider has held a run too long
+
+Core keeps no clock on a run a provider accepted. How long a run may take is
+a policy — minutes for a chat turn, hours for a batch job — and policies are
+yours. When your clock says a provider has held one too long without
+delivering it, call `Funduq.note_undelivered(run_id)`: one **undelivered** is
+counted against that provider, once per run, and the run is left alone. At
+`provider_quality_tolerance` counts the provider is withdrawn from service.
+
+A deployment that keeps no clock of its own counts no provider as
+undelivered, however long it holds a run.
+
 ### Keep the record
 
 Core never deletes a run, a thread or an event. Your own operations can —
