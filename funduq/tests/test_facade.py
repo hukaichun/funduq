@@ -446,7 +446,8 @@ async def test_cancelling_a_run_that_is_waiting_closes_the_ask(funduq, new_ident
 
     stored = await funduq.get_run(handle.run_id)
     assert stored.status == "completed"
-    assert stored.cancel_requested_by is not None, "asked, by nobody in particular — an unbound run"
+    assert stored.cancel_requested
+    assert stored.cancel_requested_by is None, "asked, by nobody in particular — an unbound run"
     assert await funduq.get_run_events(handle.run_id) == settled, "nothing was appended"
     with pytest.raises(NoPendingAsk):
         await funduq.resume_run(

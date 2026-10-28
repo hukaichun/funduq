@@ -306,7 +306,7 @@ async def test_cancelling_a_waiting_task_closes_it(funduq, serve):
 
     closed = await adapter.cancel_task(agent, paused.id)
     assert closed.status.state == pb.TaskState.TASK_STATE_CANCELED
-    assert (await funduq.get_run(paused.id)).cancel_requested_by is not None
+    assert (await funduq.get_run(paused.id)).cancel_requested
 
     with pytest.raises(UnsupportedOperationError):
         await adapter.send_task(agent, {**_message("too late"), "taskId": paused.id})

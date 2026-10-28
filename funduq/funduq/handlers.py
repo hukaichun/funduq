@@ -127,8 +127,8 @@ async def _handle_cancel(funduq: "Funduq", run: Run, cmd: RequestCancel) -> None
 
 
 async def _handle_fail(funduq: "Funduq", run: Run, cmd: Fail) -> None:
-    """Append a `RUN_ERROR` event carrying `cmd.reason` and mark the run failed with that reason."""
-    event = run_error(cmd.reason)
+    """Append a `RUN_ERROR` carrying `cmd.code` and its message, and mark the run failed."""
+    event = run_error(cmd.message or cmd.code, code=cmd.code)
     run.seq += 1
     async with funduq.session() as session:
         await repo.append_run_event(session, run.run_id, run.seq, event)
@@ -148,9 +148,9 @@ def make_handlers(funduq: "Funduq") -> HandlerMap:
     }
 
 
-async def close_with_terminal_event(funduq: "Funduq", run_id: str, failure_reason: str) -> None:
+async def close_with_terminal_event(funduq: "Funduq", run_id: str, code: str) -> None:
     """Give a run funduq has just failed its terminal `RUN_ERROR`, whether or not the broker still tracks it."""
-    if funduq.broker.push(run_id, Fail(failure_reason)):
+    if funduq.broker.push(run_id, Fail(code)):
         return
     async with funduq.session() as session:
         events = await repo.get_run_events(session, run_id)
@@ -158,6 +158,6 @@ async def close_with_terminal_event(funduq: "Funduq", run_id: str, failure_reaso
             return
         seq = await repo.get_last_event_seq(session, run_id) + 1
         await repo.append_run_event(
-            session, run_id, seq, run_error(failure_reason)
+            session, run_id, seq, run_error(code, code=code)
         )
         await session.commit()

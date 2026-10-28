@@ -134,7 +134,7 @@ async def test_a_permanent_refusal_fails_the_run_with_the_providers_reason(brisk
     async with brisk.session() as session:
         stored = await repo.get_run(session, handle.run_id)
     assert stored.status == "failed"
-    assert failure_reason_of(await brisk.get_run_events(handle.run_id)) == "this agent was retired, run something newer"
+    assert failure_reason_of(await brisk.get_run_events(handle.run_id)) == "provider_refused"
     assert link.offers == 1
 
 
@@ -161,7 +161,7 @@ async def test_a_malformed_event_fails_the_run_instead_of_relaying_garbage(brisk
         stored = await repo.get_run(session, handle.run_id)
         persisted = await repo.get_run_events(session, handle.run_id)
     assert stored.status == "failed"
-    assert failure_reason_of(await brisk.get_run_events(handle.run_id)) == "provider sent a malformed AG-UI event"
+    assert failure_reason_of(await brisk.get_run_events(handle.run_id)) == "provider_sent_malformed_event"
     assert [e["type"] for e in persisted] == ["RUN_STARTED", "RUN_ERROR"]
 
 

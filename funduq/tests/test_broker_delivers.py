@@ -160,7 +160,7 @@ async def test_a_decline_ends_the_run(broker):
     failed: list = []
 
     async def _record_fail(run, cmd) -> None:
-        failed.append((run.run_id, cmd.reason))
+        failed.append((run.run_id, cmd.code))
 
     broker.enqueue_run("run_1", AGENT, "t1", _valid_input("run_1", "t1"), {Fail: _record_fail})
 
@@ -237,7 +237,7 @@ async def test_runs_of_a_withdrawn_provider_expire_on_the_ordinary_road():
         failed: list = []
 
         async def _record_fail(run, cmd) -> None:
-            failed.append((run.run_id, cmd.reason))
+            failed.append((run.run_id, cmd.code))
 
         b.enqueue_run("run_1", AGENT, "t1", _valid_input("run_1", "t1"), {Fail: _record_fail})
         await _until(lambda: failed == [("run_1", "provider_declined")])
@@ -368,7 +368,7 @@ async def test_missing_the_window_fails_the_run(broker):
         failed: list = []
 
         async def _record_fail(run, cmd) -> None:
-            failed.append((run.run_id, cmd.reason))
+            failed.append((run.run_id, cmd.code))
 
         b.enqueue_run("run_1", AGENT, "t1", _valid_input("run_1", "t1"), {Fail: _record_fail})
         await _until(lambda: failed == [("run_1", "provider_did_not_answer")], timeout=2.0)

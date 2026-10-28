@@ -98,7 +98,7 @@ async def test_a_run_the_broker_has_forgotten_still_gets_its_terminal_event(
     await close_with_terminal_event(funduq, run_id, "x")
 
     events = await repo.get_run_events(session, run_id)
-    assert events[-1] == {"type": "RUN_ERROR", "message": "x"}, (
+    assert events[-1] == {"type": "RUN_ERROR", "message": "x", "code": "x"}, (
         "the event stream must end the way the database says the run did"
     )
 
@@ -144,6 +144,6 @@ async def test_orphans_reaped_at_start_get_terminal_events(settings, session, ne
             events = await repo.get_run_events(s, run_id)
             stored = await repo.get_run(s, run_id)
         assert stored.status == "failed"
-        assert events[-1] == {"type": "RUN_ERROR", "message": "orphaned_by_funduq_restart"}
+        assert events[-1] == {"type": "RUN_ERROR", "message": "orphaned_by_funduq_restart", "code": "orphaned_by_funduq_restart"}
     finally:
         await reborn.aclose()

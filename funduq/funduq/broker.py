@@ -74,8 +74,10 @@ class RequestCancel:
 
 @dataclass
 class Fail:
+    """funduq ends the run: `code` is the machine-readable reason (AG-UI's `RUN_ERROR.code`), `message` the words for a person, the code itself when there are none."""
 
-    reason: str
+    code: str
+    message: str | None = None
 
 
 Command = Offer | Claim | RelayEvent | FinishStream | RequestCancel | Fail
@@ -537,7 +539,7 @@ class RunBroker:
                 reason,
             )
             self._release(run)
-            await self._record(run, Fail(reason))
+            await self._record(run, Fail("provider_refused", reason))
             await self._settle(handler, run)
             return
 
@@ -620,7 +622,7 @@ class RunBroker:
     ) -> None:
         await self._record(run, command)
         if run.poison is not None:
-            await self._record(run, Fail(run.poison))
+            await self._record(run, Fail("provider_sent_malformed_event", run.poison))
             await self._settle(handler, run)
             return
         if isinstance(command, FinishStream):
@@ -719,7 +721,7 @@ class RunBroker:
                 thread_id=run.thread_id,
             )
         except ValidationError as e:
-            await self._record(run, Fail(f"input does not validate as RunAgentInput: {e}"))
+            await self._record(run, Fail("input_does_not_validate", f"input does not validate as RunAgentInput: {e}"))
             await self._settle(handler, run)
             return
         run.offered_to = provider.public_key

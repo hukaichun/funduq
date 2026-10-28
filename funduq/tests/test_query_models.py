@@ -85,6 +85,7 @@ async def test_get_run_is_a_run_record_without_the_storage_columns(funduq: Fundu
         "context",
         "forwarded_props",
         "resume",
+        "cancel_requested",
         "cancel_requested_by",
     }
     assert run.run_id == handle.run_id

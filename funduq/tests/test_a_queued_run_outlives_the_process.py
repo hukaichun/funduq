@@ -206,7 +206,7 @@ async def test_an_interjection_whose_target_died_fails_loudly(funduq, attach, se
         assert interjection.run_id not in reborn.active_runs()
         async with reborn.session() as session:
             events = await repo.get_run_events(session, interjection.run_id)
-        assert events[-1] == {"type": "RUN_ERROR", "message": "interjection_target_lost"}
+        assert events[-1] == {"type": "RUN_ERROR", "message": "interjection_target_lost", "code": "interjection_target_lost"}
     finally:
         interjecting.cancel()
         await reborn.aclose()
