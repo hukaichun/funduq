@@ -130,13 +130,7 @@ class _Roster(abc.ABC):
     def withdraw(self, refs: list[Any]) -> None: ...
 
     @abc.abstractmethod
-    def not_found(self, message: str) -> Exception: ...
-
-    @abc.abstractmethod
     def changed(self) -> ChangeEvent: ...
-
-    def open_links(self, public_key: str) -> list[Any]:
-        return self._open.get(public_key, [])
 
     def require_open(self, connection: Any) -> None:
         """Raises unless `connection` completed a handshake and has not detached."""
@@ -271,9 +265,6 @@ class _AgentRoster(_Roster):
     def withdraw(self, refs: list[Any]) -> None:
         self._funduq.broker.unregister_provider(refs)
 
-    def not_found(self, message: str) -> Exception:
-        return AgentNotFound(message)
-
     def changed(self) -> ChangeEvent:
         return RosterChanged()
 
@@ -301,9 +292,6 @@ class _LlmRoster(_Roster):
     def withdraw(self, refs: list[Any]) -> None:
         self._funduq.kyok_relay.withdraw(refs)
 
-    def not_found(self, message: str) -> Exception:
-        return LlmProviderNotFound(message)
-
     def changed(self) -> ChangeEvent:
         return LlmRosterChanged()
 
@@ -312,7 +300,7 @@ class Funduq:
     """The network-free facade: agent/LLM-provider rosters, threads, runs, and dispatch."""
 
     def __init__(self, settings: CoreSettings, broker: RunBroker | None = None) -> None:
-        """`settings` is required, and used to default to `CoreSettings()` — which read the process environment, so `Funduq()` quietly configured itself from ambient state its caller never mentioned."""
+        """`settings` is required: core reads no environment, so everything it is configured with is in the argument."""
         self.settings = settings
         self.identity = FunduqIdentity.from_hex(self.settings.identity_private_key)
         self.engine = _create_engine(self.settings)
@@ -887,12 +875,6 @@ class Funduq:
             parent_run_id=run_input.get("parentRunId"),
             forwarded_props=forwarded_props,
         )
-
-    async def run_input(self, run_id: str) -> dict[str, Any] | None:
-        """The `RunAgentInput` a run is — its row's projection, what its provider receives."""
-        async with self.session() as session:
-            stored = await repo.get_run(session, run_id)
-            return await repo.run_input_of(session, stored) if stored else None
 
     async def lineage(self, run_id: str) -> list[RunRecord]:
         """Every run descending from `run_id` by `parentRunId`, root first — what an A2A task is."""

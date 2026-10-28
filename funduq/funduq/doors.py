@@ -134,7 +134,6 @@ async def dispatch(
             inbound.agent,
             opened.thread_id,
             opened.input_json,
-            seq=opened.starting_seq,
             addressed_run_id=inbound.addressed_run_id,
         )
         is None
@@ -150,11 +149,10 @@ async def dispatch(
 
 @dataclass(frozen=True)
 class Opened:
-    """The run a request resolved to — a reopened ask, or a fresh one on the thread — and the input its row now holds, which is exactly what the provider will receive."""
+    """The run a request opened and the input its row now holds, which is exactly what the provider will receive."""
 
     run_id: str
     thread_id: str
-    starting_seq: int
     input_json: dict[str, Any]
 
 
@@ -247,7 +245,7 @@ async def open_run(
     )
     await repo.append_thread_messages(session, thread_id, run_id, messages)
     await session.commit()
-    return Opened(run_id=run_id, thread_id=thread_id, starting_seq=0, input_json=input_json)
+    return Opened(run_id=run_id, thread_id=thread_id, input_json=input_json)
 
 
 async def offline_events(thread_id: str, run_id: str) -> AsyncIterator[dict[str, Any]]:

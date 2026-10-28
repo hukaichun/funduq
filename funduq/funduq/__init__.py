@@ -67,7 +67,6 @@ _FRONT_DOOR = {
     "NoPendingAsk": "funduq.errors",
     "PresenterRequired": "funduq.errors",
     "RunNotCancellable": "funduq.errors",
-    "RunNotFound": "funduq.errors",
     "StreamTaken": "funduq.errors",
 }
 
@@ -91,7 +90,6 @@ if TYPE_CHECKING:
         NoPendingAsk as NoPendingAsk,
         PresenterRequired as PresenterRequired,
         RunNotCancellable as RunNotCancellable,
-        RunNotFound as RunNotFound,
         StreamTaken as StreamTaken,
     )
     from funduq.models import (

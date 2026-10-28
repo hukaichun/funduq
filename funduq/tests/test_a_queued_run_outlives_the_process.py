@@ -102,7 +102,7 @@ async def test_the_held_run_dies_with_the_process_and_the_waiting_one_does_not(f
         await _until(lambda: _status_is(reborn, waiting.run_id, "completed"))
 
         stored = await reborn.get_run(waiting.run_id)
-        assert provider.rounds == [await reborn.run_input(waiting.run_id)], "delivered exactly what the row is"
+        assert provider.rounds == [await reborn.get_run_input(waiting.run_id)], "delivered exactly what the row is"
     finally:
         if runtime is not None:
             await runtime.aclose(cancel_in_flight=True)

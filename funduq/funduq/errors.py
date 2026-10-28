@@ -17,7 +17,6 @@ __all__ = [
     "NoPendingAsk",
     "ProviderFingerprintTaken",
     "RunNotCancellable",
-    "RunNotFound",
     "FunduqError",
     "ThreadNotFound",
     "ThreadOwnershipMismatch",
@@ -65,10 +64,6 @@ class KyokRejected(FunduqError):
         super().__init__(message)
         self.status = status
         self.refusal = refusal
-
-
-class RunNotFound(FunduqError):
-    pass
 
 
 class RunNotCancellable(FunduqError):

@@ -35,7 +35,7 @@ class EventStream:
 
 @dataclass
 class ThreadSnapshot:
-    """Returned instead of a new run's `EventStream` when the target thread already has an active run that the incoming request isn't resuming; carries the thread's current state, including the in-flight run's id."""
+    """Returned instead of a new run's `EventStream` when the input answers no open ask — there was none, or it was already answered — so no run is opened; carries the thread id and the run in flight, if any."""
 
     data: dict[str, Any]
 
@@ -88,7 +88,7 @@ class AGUIAdapter:
                 events = await repo.get_run_events(session, latest.run_id)
                 asks = open_asks(events)
             completes_the_ask = bool(asks) and asks <= answered_asks(messages, resume, events)
-            if (resume or completes_the_ask) and not completes_the_ask:
+            if resume and not completes_the_ask:
                 # A result with no ask to land on: there was none, or it was already answered.
                 return ThreadSnapshot(await repo.get_thread_snapshot(session, thread_id))
 

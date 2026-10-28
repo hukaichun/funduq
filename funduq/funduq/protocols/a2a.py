@@ -68,7 +68,7 @@ _BINDINGS = frozenset(member.name for member in TransportProtocol)
 
 @dataclass(frozen=True)
 class ServedInterface:
-    """A URL where an agent's A2A endpoint is reachable, together with the A2A transport binding it speaks (e.g."""
+    """A URL where an agent's A2A endpoint is reachable, and the A2A transport binding it speaks there — one of A2A's own `TransportProtocol` names."""
 
     url: str
     binding: str
