@@ -101,13 +101,13 @@ async def test_the_answer_to_an_ask_is_a_run_whose_row_is_what_it_delivered(fund
         RunAgentInput(
             thread_id=first.thread_id, run_id="ignored", state={},
             messages=[ToolMessage(id="r1", role="tool", tool_call_id="call-1", content="found")],
-            tools=[], context=[], forwarded_props=None,
+            tools=[], context=[], forwarded_props=None, parent_run_id=first.run_id,
         ),
     )
     assert isinstance(second, EventStream) and second.run_id != first.run_id, "every input is a run"
     [_ async for _ in second.events]
 
-    assert (await funduq.get_run(second.run_id)).parent_run_id == first.run_id, "the answer names the run that asked"
+    assert (await funduq.get_run(second.run_id)).parent_run_id == first.run_id, "the caller named the run it answers"
     assert len(provider.rounds) == 2
     assert provider.rounds[1] == await _stored(funduq, second.run_id), "its own row, its own input"
     assert provider.rounds[0] == await _stored(funduq, first.run_id), "and the asking run's row is untouched"

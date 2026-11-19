@@ -50,32 +50,6 @@ def open_asks(events: list[dict[str, Any]]) -> set[str]:
     return {ask for ask in asks if ask}
 
 
-def answered_asks(
-    messages: list[dict[str, Any]],
-    resume: list[dict[str, Any]] | None,
-    events: list[dict[str, Any]],
-) -> set[str]:
-    """The asks an inbound request answers, in the same id space as `open_asks`."""
-    tool_call_of = {
-        interrupt["id"]: interrupt.get("toolCallId") or interrupt["id"]
-        for interrupt in interrupts_of(events)
-        if interrupt.get("id")
-    }
-    only_by_resume = set(tool_call_of.values())
-    answered = {
-        message["toolCallId"]
-        for message in messages
-        if message.get("role") == "tool"
-        and message.get("toolCallId")
-        and message["toolCallId"] not in only_by_resume
-    }
-    for entry in resume or []:
-        interrupt_id = entry.get("interruptId")
-        if interrupt_id in tool_call_of:
-            answered.add(tool_call_of[interrupt_id])
-    return answered
-
-
 def failure_reason_of(events: list[dict[str, Any]]) -> str | None:
     """Why the run failed, read from its terminal RUN_ERROR: the machine `code` if it carries one, else its `message`. None if no RUN_ERROR was recorded."""
     for event in reversed(events):

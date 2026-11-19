@@ -644,21 +644,6 @@ async def mark_run_status(session: AsyncSession, run_id: str, status: str) -> bo
     return False
 
 
-async def get_active_run_for_thread(session: AsyncSession, thread_id: str) -> dict[str, Any] | None:
-    row = (
-        await session.execute(
-            select(runs)
-            .where(
-                runs.c.thread_id == thread_id,
-                runs.c.status.in_(ACTIVE_RUN_STATUSES),
-            )
-            .order_by(runs.c.created_at.desc())
-            .limit(1)
-        )
-    ).mappings().first()
-    return dict(row) if row else None
-
-
 async def ensure_queue_room(session: AsyncSession, thread_id: str, limit: int | None) -> None:
     """Refuses (ThreadQueueFull) a new pending run when the thread's buffer is at `limit`; a no-op when `limit` is None."""
     if limit is None:
@@ -765,20 +750,6 @@ async def lineage(session: AsyncSession, run_id: str) -> list[RunRecord]:
         ).mappings().first()
         current = RunRecord(**child) if child else None
     return out
-
-
-async def get_thread_snapshot(session: AsyncSession, thread_id: str) -> dict[str, Any] | None:
-    """The thread's state as a caller may see it: a summary of the run in flight."""
-    thread = await get_thread(session, thread_id)
-    if thread is None:
-        return None
-    active_run = await get_active_run_for_thread(session, thread_id)
-    summary = (
-        {"run_id": active_run["run_id"], "status": active_run["status"]}
-        if active_run
-        else None
-    )
-    return {"thread_id": thread_id, "active_run": summary}
 
 
 async def touch_run_activity(session: AsyncSession, run_id: str) -> None:

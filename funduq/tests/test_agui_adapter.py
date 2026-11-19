@@ -7,7 +7,7 @@ from ag_ui.core import RunAgentInput, UserMessage
 
 from funduq.errors import AgentNotFound
 from funduq.models import AgentRef
-from funduq.protocols.agui import AGUIAdapter, EventStream, ThreadSnapshot
+from funduq.protocols.agui import AGUIAdapter, EventStream
 
 
 def _body(thread_id: str = "t-1", text: str = "hi") -> RunAgentInput:
