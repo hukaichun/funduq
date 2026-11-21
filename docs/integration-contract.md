@@ -49,6 +49,15 @@ carries `metadata` even though it carries no message, so a standard
 client has the slot). A thread opened without a chain keeps the open
 behavior on this page forever — a later chained writer cannot lock it.
 
+**Continuing a run is the caller's to say.** On AG-UI a run continues the
+one its `parentRunId` names, which must be on the same thread and finished
+— a run still queued or running is refused. Without a `parentRunId` it
+starts a lineage of its own: funduq does not read `resume` or tool messages
+to guess which run they answer; matching them to an interrupt is the
+agent's. On A2A the same declaration is the message's `taskId`. An answer
+to an ask on a chained thread carries its `resolution` when it names the
+asking run.
+
 **The caller's bag.** Everything a caller says *to funduq* — `actorChain`,
 the `kyok` opt-in, `resolution`, an interjection target — rides in one
 place, and that place is **request-level** on both doors: `forwardedProps`

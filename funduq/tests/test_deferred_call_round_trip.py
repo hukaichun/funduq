@@ -15,7 +15,7 @@ from pathlib import Path
 from ag_ui.core import ResumeEntry, RunAgentInput, ToolMessage, UserMessage
 
 from funduq.pause import interrupts_of, open_asks, unanswered_tool_calls
-from funduq.protocols.agui import AGUIAdapter, EventStream, ThreadSnapshot
+from funduq.protocols.agui import AGUIAdapter, EventStream
 
 REAL_STREAM = json.loads((Path(__file__).parent / "real_deferring_stream.json").read_text())
 
@@ -62,7 +62,7 @@ def _utterance(thread_id: str = "t-chain") -> RunAgentInput:
     )
 
 
-def _tool_results(thread_id: str, answers: dict[str, str], resume=None) -> RunAgentInput:
+def _tool_results(thread_id: str, answers: dict[str, str], resume=None, parent_run_id=None) -> RunAgentInput:
     return RunAgentInput(
         thread_id=thread_id, run_id="caller-said-this-too", state={},
         messages=[
@@ -70,6 +70,7 @@ def _tool_results(thread_id: str, answers: dict[str, str], resume=None) -> RunAg
             for i, (call_id, content) in enumerate(answers.items())
         ],
         tools=[], context=[], forwarded_props=None, resume=resume,
+        parent_run_id=parent_run_id,
     )
 
 
@@ -110,13 +111,13 @@ async def test_a_tool_result_lands_on_the_run_that_asked_for_it(funduq, serve):
     )
 
     second = await AGUIAdapter(funduq).run(
-        agent, _tool_results(first.thread_id, tool_results, resume=resume)
+        agent, _tool_results(first.thread_id, tool_results, resume=resume, parent_run_id=first.run_id)
     )
 
     assert isinstance(second, EventStream)
     assert second.run_id != first.run_id, "every input is a run — AG-UI's own model"
     assert (await funduq.get_run(second.run_id)).parent_run_id == first.run_id, (
-        "and the answer names the run that asked, so the two read as one conversation turn"
+        "the caller named the run it answers, so the two read as one conversation turn"
     )
     [_ async for _ in second.events]
     assert (await funduq.get_run(second.run_id)).status == "completed"
@@ -128,7 +129,7 @@ async def test_the_provider_is_handed_the_results_it_was_waiting_on(funduq, serv
     tool_results, resume = _answers(events)
 
     second = await AGUIAdapter(funduq).run(
-        agent, _tool_results(first.thread_id, tool_results, resume=resume)
+        agent, _tool_results(first.thread_id, tool_results, resume=resume, parent_run_id=first.run_id)
     )
     [_ async for _ in second.events]
 
@@ -144,44 +145,9 @@ async def test_the_provider_is_handed_the_results_it_was_waiting_on(funduq, serv
     ], "and the approval, on `resume`, because a tool result cannot carry one"
 
 
-async def test_a_tool_result_for_nothing_pending_is_an_utterance(funduq, serve):
-    """Addressing that lands on no ask is honestly an utterance — the same rule
-    the A2A lane already follows for a message whose `taskId` names no pending
-    task."""
-    provider, served, agent, first, events = await _pause(funduq, serve)
-
-    stray = await AGUIAdapter(funduq).run(
-        agent, _tool_results(first.thread_id, {"call-nobody-made": "here you go"})
-    )
-
-    assert isinstance(stray, EventStream)
-    assert stray.run_id != first.run_id, "it opens its own run"
-    assert open_asks(await funduq.get_run_events(first.run_id)), "and the real ask is still waiting"
-    assert (await funduq.lineage(first.run_id))[-1].run_id == first.run_id, "nothing answered it"
-
-
-async def test_a_partial_answer_leaves_the_ask_standing(funduq, serve):
-    """A provider cannot take a step with one of two results in hand — the model
-    it is driving needs one per call in the turn. So half an answer is not an
-    answer: it enters as an utterance and the ask survives, rather than
-    reopening a run the provider would only fail."""
-    provider, served, agent, first, events = await _pause(funduq, serve)
-    pending = unanswered_tool_calls(events)
-    tool_results, _resume = _answers(events)
-
-    half = await AGUIAdapter(funduq).run(
-        agent, _tool_results(first.thread_id, tool_results)
-    )
-
-    assert isinstance(half, EventStream)
-    assert half.run_id != first.run_id
-    assert (await funduq.get_run(half.run_id)).parent_run_id is None, "an utterance, not the answer"
-    assert unanswered_tool_calls(await funduq.get_run_events(first.run_id)) == pending, "the ask stands"
-
-
 async def test_after_the_round_trip_the_link_holds_the_whole_resumable_turn(funduq, serve):
     """The provider is handed only what is new; everything else it pulls. The
-    resumed run names the run that asked (`parentRunId`), and that run's events
+    caller names the run it answers (`parentRunId`), and that run's events
     hold the assistant turn and the result the provider gave itself — with the
     new results in hand, the complete set a stateless provider needs to take its
     next step."""
@@ -190,7 +156,7 @@ async def test_after_the_round_trip_the_link_holds_the_whole_resumable_turn(fund
     tool_results, resume = _answers(events)
 
     second = await AGUIAdapter(funduq).run(
-        agent, _tool_results(first.thread_id, tool_results, resume=resume)
+        agent, _tool_results(first.thread_id, tool_results, resume=resume, parent_run_id=first.run_id)
     )
     [_ async for _ in second.events]
 
@@ -207,24 +173,3 @@ async def test_after_the_round_trip_the_link_holds_the_whole_resumable_turn(fund
         "on `resume` and is not a message"
     )
 
-
-async def test_a_tool_result_cannot_answer_an_approval(funduq, serve):
-    """An approved call's result has to arrive as a `ResumeEntry`. Handed the
-    same id as a tool result, pydantic-ai drops it without a word: the turn
-    stays incomplete and the run ends `RUN_FINISHED`/`success` having executed
-    nothing. Measured. So funduq does not count one — reopening the run on it
-    would trade a waiting run for a silently empty one."""
-    provider, served, agent, first, events = await _pause(funduq, serve)
-    pending = unanswered_tool_calls(events)
-
-    wrong_carrier = await AGUIAdapter(funduq).run(
-        agent,
-        _tool_results(first.thread_id, {call_id: "done, trust me" for call_id in pending}),
-    )
-
-    assert isinstance(wrong_carrier, EventStream)
-    assert wrong_carrier.run_id != first.run_id
-    assert (await funduq.get_run(wrong_carrier.run_id)).parent_run_id is None, (
-        "the approval is still outstanding, because nothing answered it"
-    )
-    assert open_asks(await funduq.get_run_events(first.run_id))

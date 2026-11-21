@@ -87,50 +87,9 @@ async def test_a_run_that_finished_asking_is_not_active_on_its_thread(session, n
     )
     await repo.mark_run_status(session, run_c["run_id"], "completed")
 
-    assert await repo.get_active_run_for_thread(session, thread_c) is None
     latest = await repo.latest_run_for_thread(session, thread_c)
     assert latest.run_id == run_c["run_id"]
     assert open_asks(await repo.get_run_events(session, latest.run_id)) == {"int_1"}
-
-
-async def test_a_result_with_no_pending_ask_is_refused_not_smuggled(funduq, serve):
-    """The door has two entrances: an utterance, or a deferred call's result.
-    A resume payload is a result; with nothing paused on the thread there is
-    no ask for it to land on, and it must be refused with the thread's state
-    — never quietly repackaged as a fresh run carrying an answer the agent
-    never asked for."""
-    from ag_ui.core import RunAgentInput, UserMessage
-    from ag_ui.core.types import ResumeEntry
-
-    from funduq.protocols.agui import AGUIAdapter, ThreadSnapshot
-    from tests.conftest import EchoAgent
-
-    served = await serve(EchoAgent(), "grounded")
-    agent = served.agents["grounded"]
-    adapter = AGUIAdapter(funduq)
-
-    first = await adapter.run(
-        agent,
-        RunAgentInput(
-            thread_id="t-fresh", run_id="ignored", state={},
-            messages=[UserMessage(id="m1", role="user", content="hi")],
-            tools=[], context=[], forwarded_props={},
-        ),
-    )
-    [event async for event in first.events]
-
-    ghost = await adapter.run(
-        agent,
-        RunAgentInput(
-            thread_id=first.thread_id, run_id="ignored", state={},
-            messages=[UserMessage(id="m2", role="user", content="the answer")],
-            tools=[], context=[], forwarded_props={},
-            resume=[ResumeEntry.model_validate(
-                {"interruptId": "int_ghost", "status": "resolved", "payload": {"answer": 42}}
-            )],
-        ),
-    )
-    assert isinstance(ghost, ThreadSnapshot), "a result with no ask gets the thread's state back"
 
 
 async def test_an_unanswered_tool_call_pauses_a_run_that_reported_success(

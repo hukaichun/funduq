@@ -45,7 +45,6 @@ _FRONT_DOOR = {
     "CoreSettings": "funduq.config",
     "AGUIAdapter": "funduq.protocols.agui",
     "EventStream": "funduq.protocols.agui",
-    "ThreadSnapshot": "funduq.protocols.agui",
     "A2AAdapter": "funduq.protocols.a2a",
     "A2ARequestHandler": "funduq.protocols.a2a",
     "ServedInterface": "funduq.protocols.a2a",
@@ -108,7 +107,6 @@ if TYPE_CHECKING:
     from funduq.protocols.agui import (
         AGUIAdapter as AGUIAdapter,
         EventStream as EventStream,
-        ThreadSnapshot as ThreadSnapshot,
     )
     from funduq.protocols.kyok import KyokAdapter as KyokAdapter
 

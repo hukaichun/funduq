@@ -8,9 +8,9 @@ from ag_ui.core import RunAgentInput
 
 from funduq import repo
 from funduq.models import AgentRef, LlmRef
-from funduq.doors import InboundRun, enter, read_caller, waiting_on
-from funduq.errors import AgentNotFound
-from funduq.pause import answered_asks, open_asks
+from funduq.doors import InboundRun, enter, read_caller
+from funduq.errors import AgentNotFound, InvalidRunInput
+from funduq.pause import open_asks
 
 if TYPE_CHECKING:
     from funduq.core import Funduq
@@ -25,13 +25,6 @@ class EventStream:
     events: AsyncIterator[dict[str, Any]]
 
 
-@dataclass
-class ThreadSnapshot:
-    """Returned instead of a new run's `EventStream` when the input answers no open ask — there was none, or it was already answered — so no run is opened; carries the thread id and the run in flight, if any."""
-
-    data: dict[str, Any]
-
-
 class AGUIAdapter:
 
     def __init__(self, funduq: "Funduq") -> None:
@@ -43,8 +36,8 @@ class AGUIAdapter:
         body: RunAgentInput,
         *,
         presenter_key: str | None = None,
-    ) -> EventStream | ThreadSnapshot:
-        """Opens an AG-UI run for `agent`: every `RunAgentInput` is a run. One that answers the thread's open asks — tool messages for its unanswered calls, `resume` entries for its interrupts — is the next run, with `parentRunId` naming the one that asked."""
+    ) -> EventStream:
+        """Opens an AG-UI run for `agent`: every `RunAgentInput` is a run. It continues the run its `parentRunId` names, which must be on this thread and finished; without one it starts a lineage of its own."""
         funduq = self._funduq
         async with funduq.session() as session:
             if await repo.get_agent(session, agent) is None:
@@ -63,20 +56,18 @@ class AGUIAdapter:
                 head_key=caller.head_key,
             )
 
-            # AG-UI declares its entrance in the body, two ways, because it has two carriers for the one thing.
             messages = [m.model_dump(mode="json", by_alias=True) for m in body.messages]
-            answers_a_tool_call = any(m.get("role") == "tool" for m in messages)
-            latest = (
-                await repo.latest_run_for_thread(session, thread_id)
-                if resume or answers_a_tool_call
-                else None
-            )
-            events = (await waiting_on(session, latest) if latest is not None else None) or []
-            asks = open_asks(events)
-            completes_the_ask = bool(asks) and asks <= answered_asks(messages, resume, events)
-            if resume and not completes_the_ask:
-                # A result with no ask to land on: there was none, or it was already answered.
-                return ThreadSnapshot(await repo.get_thread_snapshot(session, thread_id))
+            # Whether this run continues another is the caller's to say, with `parentRunId`; without it the run starts a lineage of its own. funduq checks only that the run it names is on this thread and has finished.
+            parent = None
+            if body.parent_run_id is not None:
+                parent = await repo.get_run(session, body.parent_run_id)
+                if parent is None or parent.thread_id != thread_id:
+                    raise InvalidRunInput(f"parentRunId '{body.parent_run_id}' names no run on this thread")
+                if parent.status in repo.ACTIVE_RUN_STATUSES:
+                    raise InvalidRunInput(f"parentRunId '{body.parent_run_id}' names a run that has not finished")
+
+            # Continuing a run that finished asking is answering it: on a bound thread the answer must carry a resolution proof.
+            answers = parent if parent is not None and open_asks(await repo.get_run_events(session, parent.run_id)) else None
 
             inbound = InboundRun(
                 agent=agent,
@@ -88,14 +79,13 @@ class AGUIAdapter:
                 tools=[t.model_dump(mode="json", by_alias=True) for t in body.tools],
                 context=[c.model_dump(mode="json", by_alias=True) for c in body.context],
                 resume=resume,
-                # The caller's own parentRunId, relayed verbatim unless this input answers the thread's asks — then funduq names the run that asked.
                 parent_run_id=body.parent_run_id,
                 forwarded_props=caller.forwarded_props,
             )
             entered = await enter(
                 funduq, session, inbound,
                 thread_id=thread_id,
-                answers=latest if completes_the_ask else None,
+                answers=answers,
             )
 
         return EventStream(entered.thread_id, entered.run_id, entered.events(funduq))

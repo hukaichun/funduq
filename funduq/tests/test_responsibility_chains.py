@@ -232,12 +232,12 @@ async def test_the_agui_door_guards_a_chained_resume_the_same_way(funduq, serve,
     head = new_identity()
     adapter = AGUIAdapter(funduq)
 
-    def _body(thread_id: str, text: str, metadata: dict, resume=None) -> RunAgentInput:
+    def _body(thread_id: str, text: str, metadata: dict, resume=None, parent_run_id=None) -> RunAgentInput:
         return RunAgentInput(
             thread_id=thread_id, run_id="ignored", state={},
             messages=[UserMessage(id="m1", role="user", content=text)],
             tools=[], context=[], forwarded_props=metadata,
-            resume=resume,
+            resume=resume, parent_run_id=parent_run_id,
         )
 
     first = await adapter.run(
@@ -256,7 +256,7 @@ async def test_the_agui_door_guards_a_chained_resume_the_same_way(funduq, serve,
         await adapter.run(
             agent,
             _body(first.thread_id, "unproven", {"actorChain": [head.sign_chain_hop()]},
-                  resume=answer),
+                  resume=answer, parent_run_id=run_id),
             presenter_key=head.public_key,
         )
 
@@ -274,6 +274,7 @@ async def test_the_agui_door_guards_a_chained_resume_the_same_way(funduq, serve,
                 },
             },
             resume=answer,
+            parent_run_id=run_id,
         ),
         presenter_key=head.public_key,
     )

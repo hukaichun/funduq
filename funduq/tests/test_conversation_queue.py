@@ -528,53 +528,6 @@ async def test_the_second_answer_to_one_ask_is_refused(funduq, serve):
     assert len(provider.rounds) == 3
 
 
-async def test_the_second_answer_over_ag_ui_is_refused_with_the_thread_state(funduq, serve):
-    """The mirror of the case above, on the door whose grammar says otherwise. An AG-UI
-    `resume` payload declares itself a **result**; when another caller has already drained the
-    ask, there is nothing for it to land on, and it gets the thread's state back rather than
-    being repackaged as a fresh run carrying an answer nobody asked for."""
-    from ag_ui.core import RunAgentInput, UserMessage
-    from ag_ui.core.types import ResumeEntry
-
-    from funduq.protocols.agui import AGUIAdapter, EventStream, ThreadSnapshot
-
-    provider = AskingAgent()
-    served = await serve(provider, "contested-agui")
-    agent = served.agents["contested-agui"]
-    adapter = AGUIAdapter(funduq)
-
-    opening = await adapter.run(
-        agent,
-        RunAgentInput(
-            thread_id="t-contested", run_id="ignored", state={},
-            messages=[UserMessage(id="m1", role="user", content="do the thing")],
-            tools=[], context=[], forwarded_props={},
-        ),
-    )
-    [event async for event in opening.events]
-    await _until(lambda: _paused(funduq, opening.thread_id))
-
-    def _answer(message_id: str):
-        return adapter.run(
-            agent,
-            RunAgentInput(
-                thread_id=opening.thread_id, run_id="ignored", state={},
-                messages=[UserMessage(id=message_id, role="user", content="the answer")],
-                tools=[], context=[], forwarded_props={},
-                resume=[ResumeEntry.model_validate(
-                    {"interruptId": "int_1", "status": "resolved", "payload": {"answer": 42}}
-                )],
-            ),
-        )
-
-    winner = await _answer("m2")
-    assert isinstance(winner, EventStream)
-    [event async for event in winner.events]
-
-    loser = await _answer("m3")
-    assert isinstance(loser, ThreadSnapshot), "a result that lost the ask is refused, not queued"
-
-
 async def _paused(funduq, thread_id: str) -> bool:
     async with funduq.session() as session:
         latest = await repo.latest_run_for_thread(session, thread_id)
